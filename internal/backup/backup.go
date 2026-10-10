@@ -996,10 +996,17 @@ func mysqlConnectArgs() []string {
 	if user := os.Getenv("UWAS_DB_USER"); user != "" {
 		args = append(args, "--user="+user)
 	}
-	if pass := os.Getenv("UWAS_DB_PASSWORD"); pass != "" {
-		args = append(args, "--password="+pass)
-	}
 	return args
+}
+
+// mysqlConnectEnv returns the environment for the mysql client. The password
+// travels as MYSQL_PWD rather than --password=: argv is readable by every
+// local user through /proc/<pid>/cmdline, the environment only by the owner.
+func mysqlConnectEnv() []string {
+	if pass := os.Getenv("UWAS_DB_PASSWORD"); pass != "" {
+		return append(os.Environ(), "MYSQL_PWD="+pass)
+	}
+	return nil
 }
 
 func importDatabaseDumpReal(data []byte, log *logger.Logger) error {
@@ -1010,6 +1017,7 @@ func importDatabaseDumpReal(data []byte, log *logger.Logger) error {
 		return nil
 	}
 	cmd := exec.Command(mysqlBin, mysqlConnectArgs()...)
+	cmd.Env = mysqlConnectEnv()
 	cmd.Stdin = strings.NewReader(string(data))
 	out, err := cmd.CombinedOutput()
 	if err != nil {

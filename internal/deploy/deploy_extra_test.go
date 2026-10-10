@@ -362,10 +362,15 @@ func TestDeployGit_ExistingRepoTokenRemoteSetURL(t *testing.T) {
 		cmd := name + " " + strings.Join(args, " ")
 		if strings.Contains(cmd, "remote set-url") {
 			sawSetURL = true
-			// token must be present in the rewritten URL
+			// The token stays off argv and out of .git/config (F727): set-url
+			// stores the plain URL and git rewrites it from the environment.
 			joined := strings.Join(args, " ")
-			if !strings.Contains(joined, "tok_abc@github.com") {
-				t.Errorf("set-url args missing injected token: %q", joined)
+			if strings.Contains(joined, "tok_abc") || !strings.Contains(joined, "https://github.com/user/repo.git") {
+				t.Errorf("set-url args = %q, want plain URL without token", joined)
+			}
+			if env["GIT_CONFIG_KEY_0"] != "url.https://tok_abc@github.com/user/repo.git.insteadOf" ||
+				env["GIT_CONFIG_VALUE_0"] != "https://github.com/user/repo.git" || env["GIT_CONFIG_COUNT"] != "1" {
+				t.Errorf("token rewrite env = %v", env)
 			}
 		}
 		if strings.Contains(cmd, "git rev-parse") {

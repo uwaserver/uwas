@@ -135,8 +135,15 @@ func (m *domainLogManager) Write(host string, cfg config.AccessLogConfig, method
 		return
 	}
 
+	// Key by the log file, not the request Host. r.Host is client-controlled
+	// and the router folds case, port and a trailing dot onto one domain, so a
+	// Host-keyed map opened a fresh descriptor per spelling (unbounded, one per
+	// port number) and let one spelling's rotation leave the others appending
+	// to the archived inode.
+	key := logPath
+
 	m.mu.RLock()
-	dlf, ok := m.files[host]
+	dlf, ok := m.files[key]
 	m.mu.RUnlock()
 
 	if !ok {
@@ -148,7 +155,7 @@ func (m *domainLogManager) Write(host string, cfg config.AccessLogConfig, method
 			m.mu.Unlock()
 			return
 		}
-		dlf, ok = m.files[host]
+		dlf, ok = m.files[key]
 		if !ok {
 			if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
 				m.mu.Unlock()
@@ -168,7 +175,7 @@ func (m *domainLogManager) Write(host string, cfg config.AccessLogConfig, method
 			if cfg.BufferSize > 0 {
 				dlf.buf = bufio.NewWriterSize(f, cfg.BufferSize)
 			}
-			m.files[host] = dlf
+			m.files[key] = dlf
 		}
 		m.mu.Unlock()
 	}
@@ -203,7 +210,7 @@ func (m *domainLogManager) Write(host string, cfg config.AccessLogConfig, method
 	// and deadlock the two against each other.
 	if reopenFailed {
 		m.mu.Lock()
-		delete(m.files, host)
+		delete(m.files, key)
 		m.mu.Unlock()
 	}
 }
@@ -482,14 +489,46 @@ func accessLogLine(format string, now time.Time, method, path, remoteIP, userAge
 	}
 
 	// CLF-like format: the default, and the fallback for clf/custom/unknown.
+	// Fields are escaped the way Apache's mod_log_config does: path is the
+	// decoded URL path, so a %0A in the request would otherwise end the record
+	// and let any client forge whole log lines.
 	return fmt.Sprintf("%s - - [%s] \"%s %s\" %d %d %dms \"%s\"\n",
-		remoteIP,
+		clfEscape(remoteIP),
 		now.Format("02/Jan/2006:15:04:05 -0700"),
-		method, path,
+		clfEscape(method), clfEscape(path),
 		status, bytes,
 		duration.Milliseconds(),
-		userAgent,
+		clfEscape(userAgent),
 	)
+}
+
+// clfEscape renders control bytes as \xHH and backslash-escapes '"' and '\\'
+// so a field can neither break the line nor close its quotes.
+func clfEscape(s string) string {
+	clean := true
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c < 0x20 || c == 0x7f || c == '"' || c == '\\' {
+			clean = false
+			break
+		}
+	}
+	if clean {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s) + 8)
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '"' || c == '\\':
+			b.WriteByte('\\')
+			b.WriteByte(c)
+		case c < 0x20 || c == 0x7f:
+			fmt.Fprintf(&b, "\\x%02x", c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 // KnownAccessLogFormat reports whether a configured format is one this writer

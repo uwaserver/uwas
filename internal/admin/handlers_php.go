@@ -49,6 +49,13 @@ func (d *phpDeps) TaskActive() *phpadmin.TaskInfo {
 	return nil
 }
 
+// InstallLock takes setupInstallMu so the PHP install's Active() check and
+// Submit() are atomic with package installs and the setup wizard.
+func (d *phpDeps) InstallLock() (unlock func()) {
+	setupInstallMu.Lock()
+	return setupInstallMu.Unlock
+}
+
 func (d *phpDeps) TaskSubmit(category, name, action string, fn func(appendOutput func(string)) error) *phpadmin.TaskInfo {
 	task := d.s.taskMgr.Submit(category, name, action, fn)
 	return &phpadmin.TaskInfo{ID: task.ID, Name: task.Name, Type: task.Type}

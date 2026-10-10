@@ -12,8 +12,26 @@ func (s *Server) reload() error {
 		return fmt.Errorf("no config path set")
 	}
 
+	// Load, apply and publish under the config write lock shared with the
+	// admin API (and after any in-flight persist). Loading outside it let an
+	// admin write land between config.Load and the overwrite below: the API
+	// answered 201 and the reload then wiped the change from the live config
+	// (F691). The apps refresh at the end stays outside the lock.
+	if s.persistLock != nil {
+		s.persistLock.Lock()
+	}
+	mu := s.cfgMu()
+	mu.Lock()
+	unlock := func() {
+		mu.Unlock()
+		if s.persistLock != nil {
+			s.persistLock.Unlock()
+		}
+	}
+
 	newCfg, err := config.Load(s.configPath)
 	if err != nil {
+		unlock()
 		return fmt.Errorf("reload config: %w", err)
 	}
 
@@ -70,6 +88,24 @@ func (s *Server) reload() error {
 		s.monitor.UpdateDomains(newCfg.Domains)
 	}
 
+	// Update stored config IN PLACE under write lock. The admin server
+	// was constructed with a *config.Config pointer that it dereferences
+	// for every read; if we swapped the pointer here (s.config = newCfg)
+	// admin would keep reading the stale config, which means subsequent
+	// domain CRUDs through the admin API would mutate a config no other
+	// subsystem references and the vhost router would never see them —
+	// every request to a freshly-created domain would 421.
+	*s.config = *newCfg
+	// The live config now shares newCfg's Domains array, which admin writers
+	// change in place, so copy what pruneDomainStats needs before unlocking.
+	liveDomains := append([]config.Domain(nil), newCfg.Domains...)
+	unlock()
+
+	// Domains and the api_key (which SFTP passwords derive from) may have
+	// changed; refresh after unlock — refreshSFTPUsers takes the lock itself.
+	s.refreshSFTPUsers()
+	s.pruneDomainStats(liveDomains)
+
 	// Apps refresh — pick up any new YAML files in /etc/uwas/apps.d/
 	// and start every enabled app that is not already running. Existing
 	// running apps are left untouched; command/port changes still take
@@ -84,17 +120,6 @@ func (s *Server) reload() error {
 			s.appsMgr.StartAll()
 		}
 	}
-
-	// Update stored config IN PLACE under write lock. The admin server
-	// was constructed with a *config.Config pointer that it dereferences
-	// for every read; if we swapped the pointer here (s.config = newCfg)
-	// admin would keep reading the stale config, which means subsequent
-	// domain CRUDs through the admin API would mutate a config no other
-	// subsystem references and the vhost router would never see them —
-	// every request to a freshly-created domain would 421.
-	s.configMu.Lock()
-	*s.config = *newCfg
-	s.configMu.Unlock()
 
 	s.logger.Info("config reloaded", "domains", len(newCfg.Domains))
 	return nil

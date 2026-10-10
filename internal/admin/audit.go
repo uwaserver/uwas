@@ -62,13 +62,14 @@ func (s *Server) stopAudit() {
 		// subsequent initAudit call that would race on the field itself.
 	}
 
-	// Nil auditBuf and rate-limit maps under auditMu so that any
-	// concurrent RecordAuditUser call sees consistent state (nil check
-	// under lock matches nil write under lock).
+	// Nil auditBuf under auditMu so that any concurrent RecordAuditUser call
+	// sees consistent state (nil check under lock matches nil write under
+	// lock). The login rate-limit maps are left in place: they are guarded by
+	// rlMu, not auditMu, and recordAuthFailure writes into them, so nilling
+	// them here raced in-flight logins and made a failed login after Close
+	// panic on a nil map (F716).
 	s.auditMu.Lock()
 	s.auditBuf = nil
-	s.rateLimit = nil
-	s.userRateLimits = nil
 	s.auditMu.Unlock()
 }
 

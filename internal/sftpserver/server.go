@@ -4,6 +4,7 @@
 package sftpserver
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
@@ -145,6 +146,10 @@ func (s *Server) Shutdown() {
 // installs a no-op; tests substitute a park point.
 var acceptSeam = func(net.Conn) {}
 
+// handshakeTimeout bounds the SSH handshake and authentication of a new
+// connection (OpenSSH's LoginGraceTime). A variable so tests can shorten it.
+var handshakeTimeout = 30 * time.Second
+
 // pendingCount reports connection goroutines registered with wg whose Done
 // has not fired. Test-only: a WaitGroup counter cannot be read from outside,
 // so this makes the Add ordering externally observable.
@@ -184,11 +189,16 @@ func (s *Server) handleConn(nConn net.Conn) {
 		s.pending.Add(-1)
 	}()
 
+	// Bound the unauthenticated handshake: x/crypto/ssh sets no deadline of
+	// its own, so a client that connects and never speaks would otherwise
+	// pin this goroutine and its file descriptor forever.
+	_ = nConn.SetDeadline(time.Now().Add(handshakeTimeout))
 	sshConn, chans, reqs, err := ssh.NewServerConn(nConn, s.sshCfg)
 	if err != nil {
 		return
 	}
 	defer sshConn.Close()
+	_ = nConn.SetDeadline(time.Time{})
 
 	s.logger.Info("SFTP login", "user", sshConn.User(), "remote", nConn.RemoteAddr())
 
@@ -435,10 +445,14 @@ func (sess *sftpSession) readPacket() (pktType byte, id uint32, payload []byte, 
 		err = fmt.Errorf("packet too large: %d", length)
 		return
 	}
-	buf := make([]byte, length)
-	if _, err = io.ReadFull(sess.ch, buf); err != nil {
+	// Grow the buffer as bytes arrive instead of allocating the declared
+	// length up front: a 4-byte header must not pin 16 MiB per session.
+	var body bytes.Buffer
+	body.Grow(int(min(length, 32<<10)))
+	if _, err = io.CopyN(&body, sess.ch, int64(length)); err != nil {
 		return
 	}
+	buf := body.Bytes()
 	pktType = buf[0]
 	if pktType == sshFXPInit {
 		return pktType, 0, buf[1:], nil

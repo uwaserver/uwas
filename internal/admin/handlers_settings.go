@@ -55,6 +55,21 @@ func (d *settingsDeps) Reload() error {
 	}
 	return d.s.reloadFn()
 }
+
+// WebhooksChanged pushes the current config webhooks to the live manager.
+// The snapshot and the push both happen under the config read lock, so a
+// concurrent writer cannot be overtaken by an older snapshot.
+func (d *settingsDeps) WebhooksChanged() {
+	if d.s.webhookMgr == nil {
+		return
+	}
+	d.s.configMu.RLock()
+	defer d.s.configMu.RUnlock()
+	webhooks := make([]config.WebhookConfig, len(d.s.config.Global.Webhooks))
+	copy(webhooks, d.s.config.Global.Webhooks)
+	d.s.webhookMgr.UpdateWebhooks(toWebhookConfigs(webhooks))
+}
+
 func (d *settingsDeps) ToInt(v any) int                      { return toInt(v) }
 func (d *settingsDeps) ParseDur(s string) config.Duration    { return parseDur(s) }
 func (d *settingsDeps) ByteSizeStr(b config.ByteSize) string { return byteSizeStr(b) }

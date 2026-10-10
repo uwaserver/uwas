@@ -212,11 +212,6 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, cancelCh 
 	m.mu.Unlock()
 	gitDir := filepath.Join(appRoot, ".git")
 
-	// Clean common build artifacts before fresh deploy
-	for _, dir := range []string{"node_modules", "dist", "build", "__pycache__", ".next", ".nuxt"} {
-		os.RemoveAll(filepath.Join(appRoot, dir)) // best-effort
-	}
-
 	// Build git environment for private repo access
 	gitEnv := make(map[string]string)
 	for k, v := range req.Env {
@@ -244,7 +239,14 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, cancelCh 
 	gitURL := req.GitURL
 	hasToken := req.GitToken != "" && gitURL != ""
 	if hasToken {
-		gitURL = injectTokenInURL(gitURL, req.GitToken)
+		// Keep the token off the git argv and out of .git/config: git rewrites
+		// the plain URL to the authenticated one from the environment
+		// (GIT_CONFIG_COUNT needs git >= 2.31).
+		if authURL := injectTokenInURL(gitURL, req.GitToken); authURL != gitURL {
+			gitEnv["GIT_CONFIG_COUNT"] = "1"
+			gitEnv["GIT_CONFIG_KEY_0"] = "url." + authURL + ".insteadOf"
+			gitEnv["GIT_CONFIG_VALUE_0"] = gitURL
+		}
 		log.WriteString("Using access token for authentication\n")
 	}
 
@@ -320,6 +322,12 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, cancelCh 
 		buildCmds = detectBuildCmds(appRoot)
 	}
 	if len(buildCmds) > 0 {
+		// Clean common build artifacts only once the checkout succeeded and a
+		// rebuild will recreate them; a failed fetch or a skipped build must
+		// leave the running app's artifacts in place.
+		for _, dir := range []string{"node_modules", "dist", "build", "__pycache__", ".next", ".nuxt"} {
+			os.RemoveAll(filepath.Join(appRoot, dir)) // best-effort
+		}
 		m.mu.Lock()
 		status.Status = "building"
 		m.mu.Unlock()
@@ -421,13 +429,12 @@ func (m *Manager) deployDockerCancellable(req DeployRequest, appRoot string, can
 	if req.DockerNetwork != "" {
 		args = append(args, "--network", req.DockerNetwork)
 	}
-	for k, v := range req.Env {
-		args = append(args, "-e", k+"="+v)
-	}
+	envArgs, cliEnv := dockerRunEnvArgs(req.Env)
+	args = append(args, envArgs...)
 	args = append(args, imageName)
 
 	log.WriteString("$ docker run " + containerName + "\n")
-	out, err := runCmd(appRoot, nil, "docker", args...)
+	out, err := runCmd(appRoot, cliEnv, "docker", args...)
 	if err != nil {
 		return fmt.Errorf("docker run: %w\n%s", err, out)
 	}
@@ -614,6 +621,44 @@ func sanitizeName(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// dockerRunEnvArgs keeps container env values off the `docker run` argv
+// (readable by any local user via /proc/<pid>/cmdline): it passes "-e KEY"
+// and hands the value to the docker CLI's environment, which docker then
+// forwards. Keys that would also reconfigure the docker CLI itself stay in the
+// "-e KEY=VALUE" form so the app env cannot redirect the CLI. Mirrors
+// internal/apps dockerEnvArgs.
+func dockerRunEnvArgs(env map[string]string) (args []string, cliEnv map[string]string) {
+	for k, v := range env {
+		if dockerCLIEnvKey(k) {
+			args = append(args, "-e", k+"="+v)
+			continue
+		}
+		args = append(args, "-e", k)
+		if cliEnv == nil {
+			cliEnv = make(map[string]string)
+		}
+		cliEnv[k] = v
+	}
+	return args, cliEnv
+}
+
+func dockerCLIEnvKey(k string) bool {
+	if _, inherited := os.LookupEnv(k); inherited {
+		return true
+	}
+	u := strings.ToUpper(k)
+	for _, prefix := range []string{"DOCKER_", "BUILDKIT_", "BUILDX_", "LD_", "SSL_", "XDG_"} {
+		if strings.HasPrefix(u, prefix) {
+			return true
+		}
+	}
+	switch u {
+	case "GODEBUG", "GOMAXPROCS", "GOGC", "GOMEMLIMIT", "GOTRACEBACK":
+		return true
+	}
+	return strings.HasSuffix(u, "_PROXY")
 }
 
 // clearStaleGitLocks removes leftover .git/**/*.lock files (e.g. shallow.lock).

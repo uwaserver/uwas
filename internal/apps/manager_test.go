@@ -431,7 +431,7 @@ func TestDockerRunArgsPublishesAdditionalPorts(t *testing.T) {
 		"127.0.0.1:5173:5173",
 		"127.0.0.1:8080:8080",
 		"PORT=3000",
-		"NODE_ENV=production",
+		"-e NODE_ENV",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("docker args missing %q: %v", want, args)

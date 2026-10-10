@@ -212,13 +212,20 @@ func runDeployCore(
 		if n := clearStaleGitLocks(gitDir, staleGitLockAge); n > 0 {
 			logBuf.WriteString(fmt.Sprintf("cleared %d stale git lock file(s)\n", n))
 		}
-		if err := runStep(ctx, def.WorkDir, "git", []string{"fetch", "origin", "--depth", "50"}, logBuf, gitEnv); err != nil {
+		// The first clone is shallow, which makes it single-branch: a bare
+		// `git fetch origin` only updates the branch it was cloned with. Name
+		// the requested branch explicitly so switching branches works.
+		fetchArgs := []string{"fetch", "origin", "--depth", "50"}
+		if gitBranch != "" {
+			fetchArgs = append(fetchArgs, "+refs/heads/"+gitBranch+":refs/remotes/origin/"+gitBranch)
+		}
+		if err := runStep(ctx, def.WorkDir, "git", fetchArgs, logBuf, gitEnv); err != nil {
 			// A crashed prior fetch often leaves shallow.lock; clear and retry once.
 			if isGitLockContention(err, logBuf.String()) {
 				if n := clearStaleGitLocks(gitDir, 0); n > 0 {
 					logBuf.WriteString(fmt.Sprintf("retrying fetch after clearing %d git lock file(s)\n", n))
 				}
-				err = runStep(ctx, def.WorkDir, "git", []string{"fetch", "origin", "--depth", "50"}, logBuf, gitEnv)
+				err = runStep(ctx, def.WorkDir, "git", fetchArgs, logBuf, gitEnv)
 			}
 			if err != nil {
 				return fmt.Errorf("git fetch failed: %w", err)

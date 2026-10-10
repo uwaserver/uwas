@@ -9,7 +9,10 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/uwaserver/uwas/internal/logger"
 )
@@ -65,12 +68,23 @@ type wafRule struct {
 	re     *regexp.Regexp
 }
 
+// sqlSep is what SQL accepts between two keywords: whitespace, an inline
+// comment, or a MySQL versioned-comment opener ("/*!50000"). Requiring plain
+// \s+ let UNION/**/SELECT, UNION ALL SELECT and UNION(SELECT through while
+// "union select" was blocked.
+const sqlSep = `(?:\s|/\*!\d*|/\*(?s:.*?)\*/)+`
+
+// sqlUnion matches UNION [ALL|DISTINCT] SELECT with any sqlSep (or an opening
+// parenthesis) between the words. The trailing \b keeps prose such as
+// "European Union (selected members)" from matching.
+const sqlUnion = `union(?:\s|\(|/\*!\d*|/\*(?s:.*?)\*/)+(?:(?:all|distinct)(?:\s|\(|/\*!\d*|/\*(?s:.*?)\*/)+)?select\b`
+
 // wafURLPatterns are checked against URL + query string only.
 var wafURLPatterns = []wafRule{
 	// SQL injection
-	{WAFSQLInjection, regexp.MustCompile(`(?i)(union\s+select|insert\s+into|delete\s+from|drop\s+table|alter\s+table)`)},
+	{WAFSQLInjection, regexp.MustCompile(`(?i)(` + sqlUnion + `|insert` + sqlSep + `into|delete` + sqlSep + `from|drop` + sqlSep + `table|alter` + sqlSep + `table)`)},
 	{WAFSQLInjection, regexp.MustCompile(`(?i)(--|;)\s+(drop|alter|delete|insert|update)`)},
-	{WAFSQLInjection, regexp.MustCompile(`(?i)(sleep\s*\(|benchmark\s*\(|load_file\s*\(|into\s+outfile)`)},
+	{WAFSQLInjection, regexp.MustCompile(`(?i)(sleep\s*\(|benchmark\s*\(|load_file\s*\(|into` + sqlSep + `outfile)`)},
 	// Boolean tautologies: `' OR '1'='1`, `" or 1=1--`, ` and 2=2`. The rules
 	// above are keyword-driven and miss this family completely, which is
 	// awkward because it is the first thing every scanner sends and the
@@ -111,7 +125,7 @@ var wafBodyPatterns = []wafRule{
 	// XSS protocol execution is never legitimate in form data.
 	{WAFXSS, regexp.MustCompile(`(?i)(javascript|vbscript)\s*:\s*[a-z]`)},
 	// SQL injection multi-word patterns have very low false positive rate.
-	{WAFSQLInjection, regexp.MustCompile(`(?i)(union\s+select|drop\s+table|alter\s+table)`)},
+	{WAFSQLInjection, regexp.MustCompile(`(?i)(` + sqlUnion + `|drop` + sqlSep + `table|alter` + sqlSep + `table)`)},
 	// PHP stream wrappers are never legitimate in form submissions.
 	{WAFPHP, regexp.MustCompile(`(?i)php://(input|filter|data)`)},
 }
@@ -320,9 +334,89 @@ func scanJSONBody(bodyBytes []byte, families map[string]bool) bool {
 		// WAF entirely. Falling back to a raw scan of the bytes we do have
 		// matches what the non-JSON sibling branch already does, so a body is
 		// never silently exempt because of its size.
-		return matchWAF(wafBodyPatterns, families, string(bodyBytes), "")
+		//
+		// The raw bytes still carry JSON string escapes ("union\u0020select",
+		// "php:\/\/input") that every downstream JSON parser decodes, so the
+		// fallback also checks a leniently unescaped view of them.
+		raw := string(bodyBytes)
+		if matchWAF(wafBodyPatterns, families, raw, "") {
+			return true
+		}
+		unesc := jsonUnescapeLenient(raw)
+		return matchWAF(wafBodyPatterns, families, unesc, wafUnescape(unesc))
 	}
 	return scanJSONValue(value, families)
+}
+
+// jsonUnescapeLenient decodes JSON string escapes (\uXXXX including surrogate
+// pairs, \/, \", \\, \b, \f, \n, \r, \t) wherever they appear in s and
+// keeps anything malformed as literal text. It works on a truncated document,
+// which json.Unmarshal cannot.
+func jsonUnescapeLenient(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c != '\\' || i+1 >= len(s) {
+			b.WriteByte(c)
+			continue
+		}
+		switch e := s[i+1]; e {
+		case '"', '\\', '/':
+			b.WriteByte(e)
+			i++
+		case 'b':
+			b.WriteByte('\b')
+			i++
+		case 'f':
+			b.WriteByte('\f')
+			i++
+		case 'n':
+			b.WriteByte('\n')
+			i++
+		case 'r':
+			b.WriteByte('\r')
+			i++
+		case 't':
+			b.WriteByte('\t')
+			i++
+		case 'u':
+			r1, ok := jsonHex4(s, i+2)
+			if !ok {
+				b.WriteByte(c)
+				continue
+			}
+			i += 5
+			r := rune(r1)
+			if utf16.IsSurrogate(r) {
+				if r2, ok2 := jsonHex4(s, i+3); ok2 && s[i+1] == '\\' && s[i+2] == 'u' {
+					if d := utf16.DecodeRune(r, rune(r2)); d != utf8.RuneError {
+						r = d
+						i += 6
+					}
+				}
+			}
+			b.WriteRune(r)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
+// jsonHex4 parses the four hex digits of a \u escape starting at s[at].
+func jsonHex4(s string, at int) (uint16, bool) {
+	if at < 0 || at+4 > len(s) {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(s[at:at+4], 16, 16)
+	if err != nil {
+		return 0, false
+	}
+	return uint16(v), true
 }
 
 // scanJSONValue dispatches a decoded JSON value for WAF checking.

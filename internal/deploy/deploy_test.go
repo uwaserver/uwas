@@ -695,14 +695,17 @@ func TestDeployGit_WithToken(t *testing.T) {
 	runCmdFn = func(dir string, env map[string]string, name string, args ...string) (string, error) {
 		cmd := name + " " + strings.Join(args, " ")
 		if strings.Contains(cmd, "git clone") {
-			// Check that token was injected in URL
-			for _, arg := range args {
-				if strings.Contains(arg, "ghp_token123@github.com") {
-					os.MkdirAll(gitDir, 0755)
-					return "cloned with token", nil
-				}
+			// The token reaches git through the URL rewrite in the environment,
+			// never through argv (F727).
+			if strings.Contains(cmd, "ghp_token123") {
+				t.Errorf("token on git argv: %q", cmd)
 			}
-			t.Error("expected token to be injected in git URL")
+			if env["GIT_CONFIG_KEY_0"] == "url.https://ghp_token123@github.com/user/repo.git.insteadOf" &&
+				env["GIT_CONFIG_VALUE_0"] == "https://github.com/user/repo.git" {
+				os.MkdirAll(gitDir, 0755)
+				return "cloned with token", nil
+			}
+			t.Error("expected token to be injected via git URL rewrite env")
 		}
 		if strings.Contains(cmd, "git rev-parse") {
 			return "abc1234\n", nil
@@ -1045,10 +1048,14 @@ func TestDeployDocker_WithEnvVars(t *testing.T) {
 
 	runCmdFn = func(dir string, env map[string]string, name string, args ...string) (string, error) {
 		if strings.Contains(name+" "+strings.Join(args, " "), "docker run") {
-			// Capture env var args
+			// Capture env var args; values travel in the CLI env, not argv (F726).
 			for i, arg := range args {
 				if arg == "-e" && i+1 < len(args) {
-					envVars = append(envVars, args[i+1])
+					kv := args[i+1]
+					if v, ok := env[kv]; ok {
+						kv += "=" + v
+					}
+					envVars = append(envVars, kv)
 				}
 			}
 			return "container12345678\n", nil

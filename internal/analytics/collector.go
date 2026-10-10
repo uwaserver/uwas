@@ -281,6 +281,25 @@ type Snapshot struct {
 	UserAgents    map[string]int64 `json:"user_agents"`
 }
 
+// RetainHosts drops the stats of every host not in hosts (the configured
+// domains). A deleted domain's paths, referrers and visitor IPs otherwise
+// survived, and re-adding the hostname for another tenant showed them the
+// previous owner's data.
+func (c *Collector) RetainHosts(hosts []string) {
+	keep := make(map[string]bool, len(hosts))
+	for _, h := range hosts {
+		if k, ok := statsHost(h); ok {
+			keep[k] = true
+		}
+	}
+	c.domains.Range(func(key, _ any) bool {
+		if h, ok := key.(string); !ok || !keep[h] {
+			c.domains.Delete(key)
+		}
+		return true
+	})
+}
+
 // GetAll returns snapshots for all tracked domains.
 func (c *Collector) GetAll() []Snapshot {
 	var snapshots []Snapshot
@@ -329,7 +348,6 @@ func (c *Collector) snapshot(host string, stats *DomainStats) Snapshot {
 		BytesSent:   stats.BytesSent.Load(),
 		StatusCodes: make(map[int]int64),
 		TopPaths:    make(map[string]int64),
-		HourlyViews: stats.HourlyViews,
 	}
 
 	for k, v := range stats.StatusCodes {
@@ -362,6 +380,10 @@ func (c *Collector) snapshot(host string, stats *DomainStats) Snapshot {
 		snap.ViewsLast7d += b.views
 		if b.timestamp.After(oneDayAgo) {
 			snap.ViewsLast24h += b.views
+			// HourlyViews is shown as the last 24h of traffic, so it is
+			// built from the same window instead of the all-time
+			// per-hour counters, which never age out.
+			snap.HourlyViews[b.timestamp.Hour()] += b.views
 		}
 		if b.timestamp.After(oneHourAgo) {
 			snap.ViewsLastHour += b.views

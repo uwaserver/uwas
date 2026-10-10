@@ -113,6 +113,21 @@ func (d *cfDeps) AddDomain(dom config.Domain) {
 	d.s.configMu.Unlock()
 }
 
+// AddDomainIfAbsent appends dom unless a domain with the same host already
+// exists, checking and appending under one configMu hold so two overlapping
+// zone imports cannot both add the host.
+func (d *cfDeps) AddDomainIfAbsent(dom config.Domain) bool {
+	d.s.configMu.Lock()
+	defer d.s.configMu.Unlock()
+	for _, existing := range d.s.config.Domains {
+		if strings.EqualFold(existing.Host, dom.Host) {
+			return false
+		}
+	}
+	d.s.config.Domains = append(d.s.config.Domains, dom)
+	return true
+}
+
 func (d *cfDeps) ExistingDomains() map[string]bool {
 	d.s.configMu.RLock()
 	defer d.s.configMu.RUnlock()

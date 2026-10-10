@@ -1,6 +1,7 @@
 package htaccess
 
 import (
+	"net"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -72,7 +73,25 @@ type RuleSet struct {
 	FilesMatch       []FilesMatchBlock
 	PHPValues        map[string]string // php_value directives
 	PHPFlags         map[string]string // php_flag directives (on/off → 1/0)
+	// Access is the directory-wide decision of the top-level (outside
+	// <Files>/<FilesMatch>) Require / Order-Allow-Deny directives for a
+	// client that matches no IP condition. Use AccessFor for the decision
+	// for a specific client.
+	Access AccessDecision
+	// topLevel keeps the top-level directives so AccessFor can evaluate
+	// the IP-based forms against each client.
+	topLevel []Directive
 }
+
+// AccessDecision is what a directory's top-level access-control directives
+// decide for every request under it.
+type AccessDecision int
+
+const (
+	AccessUnset   AccessDecision = iota // no unconditional Require/Allow/Deny
+	AccessGranted                       // "Require all granted" / "Allow from all"
+	AccessDenied                        // "Require all denied" / "Deny from all"
+)
 
 // RewriteRule is a converted rewrite rule.
 type RewriteRule struct {
@@ -299,7 +318,281 @@ func Convert(directives []Directive) *RuleSet {
 		}
 	}
 
+	rules.topLevel = directives
+	rules.Access = rules.AccessFor(nil)
 	return rules
+}
+
+// AccessFor evaluates the directory's top-level (outside <Files>/
+// <FilesMatch>) access-control directives for the client ip, descending into
+// <IfModule> blocks whose condition holds. ip is the client address the
+// server already resolved (RealIP, honouring trusted proxies); nil means
+// unknown and matches no IP condition.
+func (rs *RuleSet) AccessFor(ip net.IP) AccessDecision {
+	if rs == nil {
+		return AccessUnset
+	}
+	return evalAccess(rs.topLevel, ip)
+}
+
+// evalAccess implements the access-control subset of mod_authz_core and
+// mod_access_compat. Apache 2.4 Require lines (and <RequireAll>/
+// <RequireAny>/<RequireNone> containers) are combined as an implicit
+// <RequireAny> and take precedence; otherwise the 2.2 Order/Allow/Deny
+// forms decide, with Apache's default "Order deny,allow". Supported
+// conditions are "all granted|denied", "ip" (full, partial, CIDR or
+// netmask), "local" and "not" inside <RequireAll>. Authentication-based
+// lines ("valid-user", "user", "group", "file-owner", "file-group") are left
+// to the AuthUserFile gate and ignored here. Anything else ("host", "env",
+// "expr", hostnames in Allow/Deny ...) cannot be evaluated here and fails
+// closed: it never grants, and an unevaluable "Deny from" counts as matching.
+func evalAccess(ds []Directive, ip net.IP) AccessDecision {
+	var requires, allows, denies []Directive
+	order := ""
+	var walk func([]Directive)
+	walk = func(ds []Directive) {
+		for _, d := range ds {
+			switch strings.ToLower(d.Name) {
+			case "require", "requireall", "requireany", "requirenone":
+				requires = append(requires, d)
+			case "allow":
+				allows = append(allows, d)
+			case "deny":
+				denies = append(denies, d)
+			case "order":
+				order = strings.ToLower(strings.ReplaceAll(strings.Join(d.Args, ""), " ", ""))
+			case "ifmodule":
+				if ifModuleActive(d) {
+					walk(d.Block)
+				}
+			}
+		}
+	}
+	walk(ds)
+	if len(requireChildren(requires)) > 0 {
+		if requireAnyPasses(requires, ip) {
+			return AccessGranted
+		}
+		return AccessDenied
+	}
+	if len(allows) == 0 && len(denies) == 0 {
+		return AccessUnset
+	}
+	allowMatch := legacyMatches(allows, ip, false)
+	denyMatch := legacyMatches(denies, ip, true)
+	allowed := !denyMatch || allowMatch // "Order deny,allow" (default)
+	if order == "allow,deny" || order == "mutual-failure" {
+		allowed = allowMatch && !denyMatch
+	}
+	if allowed {
+		return AccessGranted
+	}
+	return AccessDenied
+}
+
+func ifModuleActive(d Directive) bool {
+	if len(d.Args) == 0 {
+		return false
+	}
+	module, negated := strings.CutPrefix(d.Args[0], "!")
+	return IsModuleLoaded(module) != negated
+}
+
+// requireChildren flattens active <IfModule> blocks among ds.
+func requireChildren(ds []Directive) []Directive {
+	var out []Directive
+	for _, d := range ds {
+		switch strings.ToLower(d.Name) {
+		case "require":
+			if !authRequire(d) {
+				out = append(out, d)
+			}
+		case "requireall", "requireany", "requirenone":
+			if len(requireChildren(d.Block)) > 0 {
+				out = append(out, d)
+			}
+		case "ifmodule":
+			if ifModuleActive(d) {
+				out = append(out, requireChildren(d.Block)...)
+			}
+		}
+	}
+	return out
+}
+
+// authRequire reports whether d is an authentication-based Require line,
+// which the AuthUserFile gate handles.
+func authRequire(d Directive) bool {
+	args := strings.Fields(strings.ToLower(strings.Join(d.Args, " ")))
+	if len(args) > 0 && args[0] == "not" {
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "valid-user", "user", "group", "file-owner", "file-group":
+		return true
+	}
+	return false
+}
+
+// requireAnyPasses: any child grants. A negated Require or <RequireNone>
+// cannot grant on its own (Apache rejects them in this context).
+func requireAnyPasses(ds []Directive, ip net.IP) bool {
+	for _, d := range requireChildren(ds) {
+		if requirePasses(d, ip, false) {
+			return true
+		}
+	}
+	return false
+}
+
+// requirePasses evaluates one Require line or container. inAll reports
+// whether the parent is a <RequireAll>, where negative conditions apply.
+func requirePasses(d Directive, ip net.IP, inAll bool) bool {
+	switch strings.ToLower(d.Name) {
+	case "requireany":
+		return requireAnyPasses(d.Block, ip)
+	case "requireall":
+		kids := requireChildren(d.Block)
+		if len(kids) == 0 {
+			return false
+		}
+		for _, k := range kids {
+			if !requirePasses(k, ip, true) {
+				return false
+			}
+		}
+		return true
+	case "requirenone":
+		if !inAll {
+			return false
+		}
+		for _, k := range requireChildren(d.Block) {
+			if requirePasses(k, ip, false) {
+				return false
+			}
+		}
+		return true
+	}
+	args := strings.Fields(strings.ToLower(strings.Join(d.Args, " ")))
+	negated := len(args) > 0 && args[0] == "not"
+	if negated {
+		args = args[1:]
+	}
+	match, ok := requireMatches(args, ip)
+	if !ok {
+		return false // unevaluable condition: fail closed
+	}
+	if negated {
+		return inAll && !match
+	}
+	return match
+}
+
+// requireMatches evaluates a Require condition; ok is false when it cannot
+// be evaluated here.
+func requireMatches(args []string, ip net.IP) (match, ok bool) {
+	if len(args) == 0 {
+		return false, false
+	}
+	switch args[0] {
+	case "all":
+		if len(args) == 2 && args[1] == "granted" {
+			return true, true
+		}
+		if len(args) == 2 && args[1] == "denied" {
+			return false, true
+		}
+	case "ip":
+		if len(args) < 2 {
+			return false, false
+		}
+		for _, spec := range args[1:] {
+			n, valid := parseIPSpec(spec)
+			if !valid {
+				return false, false
+			}
+			if ip != nil && n.Contains(ip) {
+				match = true
+			}
+		}
+		return match, true
+	case "local":
+		return ip != nil && ip.IsLoopback(), true
+	}
+	return false, false
+}
+
+// legacyMatches reports whether any 2.2 Allow/Deny line ("from all", "from
+// <ip|partial|cidr|ip/netmask> ...") matches ip. Unevaluable lines (env=,
+// hostnames) count as matching for Deny and not matching for Allow.
+func legacyMatches(ds []Directive, ip net.IP, isDeny bool) bool {
+	for _, d := range ds {
+		args := strings.Fields(strings.ToLower(strings.Join(d.Args, " ")))
+		if len(args) < 2 || args[0] != "from" {
+			if isDeny {
+				return true
+			}
+			continue
+		}
+		for _, spec := range args[1:] {
+			if spec == "all" {
+				return true
+			}
+			n, valid := parseIPSpec(spec)
+			if !valid {
+				if isDeny {
+					return true
+				}
+				continue
+			}
+			if ip != nil && n.Contains(ip) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// parseIPSpec parses the address forms mod_authz_host accepts: a full IP,
+// a CIDR, "ip/netmask", or a partial IPv4 address such as "10.1" or "10.1.".
+func parseIPSpec(spec string) (*net.IPNet, bool) {
+	if addr, mask, found := strings.Cut(spec, "/"); found {
+		if m := net.ParseIP(mask); m != nil && m.To4() != nil {
+			ip := net.ParseIP(addr).To4()
+			if ip == nil {
+				return nil, false
+			}
+			im := net.IPMask(m.To4())
+			if ones, bits := im.Size(); bits == 0 && ones == 0 {
+				return nil, false
+			}
+			return &net.IPNet{IP: ip.Mask(im), Mask: im}, true
+		}
+		_, n, err := net.ParseCIDR(spec)
+		return n, err == nil
+	}
+	if ip := net.ParseIP(spec); ip != nil {
+		if v4 := ip.To4(); v4 != nil {
+			return &net.IPNet{IP: v4, Mask: net.CIDRMask(32, 32)}, true
+		}
+		return &net.IPNet{IP: ip, Mask: net.CIDRMask(128, 128)}, true
+	}
+	parts := strings.Split(strings.TrimSuffix(spec, "."), ".")
+	if len(parts) == 0 || len(parts) > 3 {
+		return nil, false
+	}
+	ip := make(net.IP, 4)
+	for i, p := range parts {
+		v, err := strconv.Atoi(p)
+		if err != nil || v < 0 || v > 255 || p == "" {
+			return nil, false
+		}
+		ip[i] = byte(v)
+	}
+	return &net.IPNet{IP: ip, Mask: net.CIDRMask(8*len(parts), 32)}, true
 }
 
 // Merge combines another RuleSet into this one.
@@ -489,6 +782,36 @@ func FilesMatchDenies(rules *RuleSet, filename string) bool {
 			}
 		}
 		if directivesDeny(block.Directives) {
+			return true
+		}
+	}
+	return false
+}
+
+// FilesMatchDeniesFor is FilesMatchDenies evaluated for the client ip: a
+// matching block denies when its access-control directives deny that client
+// (so "Require ip"/"Allow from <ip>" allowlists deny everyone else and a
+// "Deny from <ip>" denies only that address). A block without access
+// directives does not deny.
+func FilesMatchDeniesFor(rules *RuleSet, filename string, ip net.IP) bool {
+	if rules == nil {
+		return false
+	}
+	for _, block := range rules.FilesMatch {
+		if block.Pattern == "" {
+			continue
+		}
+		if block.IsGlob {
+			if ok, err := path.Match(block.Pattern, filename); err != nil || !ok {
+				continue
+			}
+		} else {
+			re, err := regexp.Compile(block.Pattern)
+			if err != nil || !re.MatchString(filename) {
+				continue
+			}
+		}
+		if evalAccess(block.Directives, ip) == AccessDenied {
 			return true
 		}
 	}

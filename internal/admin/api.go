@@ -933,6 +933,13 @@ func (s *Server) Close() {
 	}
 }
 
+// ConfigLocks returns the locks that guard the shared *config.Config: the
+// RWMutex every admin reader and writer takes, and the mutex that serializes
+// persistConfig. The main server applies a reload under these same locks so a
+// reload cannot overwrite (or race) an admin write to the config both sides
+// share.
+func (s *Server) ConfigLocks() (*sync.RWMutex, *sync.Mutex) { return &s.configMu, &s.persistMu }
+
 // SetReloadFunc sets the callback for config reload.
 func (s *Server) SetReloadFunc(fn ReloadFunc) { s.reloadFn = fn }
 

@@ -40,7 +40,7 @@ func TestBufferedDomainLogFollowsRotation(t *testing.T) {
 		t.Cleanup(m.Close)
 		cfg := config.AccessLogConfig{Path: path, BufferSize: 4096, Rotate: config.RotateConfig{MaxSize: 1 << 20, MaxBackups: 10}}
 		m.Write("log.test", cfg, "GET", "/before", "192.0.2.1", "agent", 200, 1, 0)
-		d := m.files["log.test"]
+		d := m.files[path] // entries are keyed by log path
 		d.mu.Lock()
 		ready := make(chan struct{})
 		done := make(chan struct{})

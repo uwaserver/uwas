@@ -215,15 +215,6 @@ func Validate(cfg *Config) error {
 			}
 		}
 
-		// TLS min_version validation
-		if d.SSL.MinVersion != "" {
-			switch d.SSL.MinVersion {
-			case "1.0", "1.1", "1.2", "1.3":
-			default:
-				errs = append(errs, fmt.Sprintf("%s: invalid ssl.min_version %q (must be 1.0, 1.1, 1.2, 1.3)", prefix, d.SSL.MinVersion))
-			}
-		}
-
 		// Root: auto-fill from web_root if empty, only error if still empty
 		dt := DomainType(d.Type)
 		if (dt == DomainTypeStatic || dt == DomainTypePHP) && d.Root == "" {
@@ -234,149 +225,172 @@ func Validate(cfg *Config) error {
 			}
 		}
 
-		// internal_aliases unlock X-Sendfile/X-Accel-Redirect targets outside
-		// the document root. Reject obvious system directories — these are
-		// never legitimate values and quietly accepting them would let a
-		// compromised PHP app exfiltrate /etc, /root, etc. via X-Sendfile.
-		for j, alias := range d.InternalAliases {
-			if reason := badInternalAliasReason(alias); reason != "" {
-				errs = append(errs, fmt.Sprintf("%s.internal_aliases[%d]: %q rejected — %s",
-					prefix, j, alias, reason))
-			}
-		}
-
-		// Proxy validation
-		if dt == DomainTypeProxy {
-			if len(d.Proxy.Upstreams) == 0 {
-				errs = append(errs, fmt.Sprintf("%s: proxy.upstreams required for type proxy", prefix))
-			} else {
-				seen := make(map[string]bool)
-				for j, u := range d.Proxy.Upstreams {
-					uprefix := fmt.Sprintf("%s.proxy.upstreams[%d]", prefix, j)
-					validateProxyUpstreamAddress(uprefix, u.Address, &errs)
-					if seen[u.Address] {
-						errs = append(errs, fmt.Sprintf("%s: duplicate upstream address %q", uprefix, u.Address))
-					}
-					seen[u.Address] = true
-					if u.Weight < 0 {
-						errs = append(errs, fmt.Sprintf("%s: weight must be >= 0, got %d", uprefix, u.Weight))
-					}
-				}
-			}
-
-			// Proxy algorithm validation (accept both dashed and underscored forms;
-			// the balancer normalises before dispatch).
-			if d.Proxy.Algorithm != "" && !IsValidProxyAlgorithm(d.Proxy.Algorithm) {
-				errs = append(errs, fmt.Sprintf("%s: invalid proxy.algorithm %q (must be round-robin, least-conn, weighted, ip-hash, uri-hash, random, sticky)", prefix, d.Proxy.Algorithm))
-			}
-
-			// Canary weight validation
-			if d.Proxy.Canary.Enabled {
-				if d.Proxy.Canary.Weight < 0 || d.Proxy.Canary.Weight > 100 {
-					errs = append(errs, fmt.Sprintf("%s: proxy.canary.weight must be 0-100, got %d", prefix, d.Proxy.Canary.Weight))
-				}
-				if len(d.Proxy.Canary.Upstreams) == 0 {
-					errs = append(errs, fmt.Sprintf("%s: proxy.canary.upstreams requires at least one backend", prefix))
-				}
-				for j, u := range d.Proxy.Canary.Upstreams {
-					uprefix := fmt.Sprintf("%s.proxy.canary.upstreams[%d]", prefix, j)
-					validateProxyUpstreamAddress(uprefix, u.Address, &errs)
-					if u.Weight < 0 {
-						errs = append(errs, fmt.Sprintf("%s: weight must be >= 0, got %d", uprefix, u.Weight))
-					}
-				}
-			}
-
-			// Mirror percent validation
-			if d.Proxy.Mirror.Enabled {
-				if d.Proxy.Mirror.Percent < 0 || d.Proxy.Mirror.Percent > 100 {
-					errs = append(errs, fmt.Sprintf("%s: proxy.mirror.percent must be 0-100, got %d", prefix, d.Proxy.Mirror.Percent))
-				}
-				validateProxyUpstreamAddress(prefix+".proxy.mirror", d.Proxy.Mirror.Backend, &errs)
-				if d.Proxy.Mirror.MaxBodyBytes < 0 {
-					errs = append(errs, fmt.Sprintf("%s: proxy.mirror.max_body_bytes must be >= 0", prefix))
-				}
-			}
-		}
-
-		// Redirect validation
-		if dt == DomainTypeRedirect {
-			if d.Redirect.Target == "" {
-				errs = append(errs, fmt.Sprintf("%s: redirect.target required for type redirect", prefix))
-			}
-			if d.Redirect.Status != 0 {
-				switch d.Redirect.Status {
-				case 301, 302, 307, 308:
-				default:
-					errs = append(errs, fmt.Sprintf("%s: invalid redirect.status %d (must be 301, 302, 307, 308)", prefix, d.Redirect.Status))
-				}
-			}
-		}
-
-		validateRateLimitConfig(prefix+": security.rate_limit", d.Security.RateLimit, &errs)
-
-		// Rewrite rules validation (regex must compile)
-		for j, rw := range d.Rewrites {
-			if rw.Match != "" {
-				if _, err := regexp.Compile(rw.Match); err != nil {
-					errs = append(errs, fmt.Sprintf("%s.rewrites[%d]: invalid regex in match %q: %v", prefix, j, rw.Match, err))
-				}
-			}
-		}
-
-		// Compression algorithm validation. Runs when compression is in effect,
-		// which now includes domains that never mention it (Enabled is a
-		// pointer and nil means on). A block the operator explicitly disabled
-		// is left alone: rejecting a typo there would refuse to start on a
-		// setting that does nothing.
-		if d.Compression.CompressionEnabled() {
-			for j, alg := range d.Compression.Algorithms {
-				switch alg {
-				case "gzip", "br":
-				default:
-					errs = append(errs, fmt.Sprintf("%s.compression.algorithms[%d]: invalid algorithm %q (must be gzip, br)", prefix, j, alg))
-				}
-			}
-		}
-
-		// Image optimization format validation
-		if d.ImageOptimization.Enabled {
-			for j, f := range d.ImageOptimization.Formats {
-				switch f {
-				case "webp", "avif":
-				default:
-					errs = append(errs, fmt.Sprintf("%s.image_optimization.formats[%d]: invalid format %q (must be webp, avif)", prefix, j, f))
-				}
-			}
-		}
-
-		// Domain-level cache TTL validation
-		if d.Cache.TTL < 0 {
-			errs = append(errs, fmt.Sprintf("%s: cache.ttl must be >= 0, got %d", prefix, d.Cache.TTL))
-		}
-		for j, rule := range d.Cache.Rules {
-			if rule.TTL < 0 {
-				errs = append(errs, fmt.Sprintf("%s.cache.rules[%d]: ttl must be >= 0, got %d", prefix, j, rule.TTL))
-			}
-			// match is a REGEX, not a glob. An uncompilable pattern used to be
-			// swallowed at request time (matchPath returns false), so a rule
-			// written as "*.html" silently never matched and the operator got
-			// no bypass, no Cache-Control and no ttl — with nothing to explain
-			// why. Report it here instead.
-			if rule.Match != "" {
-				if _, err := regexp.Compile(rule.Match); err != nil {
-					errs = append(errs, fmt.Sprintf(
-						"%s.cache.rules[%d].match: not a valid regular expression (%v) — this field is a regex, not a glob; use \\.html$ rather than *.html",
-						prefix, j, err))
-				}
-			}
-		}
+		validateDomainShape(prefix, &d, false, &errs)
 	}
 
 	if len(errs) > 0 {
 		return fmt.Errorf("config validation failed:\n  %s", strings.Join(errs, "\n  "))
 	}
 	return nil
+}
+
+// validateDomainShape holds the per-domain checks that need nothing but the
+// domain itself. Validate (the loader) and validateDomain (the admin API) both
+// run it, so the API cannot accept and persist a domain that the next Load
+// would reject — which would stop the whole server from starting or reloading.
+// partial skips the two cross-field "required" invariants, as
+// ValidateDomainPartial documents.
+func validateDomainShape(prefix string, d *Domain, partial bool, errs *[]string) {
+	dt := DomainType(d.Type)
+
+	// TLS min_version validation
+	if d.SSL.MinVersion != "" {
+		switch d.SSL.MinVersion {
+		case "1.0", "1.1", "1.2", "1.3":
+		default:
+			*errs = append(*errs, fmt.Sprintf("%s: invalid ssl.min_version %q (must be 1.0, 1.1, 1.2, 1.3)", prefix, d.SSL.MinVersion))
+		}
+	}
+
+	// internal_aliases unlock X-Sendfile/X-Accel-Redirect targets outside
+	// the document root. Reject obvious system directories — these are
+	// never legitimate values and quietly accepting them would let a
+	// compromised PHP app exfiltrate /etc, /root, etc. via X-Sendfile.
+	for j, alias := range d.InternalAliases {
+		if reason := badInternalAliasReason(alias); reason != "" {
+			*errs = append(*errs, fmt.Sprintf("%s.internal_aliases[%d]: %q rejected — %s",
+				prefix, j, alias, reason))
+		}
+	}
+
+	// Proxy validation
+	if dt == DomainTypeProxy {
+		if len(d.Proxy.Upstreams) == 0 {
+			if !partial {
+				*errs = append(*errs, fmt.Sprintf("%s: proxy.upstreams required for type proxy", prefix))
+			}
+		} else {
+			seen := make(map[string]bool)
+			for j, u := range d.Proxy.Upstreams {
+				uprefix := fmt.Sprintf("%s.proxy.upstreams[%d]", prefix, j)
+				validateProxyUpstreamAddress(uprefix, u.Address, errs)
+				if seen[u.Address] {
+					*errs = append(*errs, fmt.Sprintf("%s: duplicate upstream address %q", uprefix, u.Address))
+				}
+				seen[u.Address] = true
+				if u.Weight < 0 {
+					*errs = append(*errs, fmt.Sprintf("%s: weight must be >= 0, got %d", uprefix, u.Weight))
+				}
+			}
+		}
+
+		// Proxy algorithm validation (accept both dashed and underscored forms;
+		// the balancer normalises before dispatch).
+		if d.Proxy.Algorithm != "" && !IsValidProxyAlgorithm(d.Proxy.Algorithm) {
+			*errs = append(*errs, fmt.Sprintf("%s: invalid proxy.algorithm %q (must be round-robin, least-conn, weighted, ip-hash, uri-hash, random, sticky)", prefix, d.Proxy.Algorithm))
+		}
+
+		// Canary weight validation
+		if d.Proxy.Canary.Enabled {
+			if d.Proxy.Canary.Weight < 0 || d.Proxy.Canary.Weight > 100 {
+				*errs = append(*errs, fmt.Sprintf("%s: proxy.canary.weight must be 0-100, got %d", prefix, d.Proxy.Canary.Weight))
+			}
+			if len(d.Proxy.Canary.Upstreams) == 0 {
+				*errs = append(*errs, fmt.Sprintf("%s: proxy.canary.upstreams requires at least one backend", prefix))
+			}
+			for j, u := range d.Proxy.Canary.Upstreams {
+				uprefix := fmt.Sprintf("%s.proxy.canary.upstreams[%d]", prefix, j)
+				validateProxyUpstreamAddress(uprefix, u.Address, errs)
+				if u.Weight < 0 {
+					*errs = append(*errs, fmt.Sprintf("%s: weight must be >= 0, got %d", uprefix, u.Weight))
+				}
+			}
+		}
+
+		// Mirror percent validation
+		if d.Proxy.Mirror.Enabled {
+			if d.Proxy.Mirror.Percent < 0 || d.Proxy.Mirror.Percent > 100 {
+				*errs = append(*errs, fmt.Sprintf("%s: proxy.mirror.percent must be 0-100, got %d", prefix, d.Proxy.Mirror.Percent))
+			}
+			validateProxyUpstreamAddress(prefix+".proxy.mirror", d.Proxy.Mirror.Backend, errs)
+			if d.Proxy.Mirror.MaxBodyBytes < 0 {
+				*errs = append(*errs, fmt.Sprintf("%s: proxy.mirror.max_body_bytes must be >= 0", prefix))
+			}
+		}
+	}
+
+	// Redirect validation
+	if dt == DomainTypeRedirect {
+		if d.Redirect.Target == "" && !partial {
+			*errs = append(*errs, fmt.Sprintf("%s: redirect.target required for type redirect", prefix))
+		}
+		if d.Redirect.Status != 0 {
+			switch d.Redirect.Status {
+			case 301, 302, 307, 308:
+			default:
+				*errs = append(*errs, fmt.Sprintf("%s: invalid redirect.status %d (must be 301, 302, 307, 308)", prefix, d.Redirect.Status))
+			}
+		}
+	}
+
+	validateRateLimitConfig(prefix+": security.rate_limit", d.Security.RateLimit, errs)
+
+	// Rewrite rules validation (regex must compile)
+	for j, rw := range d.Rewrites {
+		if rw.Match != "" {
+			if _, err := regexp.Compile(rw.Match); err != nil {
+				*errs = append(*errs, fmt.Sprintf("%s.rewrites[%d]: invalid regex in match %q: %v", prefix, j, rw.Match, err))
+			}
+		}
+	}
+
+	// Compression algorithm validation. Runs when compression is in effect,
+	// which now includes domains that never mention it (Enabled is a
+	// pointer and nil means on). A block the operator explicitly disabled
+	// is left alone: rejecting a typo there would refuse to start on a
+	// setting that does nothing.
+	if d.Compression.CompressionEnabled() {
+		for j, alg := range d.Compression.Algorithms {
+			switch alg {
+			case "gzip", "br":
+			default:
+				*errs = append(*errs, fmt.Sprintf("%s.compression.algorithms[%d]: invalid algorithm %q (must be gzip, br)", prefix, j, alg))
+			}
+		}
+	}
+
+	// Image optimization format validation
+	if d.ImageOptimization.Enabled {
+		for j, f := range d.ImageOptimization.Formats {
+			switch f {
+			case "webp", "avif":
+			default:
+				*errs = append(*errs, fmt.Sprintf("%s.image_optimization.formats[%d]: invalid format %q (must be webp, avif)", prefix, j, f))
+			}
+		}
+	}
+
+	// Domain-level cache TTL validation
+	if d.Cache.TTL < 0 {
+		*errs = append(*errs, fmt.Sprintf("%s: cache.ttl must be >= 0, got %d", prefix, d.Cache.TTL))
+	}
+	for j, rule := range d.Cache.Rules {
+		if rule.TTL < 0 {
+			*errs = append(*errs, fmt.Sprintf("%s.cache.rules[%d]: ttl must be >= 0, got %d", prefix, j, rule.TTL))
+		}
+		// match is a REGEX, not a glob. An uncompilable pattern used to be
+		// swallowed at request time (matchPath returns false), so a rule
+		// written as "*.html" silently never matched and the operator got
+		// no bypass, no Cache-Control and no ttl — with nothing to explain
+		// why. Report it here instead.
+		if rule.Match != "" {
+			if _, err := regexp.Compile(rule.Match); err != nil {
+				*errs = append(*errs, fmt.Sprintf(
+					"%s.cache.rules[%d].match: not a valid regular expression (%v) — this field is a regex, not a glob; use \\.html$ rather than *.html",
+					prefix, j, err))
+			}
+		}
+	}
 }
 
 func canonicalValidateHostname(host string) string {
@@ -524,6 +538,12 @@ func validateDomain(d *Domain, partial bool) error {
 	}
 	if d.Security.RateLimit.Requests < 0 {
 		return fmt.Errorf("rate limit requests cannot be negative")
+	}
+
+	var shapeErrs []string
+	validateDomainShape("domain", d, partial, &shapeErrs)
+	if len(shapeErrs) > 0 {
+		return fmt.Errorf("%s", shapeErrs[0])
 	}
 
 	return nil
@@ -698,7 +718,42 @@ func ipBlockedReason(ip net.IP, policy urlSafetyPolicy) string {
 	if inAnyIPBlock(ip, documentationIPBlocks) {
 		return "documentation address"
 	}
+	// IPv6 translation/transition forms designate an IPv4 host; classify that
+	// host so 64:ff9b::a9fe:a9fe can't reach 169.254.169.254 through a NAT64.
+	if kind, v4 := embeddedIPv4(ip); v4 != nil {
+		if reason := ipBlockedReason(v4, policy); reason != "" {
+			return kind + "-embedded " + reason
+		}
+	}
+	if nat64LocalUse.Contains(ip) && !policy.allowPrivate {
+		return "local-use NAT64 address"
+	}
 	return ""
+}
+
+var (
+	nat64WellKnown = mustParseCIDR("64:ff9b::/96")   // RFC 6052
+	nat64LocalUse  = mustParseCIDR("64:ff9b:1::/48") // RFC 8215, operator-defined layout
+	sixToFour      = mustParseCIDR("2002::/16")      // RFC 3056
+	ipv4Compatible = mustParseCIDR("::/96")          // RFC 4291 (deprecated)
+)
+
+// embeddedIPv4 returns the IPv4 address designated by a NAT64, 6to4 or
+// IPv4-compatible IPv6 address, or nil. ip must already be normalized so that
+// IPv4-mapped addresses are 4 bytes. :: and ::1 are not IPv4-compatible.
+func embeddedIPv4(ip net.IP) (string, net.IP) {
+	if len(ip) != net.IPv6len {
+		return "", nil
+	}
+	switch {
+	case nat64WellKnown.Contains(ip):
+		return "NAT64", net.IPv4(ip[12], ip[13], ip[14], ip[15]).To4()
+	case sixToFour.Contains(ip):
+		return "6to4", net.IPv4(ip[2], ip[3], ip[4], ip[5]).To4()
+	case ipv4Compatible.Contains(ip) && !ip.Equal(net.IPv6unspecified) && !ip.Equal(net.IPv6loopback):
+		return "IPv4-compatible", net.IPv4(ip[12], ip[13], ip[14], ip[15]).To4()
+	}
+	return "", nil
 }
 
 func inAnyIPBlock(ip net.IP, blocks []*net.IPNet) bool {

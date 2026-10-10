@@ -182,14 +182,21 @@ func loadDomainFile(path string) ([]Domain, error) {
 	if err := yaml.Unmarshal([]byte(expanded), &wrapper); err != nil {
 		return nil, fmt.Errorf("parse: %w", err)
 	}
-	if len(wrapper.Domains) > 0 {
-		return wrapper.Domains, nil
-	}
 
 	// Try Format 1: single domain object
 	var domain Domain
 	if err := yaml.Unmarshal([]byte(expanded), &domain); err != nil {
 		return nil, fmt.Errorf("parse: %w", err)
+	}
+
+	if len(wrapper.Domains) > 0 {
+		// A file is one format or the other. Mixing them used to load only the
+		// list and silently drop the top-level domain, so what was loaded was
+		// not what a single-domain reader (e.g. the raw editor) had checked.
+		if domain.Host != "" {
+			return nil, fmt.Errorf("file defines both a top-level host and a domains list")
+		}
+		return wrapper.Domains, nil
 	}
 
 	if domain.Host == "" {

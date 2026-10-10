@@ -433,8 +433,10 @@ func (s *Server) handleBulkDomainImport(w http.ResponseWriter, r *http.Request) 
 
 	s.configMu.Lock()
 	existing := map[string]bool{}
+	// Key by canonical host: apex and www are one domain (config validation
+	// rejects them as duplicate hosts), so importing www.x next to x must skip.
 	for _, d := range s.config.Domains {
-		existing[normalizeDomainHostname(d.Host)] = true
+		existing[domainutil.CanonicalDomainHostname(d.Host)] = true
 	}
 
 	var added, skipped []string
@@ -444,7 +446,8 @@ func (s *Server) handleBulkDomainImport(w http.ResponseWriter, r *http.Request) 
 	}
 	for _, d := range req.Domains {
 		host := normalizeDomainHostname(d.Host)
-		if host == "" || existing[host] {
+		key := domainutil.CanonicalDomainHostname(host)
+		if host == "" || existing[key] {
 			skipped = append(skipped, host)
 			continue
 		}
@@ -466,11 +469,10 @@ func (s *Server) handleBulkDomainImport(w http.ResponseWriter, r *http.Request) 
 		}
 		s.config.Domains = append(s.config.Domains, domain)
 		added = append(added, host)
-		existing[host] = true
-		if autoHost := domainutil.AutoWWWRedirectHost(domain); autoHost != "" && !existing[autoHost] {
-			s.config.Domains = append(s.config.Domains, domainutil.NewCanonicalRedirectAliasDomain(autoHost, host, http.StatusMovedPermanently, true))
-			existing[autoHost] = true
-		}
+		existing[key] = true
+		// No separate www redirect domain: the router already serves www.<host>
+		// for this domain, and NewCanonicalRedirectAliasDomain folds the www
+		// alias back to <host>, which produced a self-redirecting duplicate.
 	}
 	s.configMu.Unlock()
 

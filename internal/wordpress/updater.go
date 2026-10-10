@@ -149,6 +149,13 @@ func UpdateCore(webRoot string) (string, error) {
 		if safe, _ := filepath.Rel(webRoot, dst); safe == ".." || filepath.IsAbs(safe) {
 			return fmt.Errorf("path traversal attempt detected: %s", dst)
 		}
+		// MkdirAll accepts an existing symlink-to-dir, and everything below it
+		// would then be written through it (writeFileNoFollow only guards the
+		// final component). The walk is top-down, so checking each directory
+		// here covers every parent of every file.
+		if fi, lerr := os.Lstat(dst); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to write through symlink: %s", dst)
+		}
 		if info.IsDir() {
 			return osMkdirAllFn(dst, 0755)
 		}
@@ -213,6 +220,25 @@ func DeletePlugin(webRoot, plugin string) (string, error) {
 	return wpCLI(webRoot, "plugin", "delete", plugin)
 }
 
+// pathHasSymlink reports whether any component of rel below root is a
+// symlink, or cannot be inspected. chmod/chown/MkdirAll follow symlinks, so
+// FixPermissions (running as root) must not touch a path the domain user has
+// pointed elsewhere. A component that does not exist yet is safe.
+func pathHasSymlink(root, rel string) bool {
+	p := root
+	for _, part := range strings.Split(filepath.Clean(rel), string(filepath.Separator)) {
+		p = filepath.Join(p, part)
+		fi, err := os.Lstat(p)
+		if os.IsNotExist(err) {
+			return false
+		}
+		if err != nil || fi.Mode()&os.ModeSymlink != 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // FixPermissions sets correct WordPress file permissions.
 func FixPermissions(webRoot string) (string, error) {
 	var log strings.Builder
@@ -228,11 +254,19 @@ func FixPermissions(webRoot string) (string, error) {
 		log.WriteString("Files set to 644\n")
 	}
 	// wp-content writable
-	execCommandFn("chmod", "-R", "775", filepath.Join(webRoot, "wp-content")).Run()
-	log.WriteString("wp-content set to 775\n")
+	if pathHasSymlink(webRoot, "wp-content") {
+		log.WriteString("wp-content is a symlink — skipped chmod\n")
+	} else {
+		execCommandFn("chmod", "-R", "775", filepath.Join(webRoot, "wp-content")).Run()
+		log.WriteString("wp-content set to 775\n")
+	}
 	// wp-config.php locked
-	execCommandFn("chmod", "600", filepath.Join(webRoot, "wp-config.php")).Run()
-	log.WriteString("wp-config.php set to 600\n")
+	if pathHasSymlink(webRoot, "wp-config.php") {
+		log.WriteString("wp-config.php is a symlink — skipped chmod\n")
+	} else {
+		execCommandFn("chmod", "600", filepath.Join(webRoot, "wp-config.php")).Run()
+		log.WriteString("wp-config.php set to 600\n")
+	}
 	// Owner
 	execCommandFn("chown", "-R", "www-data:www-data", webRoot).Run()
 	log.WriteString("Owner set to www-data:www-data\n")
@@ -266,6 +300,10 @@ func FixPermissions(webRoot string) (string, error) {
 		filepath.Join("wp-content", "uploads"),
 		".tmp",
 	} {
+		if pathHasSymlink(webRoot, sub) {
+			log.WriteString(sub + " is under a symlink — skipped\n")
+			continue
+		}
 		dir := filepath.Join(webRoot, sub)
 		osMkdirAllFn(dir, 0775)
 		execCommandFn("chown", "www-data:www-data", dir).Run()
@@ -404,6 +442,11 @@ func ChangeUserPassword(webRoot, username, newPassword string) error {
 	if err := validWPUsername(username); err != nil {
 		return err
 	}
-	_, err := wpCLI(webRoot, "user", "update", username, "--user_pass="+newPassword)
+	// wp-cli reads --prompt values one line per field from stdin, so the
+	// password stays off argv. A line break would end it early.
+	if strings.ContainsAny(newPassword, "\r\n") {
+		return fmt.Errorf("password must not contain line breaks")
+	}
+	_, err := wpCLIStdin(webRoot, strings.NewReader(newPassword+"\n"), "user", "update", username, "--prompt=user_pass")
 	return err
 }

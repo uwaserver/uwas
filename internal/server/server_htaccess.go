@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/phpmanager"
 	"github.com/uwaserver/uwas/internal/rewrite"
 	"github.com/uwaserver/uwas/internal/router"
 	"github.com/uwaserver/uwas/pkg/htaccess"
@@ -57,7 +59,9 @@ func (s *Server) applyRewrites(ctx *router.RequestContext, domain *config.Domain
 // Parsed rules are cached per domain root and invalidated on config reload.
 // Returns true when the request was fully handled (forbidden/gone/redirect) and
 // the caller must stop dispatch — mirroring applyRewrites for the YAML path.
-func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain) bool {
+// internalRewrite=false still honors [F]/[G]/[R] results but leaves the
+// request path unchanged.
+func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain, internalRewrite bool) bool {
 	ruleSet := s.getHtaccessRuleSet(domain.Root)
 	if ruleSet == nil || ruleSet.raw == nil {
 		return false
@@ -96,7 +100,7 @@ func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain
 			http.Redirect(ctx.Response, ctx.Request, result.URI, result.StatusCode)
 			return true
 		}
-		if result.Modified {
+		if result.Modified && internalRewrite {
 			ctx.Request.URL.Path = result.URI
 			if result.Query != "" {
 				ctx.Request.URL.RawQuery = result.Query
@@ -170,15 +174,25 @@ func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain
 	// 5. Apply php_value / php_flag — store per-request override instead of mutating domain.
 	// PHP-FPM reads PHP_VALUE and PHP_ADMIN_VALUE from FastCGI env to override ini settings.
 	if len(ruleSet.raw.PHPValues) > 0 || len(ruleSet.raw.PHPFlags) > 0 {
+		// A tenant writes .htaccess, so apply the same directive checks as
+		// the per-domain php.ini override path: a blocked directive (or a
+		// value carrying a line break PHP's ini parser would split on) must
+		// not reach PHP through PHP_VALUE instead.
 		var phpValues []string
 		for k, v := range ruleSet.raw.PHPValues {
-			phpValues = append(phpValues, k+" = "+v)
+			if phpmanager.INIOverrideAllowed(k, v) {
+				phpValues = append(phpValues, k+" = "+v)
+			}
 		}
 		for k, v := range ruleSet.raw.PHPFlags {
-			phpValues = append(phpValues, k+" = "+v)
+			if phpmanager.INIOverrideAllowed(k, v) {
+				phpValues = append(phpValues, k+" = "+v)
+			}
 		}
-		ctx.PHPEnvOverride = map[string]string{
-			"PHP_VALUE": strings.Join(phpValues, "\n"),
+		if len(phpValues) > 0 {
+			ctx.PHPEnvOverride = map[string]string{
+				"PHP_VALUE": strings.Join(phpValues, "\n"),
+			}
 		}
 	}
 	return false
@@ -272,6 +286,68 @@ func (s *Server) getHtaccessRuleSet(root string) *htaccessCacheEntry {
 	s.htaccessCacheMu.Unlock()
 
 	return entry
+}
+
+// htaccessDeny is the access-control outcome of the .htaccess chain for one
+// target: status 0 means allowed; reason is "auth" when an AuthUserFile
+// guard (which UWAS cannot verify) caused the denial.
+type htaccessDeny struct {
+	status int
+	reason string
+}
+
+// htaccessAccess applies the access-control directives of every .htaccess
+// from root down to target's directory (target itself when isDir), the way
+// Apache merges per-directory configuration: an unparseable file anywhere
+// answers 500; a matching <Files>/<FilesMatch> deny or an AuthUserFile in any
+// of them answers 403; and the deepest directory whose top-level
+// Require/Allow/Deny decides wins, answering 403 when it denies. target must
+// be lexically inside root (ResolveRequest guarantees this); anything else
+// is checked against root's .htaccess only. clientIP is the client address
+// RealIP resolved (trusted proxies honoured), against which IP-based
+// Require/Allow/Deny forms are evaluated; nil matches no IP condition.
+func (s *Server) htaccessAccess(root, target string, isDir bool, clientIP net.IP) htaccessDeny {
+	dir := target
+	if !isDir {
+		dir = filepath.Dir(target)
+	}
+	dirs := []string{root}
+	if rel, err := filepath.Rel(root, dir); err == nil && rel != "." && rel != ".." &&
+		!strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		cur := root
+		for _, part := range strings.Split(rel, string(filepath.Separator)) {
+			cur = filepath.Join(cur, part)
+			dirs = append(dirs, cur)
+		}
+	}
+
+	var res htaccessDeny
+	access := htaccess.AccessUnset
+	for _, d := range dirs {
+		entry := s.getHtaccessRuleSet(d)
+		if entry == nil {
+			continue
+		}
+		if entry.parseFailed {
+			return htaccessDeny{status: http.StatusInternalServerError}
+		}
+		if entry.raw == nil {
+			continue
+		}
+		if !isDir && res.status == 0 && htaccess.FilesMatchDeniesFor(entry.raw, filepath.Base(target), clientIP) {
+			res = htaccessDeny{status: http.StatusForbidden}
+		}
+		if htaccess.AuthUserFileRequiresAuth(entry.raw) && res.reason == "" {
+			res = htaccessDeny{status: http.StatusForbidden, reason: "auth"}
+		}
+		if a := entry.raw.AccessFor(clientIP); a != htaccess.AccessUnset {
+			access = a
+		}
+	}
+	if res.status == 0 && access == htaccess.AccessDenied {
+		res.status = http.StatusForbidden
+	}
+	return res
 }
 
 func (s *Server) parseHtaccessFull(root string) *htaccessCacheEntry {

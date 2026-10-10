@@ -187,6 +187,24 @@ func (h *Handler) stopTunnels(tunnels []Tunnel) {
 	}
 }
 
+// saveState persists st. On failure it logs, records a failed audit entry and
+// answers 500, so the client is never told a change was saved when it was not.
+func (h *Handler) saveState(w http.ResponseWriter, r *http.Request, st *State, action, detail string) bool {
+	if err := h.deps.SaveCloudflareState(st); err != nil {
+		h.deps.LogError("cloudflare state save failed", "error", err)
+		h.deps.RecordAudit(r, action, detail, false)
+		jsonError(w, "cloudflare state could not be saved: "+err.Error(), http.StatusInternalServerError)
+		return false
+	}
+	return true
+}
+
+// domainAdder is implemented by adapters that can check for an existing host
+// and append under one lock, so overlapping imports cannot add a host twice.
+type domainAdder interface {
+	AddDomainIfAbsent(d config.Domain) bool
+}
+
 // ── Handlers ──
 
 func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
@@ -307,8 +325,8 @@ func (h *Handler) Connect(w http.ResponseWriter, r *http.Request) {
 	st.Tunnels = []Tunnel{}
 	st.Connected = true
 	st.UpdatedAt = time.Now()
-	if err := h.deps.SaveCloudflareState(st); err != nil {
-		h.deps.LogError("cloudflare state save failed", "error", err)
+	if !h.saveState(w, r, st, "cloudflare.connect", "account: "+req.AccountID) {
+		return
 	}
 	h.deps.RecordAudit(r, "cloudflare.connect", "account: "+req.AccountID, true)
 	jsonResponse(w, map[string]string{"status": "connected"})
@@ -331,8 +349,8 @@ func (h *Handler) Disconnect(w http.ResponseWriter, r *http.Request) {
 		st.Email = ""
 		st.Tunnels = nil
 	}
-	if err := h.deps.SaveCloudflareState(st); err != nil {
-		h.deps.LogError("cloudflare state save failed", "error", err)
+	if !h.saveState(w, r, st, "cloudflare.disconnect", "account: "+oldAccountID) {
+		return
 	}
 	if oldAccountID != "" {
 		h.deps.RecordAudit(r, "cloudflare.disconnect", "account: "+oldAccountID, true)
@@ -439,8 +457,8 @@ func (h *Handler) TunnelCreate(w http.ResponseWriter, r *http.Request) {
 	tunnel.CreatedAt = time.Now()
 	st.Tunnels = append(st.Tunnels, tunnel)
 	st.UpdatedAt = time.Now()
-	if err := h.deps.SaveCloudflareState(st); err != nil {
-		h.deps.LogError("cloudflare state save failed", "error", err)
+	if !h.saveState(w, r, st, "cloudflare.tunnel.create", req.Name+" → "+req.Hostname) {
+		return
 	}
 	h.deps.RecordAudit(r, "cloudflare.tunnel.create", req.Name+" → "+req.Hostname, true)
 	jsonResponse(w, tunnelToView(tunnel, h.deps))
@@ -483,7 +501,9 @@ func (h *Handler) TunnelDelete(w http.ResponseWriter, r *http.Request) {
 	st.UpdatedAt = time.Now()
 	h.deps.TunnelStop(id)
 	h.deps.TunnelForget(id)
-	h.deps.SaveCloudflareState(st)
+	if !h.saveState(w, r, st, "cloudflare.tunnel.delete", "id: "+id) {
+		return
+	}
 	h.deps.RecordAudit(r, "cloudflare.tunnel.delete", "id: "+id, true)
 	jsonResponse(w, map[string]string{"status": "deleted"})
 }
@@ -671,6 +691,11 @@ func (h *Handler) ZoneImport(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(host, ".cfargotunnel.com") {
 			continue
 		}
+		// Service names such as _acme-challenge.* or s1._domainkey.* are DNS
+		// plumbing, not sites; they are not valid hostnames for a domain.
+		if !config.IsValidHostname(host) {
+			continue
+		}
 		if whitelist != nil && !whitelist[host] {
 			continue
 		}
@@ -723,7 +748,16 @@ func (h *Handler) ZoneImport(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		h.deps.AddDomain(d)
+		if a, ok := h.deps.(domainAdder); ok {
+			// The snapshot above can be stale: another import may have added
+			// this host since. Re-check and append under the config lock.
+			if !a.AddDomainIfAbsent(d) {
+				skipped = append(skipped, host)
+				continue
+			}
+		} else {
+			h.deps.AddDomain(d)
+		}
 		existing[host] = true
 		added = append(added, host)
 	}

@@ -4350,7 +4350,7 @@ func TestAddDomainBadJSON(t *testing.T) {
 
 func TestAddDomainProxyWithUpstreams(t *testing.T) {
 	s := testServer()
-	body := strings.NewReader(`{"host":"lb.com","type":"proxy","proxy":{"upstreams":[{"url":"http://localhost:3000"}]}}`)
+	body := strings.NewReader(`{"host":"lb.com","type":"proxy","proxy":{"upstreams":[{"address":"http://localhost:3000"}]}}`)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/domains", body)
 	req.RemoteAddr = "10.0.0.1:1234"

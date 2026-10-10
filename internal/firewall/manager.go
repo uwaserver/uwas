@@ -3,6 +3,7 @@ package firewall
 
 import (
 	"fmt"
+	"net/netip"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -25,6 +26,13 @@ type Rule struct {
 	Proto   string `json:"proto,omitempty"`
 	Comment string `json:"comment,omitempty"`
 	V6      bool   `json:"v6,omitempty"` // IPv6 rule (Anywhere (v6))
+
+	// scope is the rule's "To" side and direction when they are more than a
+	// plain port/proto or Anywhere on IN — an app profile ("Nginx Full"), an
+	// interface ("3306/tcp on eth1"), a destination ("10.0.0.5 3306/tcp") or
+	// OUT/FWD. Empty for plain rules. Identity checks include it so distinct
+	// rules are never treated as the same one.
+	scope string
 }
 
 // Status returns firewall status and rules.
@@ -170,8 +178,67 @@ func parseUFWRule(line string) Rule {
 	if r.From == "" {
 		r.From = "Anywhere"
 	}
+	r.scope = ufwRuleScope(parts)
 
 	return r
+}
+
+// ufwRuleScope returns "" when the tokens before the action are a single plain
+// port/proto or "Anywhere" and the direction is IN; otherwise it returns those
+// tokens plus the direction, so scoped rules keep a distinct identity.
+func ufwRuleScope(parts []string) string {
+	act := -1
+	for i, p := range parts {
+		up := strings.ToUpper(p)
+		if up == "ALLOW" || up == "DENY" || up == "REJECT" || up == "LIMIT" {
+			act = i
+			break
+		}
+	}
+	if act < 0 {
+		return ""
+	}
+	var to []string
+	for _, p := range parts[:act] {
+		if p != "(v6)" {
+			to = append(to, p)
+		}
+	}
+	dir := "IN"
+	if act+1 < len(parts) {
+		if up := strings.ToUpper(parts[act+1]); up == "IN" || up == "OUT" || up == "FWD" {
+			dir = up
+		}
+	}
+	if dir == "IN" && len(to) == 1 && (to[0] == "Anywhere" || isPortToken(to[0])) {
+		return ""
+	}
+	return strings.Join(to, " ") + "|" + dir
+}
+
+// isPortToken reports a ufw port column such as "80", "80/tcp", "8000:8100/udp"
+// or "80,443/tcp" — not an address like "10.0.0.0/8".
+func isPortToken(tok string) bool {
+	port, proto, hasProto := strings.Cut(tok, "/")
+	if hasProto && proto != "tcp" && proto != "udp" {
+		return false
+	}
+	if port == "" {
+		return false
+	}
+	for _, c := range port {
+		if (c < '0' || c > '9') && c != ':' && c != ',' {
+			return false
+		}
+	}
+	return true
+}
+
+// coversAllSources reports a source prefix that matches every address of its
+// family (0.0.0.0/0, ::/0), which a deny treats exactly like "any".
+func coversAllSources(from string) bool {
+	pfx, err := netip.ParsePrefix(normalizeFrom(from))
+	return err == nil && pfx.Bits() == 0
 }
 
 // protectedPorts are ports that cannot be denied (would lock out the server).
@@ -282,7 +349,7 @@ func DenyPortFrom(port, proto, from string) error {
 		if err := validatePort(port); err != nil {
 			return err
 		}
-		if deniesProtectedPort(port) && normalizeFrom(from) == "" {
+		if deniesProtectedPort(port) && (normalizeFrom(from) == "" || coversAllSources(from)) {
 			return fmt.Errorf("cannot deny port %s — it covers a port required for server operation (HTTP/HTTPS/SSH/Admin)", port)
 		}
 	}

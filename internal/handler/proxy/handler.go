@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -10,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -317,6 +319,13 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 			}
 		}
 
+		// Remove hop-by-hop headers BEFORE adding the proxy headers: the
+		// client's Connection header may name X-Forwarded-For / X-Real-IP,
+		// and laundering after the Set calls would delete the authoritative
+		// values UWAS just wrote (the location proxy in internal/server
+		// already uses this order).
+		removeHopByHop(proxyReq.Header)
+
 		// Add proxy headers
 		proxyReq.Header.Set("X-Forwarded-For", clientIP(ctx.Request))
 		proxyReq.Header.Set("X-Forwarded-Proto", forwardedProto(ctx))
@@ -327,9 +336,6 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 		if proxyReq.Header.Get("Traceparent") == "" {
 			proxyReq.Header.Set("Traceparent", generateTraceparent())
 		}
-
-		// Remove hop-by-hop headers
-		removeHopByHop(proxyReq.Header)
 
 		// Execute
 		resp, err := h.getTransport(domain).RoundTrip(proxyReq)
@@ -759,6 +765,40 @@ func (h *Handler) serveWebSocketWithOptions(ctx *router.RequestContext, backend 
 	upstreamConn.Write([]byte("Host: " + ctx.Request.Host + "\r\n"))
 	upstreamConn.Write([]byte("\r\n"))
 
+	// Tunnel only after the backend has actually switched protocols. If it
+	// answers anything but 101 the connection is still plain keep-alive
+	// HTTP, and piping it raw would let the client send further requests
+	// straight to the backend, past every check UWAS applies in front of
+	// the proxy. Relay that response with Connection: close and stop.
+	upstreamReader := bufio.NewReader(upstreamConn)
+	_ = upstreamConn.SetReadDeadline(time.Now().Add(websocketUpgradeTimeout))
+	head, status, err := readUpgradeResponseHead(upstreamReader)
+	if err != nil {
+		h.logger.Error("websocket upstream handshake response invalid", "backend", backendAddr, "request_id", reqID, "error", err)
+		upstreamConn.Close()
+		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"))
+		clientConn.Close()
+		return
+	}
+	if status != http.StatusSwitchingProtocols {
+		if resp, err := http.ReadResponse(bufio.NewReader(io.MultiReader(bytes.NewReader(head), upstreamReader)), ctx.Request); err == nil {
+			resp.Close = true
+			_ = resp.Write(clientConn)
+			resp.Body.Close()
+		} else {
+			clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"))
+		}
+		upstreamConn.Close()
+		clientConn.Close()
+		return
+	}
+	_ = upstreamConn.SetReadDeadline(time.Time{})
+	if _, err := clientConn.Write(head); err != nil {
+		upstreamConn.Close()
+		clientConn.Close()
+		return
+	}
+
 	// Bidirectional copy with WaitGroup for graceful shutdown on error.
 	// sync.Once guarantees that closeBoth only fires once — closing a net.Conn
 	// twice is technically safe in stdlib, but the Once also avoids racing
@@ -795,7 +835,7 @@ func (h *Handler) serveWebSocketWithOptions(ctx *router.RequestContext, backend 
 	go func() {
 		defer wg.Done()
 		defer closeBoth()
-		if _, err := io.Copy(clientConn, upstreamConn); err != nil {
+		if _, err := io.Copy(clientConn, upstreamReader); err != nil {
 			h.logger.Debug("websocket backend→client copy error", "request_id", reqID, "error", err)
 		}
 	}()
@@ -803,6 +843,45 @@ func (h *Handler) serveWebSocketWithOptions(ctx *router.RequestContext, backend 
 	// Wait for both directions to finish
 	wg.Wait()
 	h.logger.Debug("websocket connection closed", "backend", backendAddr, "request_id", reqID, "path", ctx.Request.URL.Path)
+}
+
+// websocketUpgradeTimeout bounds how long the backend may take to answer the
+// upgrade request (matches the HTTP path's default ResponseHeaderTimeout).
+const websocketUpgradeTimeout = 30 * time.Second
+
+// maxUpgradeResponseHead caps the backend's upgrade response head.
+const maxUpgradeResponseHead = 64 << 10
+
+// readUpgradeResponseHead reads the backend's response head verbatim (status
+// line through the blank line) and returns it with the parsed status code.
+func readUpgradeResponseHead(br *bufio.Reader) ([]byte, int, error) {
+	var head []byte
+	for {
+		line, err := br.ReadSlice('\n')
+		head = append(head, line...)
+		if err != nil {
+			return nil, 0, err
+		}
+		if len(head) > maxUpgradeResponseHead {
+			return nil, 0, errors.New("upgrade response head too large")
+		}
+		if l := len(line); l == 1 || (l == 2 && line[0] == '\r') {
+			if len(head) == l {
+				return nil, 0, errors.New("empty upgrade response")
+			}
+			break
+		}
+	}
+	statusLine, _, _ := strings.Cut(string(head), "\n")
+	fields := strings.Fields(statusLine)
+	if len(fields) < 2 || !strings.HasPrefix(fields[0], "HTTP/") {
+		return nil, 0, errors.New("malformed upgrade response status line")
+	}
+	code, err := strconv.Atoi(fields[1])
+	if err != nil || code < 100 || code > 999 {
+		return nil, 0, errors.New("malformed upgrade response status code")
+	}
+	return head, code, nil
 }
 
 func websocketBackendAddress(backendURL *url.URL) string {

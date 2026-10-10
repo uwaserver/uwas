@@ -306,7 +306,6 @@ func migrateDBReal(req MigrateRequest, log *strings.Builder) string {
 			fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci", sqlIdent(req.DBName))).Run()
 		safeUser := sqlString(req.DBUser)
 		safePass := sqlString(req.DBPass)
-		safeName := sqlIdent(req.DBName)
 		// Feed CREATE USER over stdin, not -e: the SQL embeds the plaintext
 		// password and -e would expose it on argv (/proc/<pid>/cmdline).
 		//
@@ -322,7 +321,7 @@ func migrateDBReal(req MigrateRequest, log *strings.Builder) string {
 			return "error: create user failed"
 		}
 		if out, err := execCommandFn(bin, "-u", "root", "-e",
-			fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO '%s'@'localhost'; FLUSH PRIVILEGES", safeName, safeUser)).CombinedOutput(); err != nil {
+			fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO '%s'@'localhost'; FLUSH PRIVILEGES", grantIdent(req.DBName), safeUser)).CombinedOutput(); err != nil {
 			log.WriteString(fmt.Sprintf("grant error: %s — %s\n", err, strings.TrimSpace(string(out))))
 			return "error: grant failed"
 		}

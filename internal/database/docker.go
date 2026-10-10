@@ -346,9 +346,12 @@ func DockerDBExport(containerName, dbName string) (string, error) {
 	if !strings.HasPrefix(fullName, containerPrefix) {
 		fullName = containerPrefix + containerName
 	}
-	dbArg := containerName_safe(dbName)
-	if dbName == "--all-databases" {
-		dbArg = "--all-databases"
+	dbArg := "--all-databases"
+	if dbName != dbArg {
+		var err error
+		if dbArg, err = dockerDBNameArg(dbName); err != nil {
+			return "", err
+		}
 	}
 	// Probe for the client and exec exactly one (same pattern as
 	// DockerDBExecSQL): the old `mysqldump || mariadb-dump` fell back on ANY
@@ -380,7 +383,10 @@ func DockerDBImport(containerName, dbName, sql string) error {
 	// failed mid-import it had already consumed stdin, so mariadb ran on empty
 	// stdin and exited 0, reporting a failed import as success. Stderr is not
 	// discarded so failures stay diagnosable.
-	dbArg := containerName_safe(dbName)
+	dbArg, err := dockerDBNameArg(dbName)
+	if err != nil {
+		return err
+	}
 	cmd := dockerExecCommandFn("docker", "exec", "-i", fullName, "sh", "-c",
 		fmt.Sprintf(`if command -v mariadb >/dev/null 2>&1; then exec mariadb -u root -p"$MYSQL_ROOT_PASSWORD" %s; else exec mysql -u root -p"$MYSQL_ROOT_PASSWORD" %s; fi`,
 			dbArg, dbArg))
@@ -390,6 +396,17 @@ func DockerDBImport(containerName, dbName, sql string) error {
 		return fmt.Errorf("docker import: %w — %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// dockerDBNameArg returns name for use as the client's database argument, or
+// an error. It rejects rather than strips: stripping made "mysql." target the
+// `mysql` schema the caller's guard had refused, "shop.prod" target `shopprod`,
+// and a leading '-' reach the client as an option (e.g. -h<host>).
+func dockerDBNameArg(name string) (string, error) {
+	if name == "" || len(name) > 64 || strings.HasPrefix(name, "-") || containerName_safe(name) != name {
+		return "", fmt.Errorf("invalid database name %q", name)
+	}
+	return name, nil
 }
 
 func containerName_safe(name string) string {

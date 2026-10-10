@@ -267,7 +267,9 @@ func (m *Manager) deliver(qe *queuedEvent) {
 	}
 
 	timeout := qe.webhook.Timeout
-	if timeout == 0 {
+	if timeout <= 0 {
+		// A negative timeout (unvalidated YAML) would put the dialer's
+		// deadline in the past and fail every attempt; use the default.
 		timeout = 30 * time.Second
 	}
 

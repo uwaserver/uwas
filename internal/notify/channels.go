@@ -4,13 +4,16 @@ package notify
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
 	"net"
 	"net/http"
 	"net/smtp"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -96,7 +99,32 @@ func Send(ch Channel, msg Message) error {
 	}
 }
 
-func sendWebhook(url string, msg Message) error {
+// redactURLError removes the request URL from err's text. Channel URLs are
+// credentials (Slack hook path, Telegram /bot<TOKEN>/, ?token= on webhooks),
+// and *url.Error — returned by net/http transport/redirect failures and by
+// url.Parse — prints the full URL. Callers log these errors and the admin
+// notify test echoes them, so the URL must not survive in the message.
+// Unwrap still yields the underlying cause (timeouts, dial errors).
+func redactURLError(err error) error {
+	var uerr *url.Error
+	if err == nil || !errors.As(err, &uerr) {
+		return err
+	}
+	msg := strings.ReplaceAll(err.Error(), strconv.Quote(uerr.URL), `"[redacted URL]"`)
+	msg = strings.ReplaceAll(msg, uerr.URL, "[redacted URL]")
+	return &redactedError{msg: msg, cause: uerr.Err}
+}
+
+type redactedError struct {
+	msg   string
+	cause error
+}
+
+func (e *redactedError) Error() string { return e.msg }
+func (e *redactedError) Unwrap() error { return e.cause }
+
+func sendWebhook(url string, msg Message) (err error) {
+	defer func() { err = redactURLError(err) }()
 	if strings.TrimSpace(url) == "" {
 		return fmt.Errorf("webhook url is required")
 	}
@@ -125,7 +153,8 @@ func sendWebhook(url string, msg Message) error {
 	return nil
 }
 
-func sendSlack(webhookURL string, msg Message) error {
+func sendSlack(webhookURL string, msg Message) (err error) {
+	defer func() { err = redactURLError(err) }()
 	if strings.TrimSpace(webhookURL) == "" {
 		return fmt.Errorf("slack webhook_url is required")
 	}
@@ -164,7 +193,8 @@ func sendSlack(webhookURL string, msg Message) error {
 	return nil
 }
 
-func sendTelegram(botToken, chatID string, msg Message) error {
+func sendTelegram(botToken, chatID string, msg Message) (err error) {
+	defer func() { err = redactURLError(err) }()
 	emoji := "ℹ️"
 	switch msg.Level {
 	case "warning":

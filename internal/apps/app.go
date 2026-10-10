@@ -326,9 +326,10 @@ func ValidateExtraArgs(args []string) error {
 //   - host path is an absolute path (starts with /) — "/:/host", "/etc:/data"
 //   - host path contains ".." path traversal — "../../../etc:/data"
 //   - host path contains ":" as a prefix form — "/:/host", "/:/mnt:ro"
+//   - host path starts with "." — ".:/host", "./etc:/data" (CLI-relative bind)
 //
 // Container-only paths (no host side, or named volumes) are allowed:
-//   - "data:/data"       (relative host path, safe)
+//   - "data:/data"       (named volume, safe)
 //   - "myvolume:/data"   (named volume, safe)
 func ValidateVolumes(volumes []string) error {
 	for _, vol := range volumes {
@@ -349,6 +350,13 @@ func ValidateVolumes(volumes []string) error {
 		// Example: "../../../etc:/data"
 		if strings.Contains(host, "..") {
 			return fmt.Errorf("docker volume %q: host path %q contains \"..\"; path traversal is not permitted", vol, host)
+		}
+		// Reject "."-prefixed host paths — the docker CLI (>= 23) resolves
+		// them against its own cwd and bind-mounts the result, so ".:/host"
+		// mounts the uwas process's cwd (often "/"). A named volume can never
+		// start with "." anyway.
+		if strings.HasPrefix(host, ".") {
+			return fmt.Errorf("docker volume %q: host path %q is a relative host path; only named volumes are permitted", vol, host)
 		}
 	}
 	return nil

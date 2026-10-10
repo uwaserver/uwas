@@ -1176,7 +1176,7 @@ func TestDockerRunArgsWithVolumesAndExtraArgs(t *testing.T) {
 	}
 	args, _ := dockerRunArgs(p, "uwas-app-v", "img", 80)
 	joined := strings.Join(args, " ")
-	for _, want := range []string{"-v /host:/cont", "--cap-add NET_ADMIN", "K=V", "127.0.0.1:3000:80"} {
+	for _, want := range []string{"-v /host:/cont", "--cap-add NET_ADMIN", "-e K", "127.0.0.1:3000:80"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("args missing %q: %v", want, args)
 		}

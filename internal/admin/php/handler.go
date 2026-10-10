@@ -138,6 +138,11 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid PHP version (expected N.N, e.g. 8.3)", http.StatusBadRequest)
 		return
 	}
+	// Serialize the Active() check and Submit() with the other installers
+	// (package installs, setup wizard, database install) when the deps offer it.
+	if l, ok := h.deps.(interface{ InstallLock() (unlock func()) }); ok {
+		defer l.InstallLock()()
+	}
 	if active := h.deps.TaskActive(); active != nil {
 		jsonError(w, fmt.Sprintf("another installation in progress: %s (%s)", active.Name, active.ID), http.StatusConflict)
 		return

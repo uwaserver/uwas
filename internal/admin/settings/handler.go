@@ -298,6 +298,14 @@ func (h *Handler) NotifyPrefsPut(w http.ResponseWriter, r *http.Request) {
 		g.Webhooks = req.Webhooks
 	}
 	h.deps.UnlockConfig()
+	// The live webhook manager keeps its own copy of the webhook list; without
+	// this, a webhook removed or disabled here kept receiving every event until
+	// the next reload.
+	if req.Webhooks != nil {
+		if n, ok := h.deps.(interface{ WebhooksChanged() }); ok {
+			n.WebhooksChanged()
+		}
+	}
 	if err := h.deps.PersistConfig(); err != nil {
 		h.deps.RecordAudit(r, "settings.notifications", err.Error(), false)
 		jsonError(w, "failed to persist settings", http.StatusInternalServerError)

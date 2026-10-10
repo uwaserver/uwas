@@ -99,6 +99,10 @@ type Server struct {
 	webhookMgr  *webhook.Manager
 	authMgr     *auth.Manager
 	sftpSrv     *sftpserver.Server
+	// sftpMu serializes SFTP user-table rebuilds (startup, domain change,
+	// reload) and guards sftpHashes, the bcrypt hash cache keyed by host.
+	sftpMu     sync.Mutex
+	sftpHashes map[string]sftpHashEntry
 	// routeMu guards all per-domain routing maps below (proxy pools/balancers/
 	// breakers/mirrors/canaries/health-checkers, rewriteCache, the *Guards, the
 	// rate limiters and image-opt chains). reload()/rebuildProxyPools() swap
@@ -184,6 +188,12 @@ type Server struct {
 	// /etc/uwas/apps.d/<name>.yaml; domains reach them via reverse
 	// proxy with `apps://<name>` upstreams.
 	appsMgr *apps.Manager
+
+	// cfgLock/persistLock are the admin API's config locks when it is
+	// enabled. Admin and server mutate the same *config.Config, so both must
+	// use one lock; cfgMu() returns the shared one (F691).
+	cfgLock     *sync.RWMutex
+	persistLock *sync.Mutex
 }
 
 // locationProxyClient builds a per-request client for locations[].proxy_pass.
@@ -324,6 +334,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 	// Admin API
 	if cfg.Global.Admin.Enabled {
 		s.admin = admin.New(cfg, log, m)
+		s.cfgLock, s.persistLock = s.admin.ConfigLocks()
 		if cacheEngine != nil {
 			s.admin.SetCache(cacheEngine)
 		}
@@ -363,10 +374,18 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			}()
 			// Admin and server share the same *config.Config pointer,
 			// so config.Domains is already updated. Sync all subsystems.
-			s.configMu.RLock()
-			domains := s.config.Domains
+			//
+			// Copy the domains (and their alias lists) under the lock: the
+			// slice header shares the live backing array, which admin writers
+			// rewrite in place, so walking it after RUnlock raced them (F700).
+			s.cfgMu().RLock()
+			domains := make([]config.Domain, len(s.config.Domains))
+			copy(domains, s.config.Domains)
+			for i := range domains {
+				domains[i].Aliases = append([]string(nil), domains[i].Aliases...)
+			}
 			trustedProxies := s.config.Global.TrustedProxies
-			s.configMu.RUnlock()
+			s.cfgMu().RUnlock()
 
 			s.vhosts.Update(domains)
 
@@ -390,6 +409,12 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			// request to a newly-added type=proxy domain 502s
 			// because the proxy handler has no upstream.
 			s.rebuildProxyPools(domains)
+
+			// A deleted domain must lose its SFTP login now, not at restart.
+			s.refreshSFTPUsers()
+
+			// ...and its analytics, so a re-added hostname starts empty.
+			s.pruneDomainStats(domains)
 
 			// Start HTTPS listener dynamically if a new SSL domain was added
 			// and HTTPS isn't running yet.
@@ -947,6 +972,16 @@ func (s *Server) Start() error {
 	joinOnErr := func(err error) error {
 		if err != nil {
 			s.cancel()
+			// A listener that already started is in s.wg too, and its Serve
+			// only returns once the server is closed — cancelling ctx does not
+			// reach it. Without this an HTTPS bind failure after HTTP came up
+			// left Start parked in Wait forever, with port 80 still serving.
+			if s.httpSrv != nil {
+				s.httpSrv.Close()
+			}
+			if s.httpsSrv != nil {
+				s.httpsSrv.Close()
+			}
 			s.wg.Wait()
 		}
 		return err
@@ -1005,37 +1040,13 @@ func (s *Server) Start() error {
 		if strings.TrimSpace(apiKey) == "" {
 			s.logger.Error("refusing SFTP start: admin api_key is empty (SFTP passwords are derived from it)")
 		} else {
-			users := make(map[string]sftpserver.User)
-			var appStore *apps.Store
-			if s.appsMgr != nil {
-				appStore = s.appsMgr.Store()
-			}
-			for _, d := range s.config.Domains {
-				root, err := domainroot.ForDomain(d, appStore)
-				if err != nil {
-					s.logger.Warn("SFTP domain root unavailable", "domain", d.Host, "error", err)
-					continue
-				}
-				if root != "" {
-					// Create an SFTP user per domain with a unique password
-					// derived from API key + domain (so compromising one doesn't
-					// expose all domains).
-					domainPass := deriveSFTPPassword(apiKey, d.Host)
-					passHash, err := bcrypt.GenerateFromPassword([]byte(domainPass), auth.BcryptCost)
-					if err != nil {
-						s.logger.Warn("failed to hash SFTP password", "domain", d.Host, "error", err)
-						continue
-					}
-					users[d.Host] = sftpserver.User{
-						Password: string(passHash),
-						Root:     root,
-					}
-				}
-			}
+			s.sftpMu.Lock()
+			users := s.sftpUsersLocked(s.config.Domains, apiKey)
 			s.sftpSrv = sftpserver.New(sftpserver.Config{
 				Listen: s.config.Global.SFTPListen,
 				Users:  users,
 			}, s.logger)
+			s.sftpMu.Unlock()
 			if err := s.sftpSrv.Start(); err != nil {
 				s.logger.Warn("SFTP server start failed", "error", err)
 			}
@@ -1068,9 +1079,9 @@ func (s *Server) Start() error {
 	// mutex). Copying the whole *s.config would read that slice header and race
 	// a concurrent domain add; copying Global alone touches nothing a domain
 	// write does.
-	s.configMu.RLock()
+	s.cfgMu().RLock()
 	dogGlobal := s.config.Global
-	s.configMu.RUnlock()
+	s.cfgMu().RUnlock()
 	s.dog = newWatchdog(&config.Config{Global: dogGlobal}, s.logger)
 	s.dog.NotifyReady()
 	if dogGlobal.Watchdog.Enabled {
@@ -1229,9 +1240,9 @@ func (s *Server) rejectNonCloudflareOrigin(w http.ResponseWriter, r *http.Reques
 	// Snapshot the Cloudflare ranges under configMu — reload() overwrites the
 	// whole *s.config struct under the write lock, so reading the slice header
 	// here without the read lock is a data race.
-	s.configMu.RLock()
+	s.cfgMu().RLock()
 	cfRanges := s.config.Global.Cloudflare.IPRanges
-	s.configMu.RUnlock()
+	s.cfgMu().RUnlock()
 	originIP := directPeerIP(r)
 	allowed := originIP != "" && s.cloudflareIPs.Contains(originIP, cfRanges)
 	if allowed {
@@ -1677,6 +1688,99 @@ func toWebhookConfigs(cfgs []config.WebhookConfig) []webhook.WebhookConfig {
 // deriveSFTPPassword creates a unique per-domain SFTP password from the
 // API key and domain name using HMAC-SHA256. This ensures that compromising
 // one domain's SFTP password doesn't expose others.
+// sftpHashEntry caches the bcrypt hash of one domain's derived SFTP
+// password, keyed by a digest of that password so a changed api_key forces a
+// re-hash.
+type sftpHashEntry struct {
+	sum  [32]byte
+	hash string
+}
+
+// sftpUsersLocked builds the SFTP user table: one chrooted user per domain
+// whose password is derived from the admin api_key. An empty key yields no
+// users (fail closed). Hashes are reused while a domain's derived password is
+// unchanged, because bcrypt at auth.BcryptCost costs about a second per user
+// and this runs on every domain change. Caller must hold s.sftpMu.
+func (s *Server) sftpUsersLocked(domains []config.Domain, apiKey string) map[string]sftpserver.User {
+	users := make(map[string]sftpserver.User)
+	if strings.TrimSpace(apiKey) == "" {
+		s.sftpHashes = nil
+		return users
+	}
+	var appStore *apps.Store
+	if s.appsMgr != nil {
+		appStore = s.appsMgr.Store()
+	}
+	next := make(map[string]sftpHashEntry, len(domains))
+	for _, d := range domains {
+		root, err := domainroot.ForDomain(d, appStore)
+		if err != nil {
+			s.logger.Warn("SFTP domain root unavailable", "domain", d.Host, "error", err)
+			continue
+		}
+		if root == "" {
+			continue
+		}
+		// A unique password per domain, derived from API key + domain, so
+		// compromising one doesn't expose all domains.
+		domainPass := deriveSFTPPassword(apiKey, d.Host)
+		sum := sha256.Sum256([]byte(domainPass))
+		e, ok := s.sftpHashes[d.Host]
+		if !ok || e.sum != sum {
+			passHash, err := bcrypt.GenerateFromPassword([]byte(domainPass), auth.BcryptCost)
+			if err != nil {
+				s.logger.Warn("failed to hash SFTP password", "domain", d.Host, "error", err)
+				continue
+			}
+			e = sftpHashEntry{sum: sum, hash: string(passHash)}
+		}
+		next[d.Host] = e
+		users[d.Host] = sftpserver.User{Password: e.hash, Root: root}
+	}
+	s.sftpHashes = next
+	return users
+}
+
+// pruneDomainStats drops analytics and per-domain metrics for hosts no longer
+// configured. Without it a deleted domain's paths, referrers and visitor IPs
+// stayed in memory and were shown to whichever tenant later re-added the same
+// hostname (F760). Requests still in flight across the removal can record
+// once more; the next domain change or reload drops them.
+func (s *Server) pruneDomainStats(domains []config.Domain) {
+	hosts := make([]string, 0, len(domains))
+	for _, d := range domains {
+		hosts = append(hosts, d.Host)
+	}
+	if s.analytics != nil {
+		s.analytics.RetainHosts(hosts)
+	}
+	if s.metrics != nil {
+		s.metrics.RetainDomains(hosts)
+	}
+}
+
+// refreshSFTPUsers rebuilds the running SFTP server's user table from the
+// current config. Start() built it once and nothing refreshed it, so a
+// deleted domain kept its SFTP login and a rotated api_key kept the old
+// passwords valid until restart (F715). It reads the config itself, under
+// the shared config lock, so serialized refreshes always publish the latest
+// state; callers must not hold that lock. Sessions already authenticated are
+// not closed — only new logins see the change.
+func (s *Server) refreshSFTPUsers() {
+	s.sftpMu.Lock()
+	defer s.sftpMu.Unlock()
+	if s.sftpSrv == nil {
+		return
+	}
+	mu := s.cfgMu()
+	mu.RLock()
+	domains := make([]config.Domain, len(s.config.Domains))
+	copy(domains, s.config.Domains)
+	apiKey := s.config.Global.Admin.APIKey
+	mu.RUnlock()
+	s.sftpSrv.UpdateUsers(s.sftpUsersLocked(domains, apiKey))
+}
+
 func deriveSFTPPassword(apiKey, domain string) string {
 	mac := hmac.New(sha256.New, []byte(apiKey))
 	mac.Write([]byte("sftp:" + domain))
@@ -1762,4 +1866,13 @@ func (s *Server) compressionPolicyFor(r *http.Request) middleware.CompressionPol
 		Types:      c.Types,
 		Algorithms: c.Algorithms,
 	}
+}
+
+// cfgMu returns the lock guarding *s.config: the admin API's lock when the
+// admin server shares the config, otherwise the server's own.
+func (s *Server) cfgMu() *sync.RWMutex {
+	if s.cfgLock != nil {
+		return s.cfgLock
+	}
+	return &s.configMu
 }

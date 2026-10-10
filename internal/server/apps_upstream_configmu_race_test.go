@@ -26,8 +26,8 @@ func TestStartRegisteredAppsConfigMu(t *testing.T) {
 
 	// Concurrent writer: mirror the exact sequence at server_reload.go:95-97.
 	writer := func() {
-		s.configMu.Lock()
-		defer s.configMu.Unlock()
+		s.cfgMu().Lock()
+		defer s.cfgMu().Unlock()
 		newCfg := *s.config
 		newCfg.Domains = nil // mutate so the writer is observable
 		*s.config = newCfg

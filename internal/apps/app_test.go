@@ -115,13 +115,15 @@ func TestValidateVolumesRejectsHostMounts(t *testing.T) {
 		"/var/run/docker.sock:/sock",
 		"../../../etc:/data",
 		"data/../../:/data",
+		"./local:/app", // docker run inherits uwas's cwd, not the app dir
+		".:/host",
 	}
 	for _, v := range bad {
 		if err := ValidateVolumes([]string{v}); err == nil {
 			t.Errorf("ValidateVolumes accepted %q", v)
 		}
 	}
-	good := []string{"data:/data", "myvolume:/var/www", "./local:/app"}
+	good := []string{"data:/data", "myvolume:/var/www"}
 	for _, v := range good {
 		if err := ValidateVolumes([]string{v}); err != nil {
 			t.Errorf("ValidateVolumes rejected safe volume %q: %v", v, err)

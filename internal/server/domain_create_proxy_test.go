@@ -101,14 +101,14 @@ func TestDomainAppendThroughSharedPointerVisibleToServer(t *testing.T) {
 	// admin server was set up via SetAdmin / SetOnDomainChange in the
 	// real server.New() flow; here we exercise the same path by
 	// directly mutating the config and calling the rebuild path.
-	s.configMu.Lock()
+	s.cfgMu().Lock()
 	s.config.Domains = append(s.config.Domains, config.Domain{
 		Host: "newdomain.test",
 		Root: dir,
 		Type: "static",
 		SSL:  config.SSLConfig{Mode: "off"},
 	})
-	s.configMu.Unlock()
+	s.cfgMu().Unlock()
 
 	s.vhosts.Update(s.config.Domains)
 
@@ -202,9 +202,9 @@ func TestEndToEndDispatchToFreshProxyDomain(t *testing.T) {
 			},
 		},
 	}
-	s.configMu.Lock()
+	s.cfgMu().Lock()
 	s.config.Domains = append(s.config.Domains, d)
-	s.configMu.Unlock()
+	s.cfgMu().Unlock()
 	s.vhosts.Update(s.config.Domains)
 	s.rebuildProxyPools(s.config.Domains)
 

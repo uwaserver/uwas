@@ -46,9 +46,9 @@ func TestVerifyBugAWouldRegress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	s.configMu.Lock()
+	s.cfgMu().Lock()
 	s.config = newCfg // <-- BUG-A-SIMULATION: pointer swap, not in-place copy
-	s.configMu.Unlock()
+	s.cfgMu().Unlock()
 
 	// Now do what admin.handleAddDomain does: append to ITS view of
 	// the config — which is now the orphan.

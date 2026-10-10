@@ -153,13 +153,13 @@ func (s *Server) staleJobFor(key string, r *http.Request, domain *config.Domain,
 	if ae := r.Header.Get("Accept-Encoding"); ae != "" {
 		vary.Set("Accept-Encoding", ae)
 	}
-	s.configMu.RLock()
+	s.cfgMu().RLock()
 	for _, name := range s.config.Global.Cache.VaryByHeaders {
 		if v := r.Header.Get(name); v != "" {
 			vary.Set(name, v)
 		}
 	}
-	s.configMu.RUnlock()
+	s.cfgMu().RUnlock()
 
 	return staleJob{
 		key:     key,

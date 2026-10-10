@@ -84,8 +84,9 @@ func encodingAccepted(header, coding string) bool {
 			name = strings.TrimSpace(part[:i])
 			for _, p := range strings.Split(part[i+1:], ";") {
 				p = strings.TrimSpace(p)
-				if v, ok := strings.CutPrefix(p, "q="); ok {
-					if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+				// The "q" parameter name is case-insensitive (RFC 9110 §12.4.2).
+				if len(p) >= 2 && (p[0] == 'q' || p[0] == 'Q') && p[1] == '=' {
+					if f, err := strconv.ParseFloat(strings.TrimSpace(p[2:]), 64); err == nil {
 						q = f
 					}
 				}
@@ -313,8 +314,15 @@ func (w *compressResponseWriter) Write(b []byte) (int, error) {
 // fill or the handler to return.
 func (w *compressResponseWriter) Flush() {
 	// Still below minSize: a Flush signals streaming, so emit what we have
-	// uncompressed rather than holding it.
-	if w.writer == nil && !w.compressed && len(w.buf) > 0 {
+	// uncompressed rather than holding it. This also covers a Flush before
+	// any Write: flushing the underlying writer commits the headers, so the
+	// encoding must be decided (identity) now — compressing later would send
+	// gzip bytes under headers that no longer can carry Content-Encoding.
+	if w.writer == nil && !w.compressed {
+		if !w.wroteHeader {
+			w.statusCode = http.StatusOK
+			w.wroteHeader = true
+		}
 		w.flushUncompressed()
 	}
 	if w.writer != nil {
@@ -336,6 +344,14 @@ func (w *compressResponseWriter) Unwrap() http.ResponseWriter {
 
 func (w *compressResponseWriter) startCompression() (int, error) {
 	w.compressed = true
+
+	// net/http only sniffs a missing Content-Type when no Content-Encoding is
+	// set, so sniff here from the uncompressed bytes; otherwise compressed
+	// responses lose the type the identity response would get. An explicitly
+	// present (even empty) Content-Type key disables sniffing, as in net/http.
+	if _, ok := w.Header()["Content-Type"]; !ok {
+		w.Header().Set("Content-Type", http.DetectContentType(w.buf))
+	}
 
 	switch w.encoding {
 	case encodingBrotli:

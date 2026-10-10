@@ -40,6 +40,16 @@ func (m *Manager) startDocker(p *process, expectedStopCh <-chan struct{}) error 
 	if p.app == nil {
 		return fmt.Errorf("apps: %s: docker process has no app definition", p.name)
 	}
+	// A superseded (re)start must not touch the container: the prior-cleanup
+	// `docker rm -f` below would otherwise force-remove the container a newer
+	// Start() just launched under the same name. Same identity check as after
+	// `docker run`, done up front (F645).
+	m.mu.Lock()
+	superseded := p.stopped || p.stopCh != expectedStopCh
+	m.mu.Unlock()
+	if superseded {
+		return nil
+	}
 
 	// Build first if a build context is configured. We tag with the
 	// configured Image name, falling back to "uwas-app-<name>:latest"
@@ -83,6 +93,9 @@ func (m *Manager) startDocker(p *process, expectedStopCh <-chan struct{}) error 
 	args, extraPorts := dockerRunArgs(p, cname, image, containerPort)
 
 	cmd := execCommandFn("docker", args...)
+	if _, cliEnv := dockerEnvArgs(p.env); len(cliEnv) > 0 {
+		cmd.Env = append(os.Environ(), cliEnv...)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -180,9 +193,8 @@ func dockerRunArgs(p *process, cname, image string, containerPort int) ([]string
 		extraPorts = append(extraPorts, port)
 		args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d", port, port))
 	}
-	for k, v := range p.env {
-		args = append(args, "-e", fmt.Sprintf("%s=%s", k, v))
-	}
+	envArgs, _ := dockerEnvArgs(p.env)
+	args = append(args, envArgs...)
 	for _, v := range p.app.Docker.Volumes {
 		args = append(args, "-v", v)
 	}
@@ -191,6 +203,42 @@ func dockerRunArgs(p *process, cname, image string, containerPort int) ([]string
 	}
 	args = append(args, image)
 	return args, extraPorts
+}
+
+// dockerEnvArgs builds the -e flags for the app env. Values must not sit on
+// the docker CLI's argv — /proc/<pid>/cmdline is world-readable for as long
+// as `docker run` lasts, image pull included — so each key is passed by name
+// only (`-e KEY`) and its value goes in the CLI's own environment (cliEnv),
+// which docker resolves bare -e names from (F646). Keys the docker CLI or
+// Go runtime would itself react to keep the inline `-e KEY=VALUE` form so an
+// app env can't redirect or reconfigure the CLI.
+func dockerEnvArgs(env map[string]string) (args, cliEnv []string) {
+	for k, v := range env {
+		if dockerCLIEnvKey(k) {
+			args = append(args, "-e", k+"="+v)
+			continue
+		}
+		args = append(args, "-e", k)
+		cliEnv = append(cliEnv, k+"="+v)
+	}
+	return args, cliEnv
+}
+
+func dockerCLIEnvKey(k string) bool {
+	if _, inherited := os.LookupEnv(k); inherited {
+		return true
+	}
+	u := strings.ToUpper(k)
+	for _, prefix := range []string{"DOCKER_", "BUILDKIT_", "BUILDX_", "LD_", "SSL_", "XDG_"} {
+		if strings.HasPrefix(u, prefix) {
+			return true
+		}
+	}
+	switch u {
+	case "GODEBUG", "GOMAXPROCS", "GOGC", "GOMEMLIMIT", "GOTRACEBACK":
+		return true
+	}
+	return strings.HasSuffix(u, "_PROXY")
 }
 
 // dockerContainerRunning reports whether the named container is still

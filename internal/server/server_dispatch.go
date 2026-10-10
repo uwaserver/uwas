@@ -25,7 +25,6 @@ import (
 	"github.com/uwaserver/uwas/internal/middleware"
 	"github.com/uwaserver/uwas/internal/pathsafe"
 	"github.com/uwaserver/uwas/internal/router"
-	"github.com/uwaserver/uwas/pkg/htaccess"
 )
 
 // graceTTL is how long past its TTL an entry may still be served while a
@@ -38,8 +37,8 @@ import (
 // conservative direction for a value read off the entry rather than the
 // config at serve time.
 func (s *Server) graceTTL() time.Duration {
-	s.configMu.RLock()
-	defer s.configMu.RUnlock()
+	s.cfgMu().RLock()
+	defer s.cfgMu().RUnlock()
 	if !s.config.Global.Cache.StaleWhileRevalidate {
 		return 0
 	}
@@ -104,9 +103,9 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 
-		s.configMu.RLock()
+		s.cfgMu().RLock()
 		domainCount := len(s.config.Domains)
-		s.configMu.RUnlock()
+		s.cfgMu().RUnlock()
 
 		uptimeSecs := int64(time.Since(s.metrics.StartTime).Seconds())
 		resp := `{"status":"ok","uptime_secs":` + strconv.FormatInt(uptimeSecs, 10) + `,"domains":` + strconv.Itoa(domainCount) + `}`
@@ -560,19 +559,20 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// .htaccess import (runtime parse)
-	// Skip rewrite for paths that should be served directly:
+	// Skip internal rewrites for paths that should be served directly:
 	// - /wp-admin, /wp-includes, /wp-content (WordPress core)
 	// - Direct .php file requests (already resolved, no rewrite needed)
+	// The rest of .htaccess still applies to them: [F]/[G] rules commonly
+	// guard exactly these scripts (xmlrpc.php, wp-includes/*.php), and
+	// Redirect, Header and php_value are per-directory, not per-rewrite.
 	if domain.Htaccess.Mode == "import" && domain.Root != "" {
 		p := r.URL.Path
 		skipRewrite := strings.HasPrefix(p, "/wp-admin") ||
 			strings.HasPrefix(p, "/wp-includes") ||
 			strings.HasPrefix(p, "/wp-content") ||
 			strings.HasSuffix(p, ".php")
-		if !skipRewrite {
-			if s.applyHtaccess(ctx, domain) {
-				return
-			}
+		if s.applyHtaccess(ctx, domain, !skipRewrite) {
+			return
 		}
 	}
 
@@ -861,6 +861,10 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 			rawPath := filepath.Join(domain.Root, filepath.Clean("/"+ctx.Request.URL.Path))
 			if dirListingAllowed(domain.Root, rawPath, ctx.Request.URL.Path) {
 				if info, err := os.Stat(rawPath); err == nil && info.IsDir() {
+					if deny := s.htaccessAccess(domain.Root, rawPath, true, net.ParseIP(normalizedRemoteIP(ctx.Request))); deny.status != 0 {
+						s.renderDomainError(ctx.Response, deny.status, domain)
+						return
+					}
 					static.ServeDirListing(ctx, rawPath, ctx.Request.URL.Path)
 					return
 				}
@@ -888,33 +892,26 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 		return
 	}
 
-	// <FilesMatch>/<Files> deny blocks from .htaccess — access control that
-	// Apache applies to any served file (static or handler), matched against
-	// the final path component. Before this, deny blocks were parsed into
-	// the RuleSet and silently ignored: files an operator explicitly denied
-	// (database dumps, backups, logs) were served to anyone.
+	// .htaccess access control — <FilesMatch>/<Files> denies, top-level
+	// Require/Order-Allow-Deny, and AuthUserFile — from the docroot and every
+	// subdirectory down to the served file, as Apache merges per-directory
+	// configuration. Before this, deny blocks were parsed into the RuleSet
+	// and silently ignored, top-level "Require all denied" was never
+	// enforced, and subdirectory .htaccess files were never read: files an
+	// operator explicitly denied (database dumps, backups, uploaded scripts)
+	// were served to anyone.
 	// An .htaccess that exists but failed to parse hides denies we cannot
 	// evaluate; answer 500 like Apache does instead of serving everything.
-	if entry := s.getHtaccessRuleSet(domain.Root); entry != nil && entry.parseFailed {
-		s.renderDomainError(ctx.Response, http.StatusInternalServerError, domain)
-		return
-	}
-	if entry := s.getHtaccessRuleSet(domain.Root); entry != nil && htaccess.FilesMatchDenies(entry.raw, filepath.Base(resolved)) {
-		s.renderDomainError(ctx.Response, http.StatusForbidden, domain)
-		return
-	}
-
-	// <AuthUserFile> marks a directory as requiring HTTP Basic auth against an
-	// htpasswd file. UWAS does not verify that file, so serving the content
-	// anyway would silently discard the operator's protection — the same
-	// "parsed into the RuleSet and never enforced" gap <FilesMatch> had.
-	// Fail closed with 403, and record it so the Security dashboard and the
-	// autoblocker's escalation signal see the denial.
-	if entry := s.getHtaccessRuleSet(domain.Root); entry != nil && htaccess.AuthUserFileRequiresAuth(entry.raw) {
-		s.logger.Warn("htaccess AuthUserFile present but UWAS does not verify htpasswd; denying request",
-			"host", domain.Host, "path", ctx.ResolvedPath)
-		s.recordSecurityBlock(ctx, ctx.Request, "auth")
-		s.renderDomainError(ctx.Response, http.StatusForbidden, domain)
+	// AuthUserFile marks a directory as requiring HTTP Basic auth against an
+	// htpasswd file UWAS does not verify; fail closed with 403 and record it
+	// so the Security dashboard and the autoblocker see the denial.
+	if deny := s.htaccessAccess(domain.Root, resolved, false, net.ParseIP(normalizedRemoteIP(ctx.Request))); deny.status != 0 {
+		if deny.reason == "auth" {
+			s.logger.Warn("htaccess AuthUserFile present but UWAS does not verify htpasswd; denying request",
+				"host", domain.Host, "path", ctx.ResolvedPath)
+			s.recordSecurityBlock(ctx, ctx.Request, "auth")
+		}
+		s.renderDomainError(ctx.Response, deny.status, domain)
 		return
 	}
 

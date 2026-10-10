@@ -150,7 +150,11 @@ func (m *Manager) LoadExistingCerts() {
 
 // LoadManualCerts loads manually configured certificates.
 func (m *Manager) LoadManualCerts() {
-	for _, d := range m.snapshotDomains() {
+	domains := m.snapshotDomains()
+	m.domainsMu.RLock()
+	pr := m.policyRouter
+	m.domainsMu.RUnlock()
+	for _, d := range domains {
 		if d.SSL.Mode != "manual" {
 			continue
 		}
@@ -161,6 +165,12 @@ func (m *Manager) LoadManualCerts() {
 			continue
 		}
 		for _, host := range tlsHostsForDomain(d) {
+			// A name another domain owns (e.g. the apex of an explicit
+			// www domain) keeps that owner's certificate; storing it here
+			// let config order decide whose cert SNI was served.
+			if owner := tlsOwner(pr, domains, host); owner != nil && !sameTLSDomain(owner, &d) {
+				continue
+			}
 			m.certs.Store(host, &cert)
 		}
 		m.logger.Info("loaded manual certificate", "domain", d.Host, "aliases", len(d.Aliases))
@@ -221,6 +231,13 @@ func buildDomainAllowlist(domains []config.Domain) *domainAllowlist {
 		for _, alias := range d.Aliases {
 			alias = canonicalTLSHostname(alias)
 			if alias == "" {
+				continue
+			}
+			if strings.HasPrefix(alias, "*.") {
+				// The router serves every name under a wildcard alias, so
+				// the handshake must accept them, not just the literal "*.x".
+				a.wildcards = append(a.wildcards, "."+alias[2:])
+				a.apex[alias[2:]] = struct{}{}
 				continue
 			}
 			a.exact[alias] = struct{}{}
@@ -766,6 +783,17 @@ type renewalCandidate struct {
 // host, or "" when no domain does (e.g. a cert left on disk for a domain
 // since removed). An exact or alias match wins over a wildcard match.
 func renewalModeFor(domains []config.Domain, host string) string {
+	return renewalModeWith(router.NewVHostRouter(domains), domains, host)
+}
+
+// renewalModeWith resolves the owner the way the router does (see
+// configForHost); config order decided it before, so an apex domain listed
+// first could mark an explicit www domain's ACME cert as manual and never
+// renew it. The match loop below is kept for names no owner resolves.
+func renewalModeWith(pr *router.VHostRouter, domains []config.Domain, host string) string {
+	if d := tlsOwner(pr, domains, host); d != nil {
+		return d.SSL.Mode
+	}
 	wildcardMode := ""
 	for i := range domains {
 		d := &domains[i]
@@ -786,6 +814,7 @@ func (m *Manager) checkRenewals(ctx context.Context) {
 	// No configured domains keeps the legacy renew-everything behaviour,
 	// matching the allow-all fallback of the SNI allowlist.
 	domains := m.snapshotDomains()
+	pr := router.NewVHostRouter(domains)
 
 	// Pass 1: walk the cert map once and copy out the hosts that need
 	// renewing. The Range callback returns quickly, freeing the map.
@@ -797,7 +826,7 @@ func (m *Manager) checkRenewals(ctx context.Context) {
 		}
 		alertOnly := false
 		if len(domains) > 0 {
-			switch renewalModeFor(domains, host) {
+			switch renewalModeWith(pr, domains, host) {
 			case "auto":
 			case "":
 				return true
@@ -1042,6 +1071,22 @@ func wildcardApexOwner(domains []config.Domain, host string) *config.Domain {
 	return nil
 }
 
+// tlsOwner returns the domain that owns an SNI name or certificate key, by
+// the router's precedence with the wildcard-apex rule of configForHost, or
+// nil when no configured domain does.
+func tlsOwner(pr *router.VHostRouter, domains []config.Domain, host string) *config.Domain {
+	if pr != nil {
+		if d, ok := pr.LookupWithStatus(host); ok {
+			return d
+		}
+	}
+	return wildcardApexOwner(domains, host)
+}
+
+func sameTLSDomain(a, b *config.Domain) bool {
+	return strings.EqualFold(strings.TrimSuffix(strings.TrimSpace(a.Host), "."), strings.TrimSuffix(strings.TrimSpace(b.Host), "."))
+}
+
 // domainMatchesHost reports whether an SNI name belongs to this domain.
 //
 // Mirrors buildDomainAllowlist: exact host, its implicit www form, wildcard
@@ -1070,6 +1115,9 @@ func domainMatchesHost(d *config.Domain, host string) bool {
 		a := canonicalTLSHostname(alias)
 		if a == "" {
 			continue
+		}
+		if strings.HasPrefix(a, "*.") && (host == a[2:] || strings.HasSuffix(host, a[1:])) {
+			return true
 		}
 		if a == host || implicitTLSWWWHostname(a) == host {
 			return true

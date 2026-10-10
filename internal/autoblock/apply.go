@@ -409,7 +409,19 @@ func (b *Blocker) load() {
 	for i := range st.Blocks {
 		e := st.Blocks[i]
 		a, ok := ParseAddr(e.IP)
-		if !ok || e.Expired(now) || b.Safe(a) {
+		if !ok {
+			continue
+		}
+		if e.Expired(now) || b.Safe(a) {
+			// The block lapsed while we were down, or the IP is whitelisted
+			// now. Its kernel rule is still installed and nothing else knows
+			// about it any more, so park the removal for expire to deliver.
+			if e.Firewall && !e.DryRun {
+				if b.fwPending == nil {
+					b.fwPending = make(map[string]struct{})
+				}
+				b.fwPending[a.String()] = struct{}{}
+			}
 			continue
 		}
 		cp := e

@@ -2038,7 +2038,9 @@ func handleSSHSession(channel ssh.Channel, requests <-chan *ssh.Request, storage
 			req.Reply(true, nil)
 		}
 
-		// Handle commands used by SFTPProvider.
+		// Handle commands used by SFTPProvider. Upload prefixes its write with
+		// a umask; the emulated filesystem has no modes to apply it to.
+		cmd = strings.TrimPrefix(cmd, "umask 077 && ")
 		switch {
 		case strings.HasPrefix(cmd, "mkdir -p "):
 			dir := testShellArg(strings.TrimPrefix(cmd, "mkdir -p "))

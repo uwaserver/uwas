@@ -430,35 +430,52 @@ func (h *Handler) Add(w http.ResponseWriter, r *http.Request) {
 		d.Cache.Enabled = true
 	}
 
-	// Check for duplicate hostnames
+	// Check for duplicate hostnames. Every check runs before cfg.Domains is
+	// touched, so a rejected Add leaves the live config unchanged.
 	h.deps.LockConfig()
 	cfg := h.deps.ConfigPtr()
-	// Remove implicit www redirect domains for this host
-	domainutil.RemoveImplicitWWWRedirectDomains(&cfg.Domains, d.Host, -1)
+	hostKey := domainutil.CanonicalDomainHostname(d.Host)
+	wwwHost := domainutil.ImplicitWWWHostname(d.Host)
 	for _, existing := range cfg.Domains {
-		if domainutil.CanonicalDomainHostname(existing.Host) == domainutil.CanonicalDomainHostname(d.Host) {
+		// The implicit www redirect for this host is replaced below, not a duplicate.
+		if domainutil.IsCanonicalRedirectAliasDomain(existing, wwwHost, d.Host) {
+			continue
+		}
+		conflict := domainutil.CanonicalDomainHostname(existing.Host) == hostKey
+		for _, alias := range existing.Aliases {
+			if domainutil.CanonicalDomainHostname(alias) == hostKey {
+				conflict = true
+			}
+		}
+		if conflict {
 			h.deps.UnlockConfig()
 			h.deps.RecordAudit(r, "domain.create", "domain: "+d.Host+" (duplicate)", false)
 			jsonError(w, fmt.Sprintf("hostname %q is already configured", d.Host), http.StatusConflict)
 			return
 		}
 	}
-	// Check redirect aliases for conflicts
+	// Check redirect aliases for conflicts with existing hosts and aliases
 	for _, alias := range redirectAliases {
-		for _, existing := range cfg.Domains {
-			if domainutil.CanonicalDomainHostname(existing.Host) == domainutil.CanonicalDomainHostname(alias) {
-				h.deps.UnlockConfig()
-				jsonError(w, fmt.Sprintf("alias %q is already configured", alias), http.StatusConflict)
-				return
-			}
+		if conflict := domainutil.FindDomainHostnameConflictAllowingRedirect(cfg.Domains, -1, alias, d.Host); conflict != "" {
+			h.deps.UnlockConfig()
+			jsonError(w, fmt.Sprintf("alias %q is already configured", alias), http.StatusConflict)
+			return
 		}
 	}
+	// Remove implicit www redirect domains for this host
+	replaced := implicitWWWRedirectHosts(cfg.Domains, d.Host, -1)
+	domainutil.RemoveImplicitWWWRedirectDomains(&cfg.Domains, d.Host, -1)
 	cfg.Domains = append(cfg.Domains, d)
 	// Add redirect alias domains
 	if len(redirectAliases) > 0 {
 		domainutil.UpsertCanonicalRedirectAliasDomains(&cfg.Domains, len(cfg.Domains)-1, redirectAliases, d.Host, aliasOpts.redirectCode, aliasOpts.preservePath)
 	}
 	h.deps.UnlockConfig()
+	// A replaced redirect's domains.d file must go too, or the next load sees
+	// it alongside the new domain as a duplicate host.
+	for _, rh := range replaced {
+		h.deps.RemoveDomainFile(rh)
+	}
 
 	h.deps.RecordAudit(r, "domain.create", "domain: "+d.Host, true)
 	h.deps.NotifyDomainChange()
@@ -658,6 +675,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	h.deps.LockConfig()
 	cfg := h.deps.ConfigPtr()
 	found := false
+	var replaced []string
 	for i, existing := range cfg.Domains {
 		if domainutil.CanonicalDomainHostname(existing.Host) == host {
 			merged := config.MergeDomain(existing, d, patchFields, replaceMode)
@@ -691,7 +709,16 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				for j := range cfg.Domains {
-					if j != i && domainutil.CanonicalDomainHostname(cfg.Domains[j].Host) == domainutil.CanonicalDomainHostname(merged.Host) {
+					if j == i {
+						continue
+					}
+					conflict := domainutil.CanonicalDomainHostname(cfg.Domains[j].Host) == domainutil.CanonicalDomainHostname(merged.Host)
+					for _, alias := range cfg.Domains[j].Aliases {
+						if domainutil.CanonicalDomainHostname(alias) == domainutil.CanonicalDomainHostname(merged.Host) {
+							conflict = true
+						}
+					}
+					if conflict {
 						h.deps.UnlockConfig()
 						h.deps.RecordAudit(r, "domain.update", "domain: "+host+" (duplicate rename)", false)
 						jsonError(w, "domain already exists", http.StatusConflict)
@@ -726,6 +753,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			cfg.Domains[i] = merged
+			replaced = implicitWWWRedirectHosts(cfg.Domains, merged.Host, i)
 			domainutil.RemoveImplicitWWWRedirectDomains(&cfg.Domains, merged.Host, i)
 			if len(redirectAliases) > 0 {
 				domainutil.UpsertCanonicalRedirectAliasDomains(&cfg.Domains, i, redirectAliases, merged.Host, aliasOpts.redirectCode, aliasOpts.preservePath)
@@ -742,10 +770,26 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "domain not found", http.StatusNotFound)
 		return
 	}
+	for _, rh := range replaced {
+		h.deps.RemoveDomainFile(rh)
+	}
 
 	h.deps.RecordAudit(r, "domain.update", "domain: "+host, true)
 	h.deps.NotifyDomainChange()
 	jsonResponse(w, d)
+}
+
+// implicitWWWRedirectHosts returns the hosts of the implicit www redirect
+// domains for targetHost that RemoveImplicitWWWRedirectDomains would drop.
+func implicitWWWRedirectHosts(domains []config.Domain, targetHost string, skipIndex int) []string {
+	wwwHost := domainutil.ImplicitWWWHostname(targetHost)
+	var hosts []string
+	for i, d := range domains {
+		if i != skipIndex && wwwHost != "" && domainutil.IsCanonicalRedirectAliasDomain(d, wwwHost, targetHost) {
+			hosts = append(hosts, d.Host)
+		}
+	}
+	return hosts
 }
 
 // aliasOptions holds alias redirect/canonical configuration parsed from request body.

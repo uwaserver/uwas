@@ -36,13 +36,29 @@ var (
 	httpGetFn      = downloadClient.Get
 	osStatFn       = os.Stat
 	osReadFileFn   = os.ReadFile
-	osWriteFileFn  = os.WriteFile
+	osWriteFileFn  = writeFileNoFollow
 	osMkdirAllFn   = os.MkdirAll
 	osRemoveAllFn  = os.RemoveAll
 	osRenameFn     = os.Rename
 	osReadDirFn    = os.ReadDir
 	filepathWalkFn = filepath.Walk
 )
+
+// writeFileNoFollow is os.WriteFile except that it refuses to open a
+// final-component symlink. The installer runs as root and writes into the
+// domain user's document root (wp-config.php, .htaccess, ...); a symlink the
+// user planted there would otherwise redirect the write to any file on the host.
+func writeFileNoFollow(name string, data []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|noFollowFlag, perm)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if err1 := f.Close(); err1 != nil && err == nil {
+		err = err1
+	}
+	return err
+}
 
 // escSQL escapes a string for use inside SQL single-quoted literals.
 // Every backslash is doubled and every quote is backslash-escaped. A
@@ -470,17 +486,29 @@ func setWordPressPermissions(webRoot string, log *strings.Builder) {
 
 	run("chown -R www-data:www-data", execCommandFn("chown", "-R", "www-data:www-data", webRoot))
 	run("chmod 755 (directories)", execCommandFn("find", webRoot, "-type", "d", "-exec", "chmod", "755", "{}", ";"))
-	run("chmod 644 (files)", execCommandFn("find", webRoot, "-type", "f", "-exec", "chmod", "644", "{}", ";"))
-	// wp-content needs to be writable
-	wpContent := filepath.Join(webRoot, "wp-content")
-	run("chmod -R 775 wp-content", execCommandFn("chmod", "-R", "775", wpContent))
+	// wp-config.php keeps the 0600 generateWPConfig gave it: it holds the DB
+	// password and salts, and 644 would make it readable by every local user.
+	run("chmod 644 (files)", execCommandFn("find", webRoot, "-type", "f", "!", "-name", "wp-config.php", "-exec", "chmod", "644", "{}", ";"))
+	// wp-content needs to be writable. chmod/chown/MkdirAll follow symlinks
+	// and this runs as root, so skip any path the domain user has pointed
+	// elsewhere (.tmp is not in the archive, so a planted one survives).
+	if pathHasSymlink(webRoot, "wp-content") {
+		log.WriteString("  wp-content is a symlink — skipped chmod\n")
+	} else {
+		run("chmod -R 775 wp-content", execCommandFn("chmod", "-R", "775", filepath.Join(webRoot, "wp-content")))
+	}
 
 	// Create directories WordPress needs for plugin/theme installs and uploads
 	for _, sub := range []string{"upgrade", "uploads", "upgrade/skins", ".tmp"} {
-		dir := filepath.Join(webRoot, "wp-content", sub)
+		rel := filepath.Join("wp-content", sub)
 		if sub == ".tmp" {
-			dir = filepath.Join(webRoot, ".tmp")
+			rel = ".tmp"
 		}
+		if pathHasSymlink(webRoot, rel) {
+			log.WriteString("  " + rel + " is under a symlink — skipped\n")
+			continue
+		}
+		dir := filepath.Join(webRoot, rel)
 		osMkdirAllFn(dir, 0775)
 		run("chown www-data:www-data "+sub, execCommandFn("chown", "www-data:www-data", dir))
 	}
@@ -828,6 +856,12 @@ func hasWPCLI() bool {
 // wpCLI runs a WP-CLI command in the given web root.
 // It auto-detects the site URL from wp-config.php to avoid HTTP_HOST warnings.
 func wpCLI(webRoot string, args ...string) (string, error) {
+	return wpCLIStdin(webRoot, nil, args...)
+}
+
+// wpCLIStdin is wpCLI with stdin attached, for values (passwords) that must
+// not appear on argv, where /proc/<pid>/cmdline exposes them to local users.
+func wpCLIStdin(webRoot string, stdin io.Reader, args ...string) (string, error) {
 	wpBin := bestEffortWPCLIBinary()
 	allArgs := append([]string{"--path=" + webRoot, "--allow-root", "--no-color"}, args...)
 
@@ -838,6 +872,7 @@ func wpCLI(webRoot string, args ...string) (string, error) {
 
 	cmd := execCommandFn(wpBin, allArgs...)
 	cmd.Dir = webRoot
+	cmd.Stdin = stdin
 	// Separate stdout from stderr — PHP deprecation warnings go to stderr
 	// and corrupt JSON output if mixed via CombinedOutput.
 	var stdout, stderr bytes.Buffer

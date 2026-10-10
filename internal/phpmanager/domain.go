@@ -87,12 +87,19 @@ func (m *Manager) AssignDomain(domain, version string) (*DomainPHP, error) {
 	addr := m.detectSystemFPMSocket(version)
 	if addr == "" {
 		// Fallback to per-domain TCP port (for php-cgi). Skip ports already
-		// held by another domain, e.g. one registered from config, so two
-		// domains never share a FastCGI address.
+		// held by another domain, e.g. one registered from config, or by a
+		// shared pool started with StartFPM, so a domain never shares a
+		// FastCGI address.
 		inUse := make(map[string]bool, len(m.domainMap))
 		for _, other := range m.domainMap {
 			inUse[other.listenAddr] = true
 		}
+		m.processes.Range(func(_, v any) bool {
+			if p, ok := v.(*processInfo); ok {
+				inUse[p.listenAddr] = true
+			}
+			return true
+		})
 		for {
 			addr = fmt.Sprintf("127.0.0.1:%d", m.nextPort)
 			m.nextPort++
@@ -479,6 +486,9 @@ var blockedPHPDirectives = map[string]bool{
 	"opcache.file_cache":    true,
 	"opcache.error_log":     true,
 	"opcache.lockfile_path": true,
+	// FFI calls C functions directly, outside disable_functions and
+	// open_basedir — the same capability enable_dl/extension grant.
+	"ffi.enable": true,
 }
 
 // validPHPINIDirective reports whether key is a syntactically valid php.ini
@@ -500,6 +510,14 @@ func validPHPINIDirective(key string) bool {
 		}
 	}
 	return true
+}
+
+// INIOverrideAllowed reports whether an ini override passes the checks
+// SetDomainConfig applies. Other channels that hand tenant-chosen directives
+// to PHP (.htaccess php_value/php_flag) use it, so a directive blocked here
+// cannot reach PHP another way.
+func INIOverrideAllowed(key, value string) bool {
+	return validPHPINIDirective(key) && phpINIValueSafe(value) && !blockedPHPDirectives[strings.ToLower(key)]
 }
 
 // phpINIValueSafe rejects values containing newlines or other control

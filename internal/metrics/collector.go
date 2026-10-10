@@ -258,6 +258,23 @@ func statsHost(host string) (string, bool) {
 	return host, true
 }
 
+// RetainDomains drops the per-domain stats of every host not in hosts, so a
+// deleted domain's counters are not inherited by a re-added hostname.
+func (c *Collector) RetainDomains(hosts []string) {
+	keep := make(map[string]bool, len(hosts))
+	for _, h := range hosts {
+		if k, ok := statsHost(h); ok {
+			keep[k] = true
+		}
+	}
+	c.domainStats.Range(func(key, _ any) bool {
+		if h, ok := key.(string); !ok || !keep[h] {
+			c.domainStats.Delete(key)
+		}
+		return true
+	})
+}
+
 // RecordDomain tracks per-domain request and bandwidth.
 func (c *Collector) RecordDomain(host string, statusCode int, bytesOut int64) {
 	host, ok := statsHost(host)

@@ -5,9 +5,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"golang.org/x/crypto/ssh"
 )
+
+// authKeysMu serializes the read-modify-write of authorized_keys. Unlocked,
+// two overlapping removals each rewrote the file from the same stale read, so
+// the second writer restored the key the first had revoked, and a removal
+// overlapping an add dropped the just-added key.
+var authKeysMu sync.Mutex
 
 // AddSSHKeyForWebDir adds a public SSH key for a domain whose writable
 // directory has already been resolved.
@@ -36,6 +43,9 @@ func AddSSHKeyForWebDir(webDir, hostname, pubKey string) error {
 		return fmt.Errorf("invalid SSH public key: %w", err)
 	}
 	canonical := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(parsed)))
+
+	authKeysMu.Lock()
+	defer authKeysMu.Unlock()
 
 	// Append key if not already present (compare canonical line-by-line).
 	existing, _ := osReadFileFn(authKeys)
@@ -76,6 +86,9 @@ func RemoveSSHKeyForWebDir(webDir, hostname, pubKeyFingerprint string) error {
 	}
 	domainDir := filepath.Dir(webDir)
 	authKeys := filepath.Join(domainDir, ".ssh", "authorized_keys")
+
+	authKeysMu.Lock()
+	defer authKeysMu.Unlock()
 
 	data, err := osReadFileFn(authKeys)
 	if err != nil {

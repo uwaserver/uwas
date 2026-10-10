@@ -123,7 +123,7 @@ func ruleExists(rules []Rule, action, port, proto, from string) bool {
 	port = normalizePort(port)
 	proto = strings.ToLower(proto)
 	for _, r := range rules {
-		if strings.ToUpper(r.Action) != action {
+		if strings.ToUpper(r.Action) != action || r.scope != "" {
 			continue
 		}
 		if normalizePort(r.Port) != port {
@@ -143,7 +143,7 @@ func ruleExists(rules []Rule, action, port, proto, from string) bool {
 
 // isDefaultDeny reports a blanket DENY any→any (the numbered default-deny row).
 func isDefaultDeny(r Rule) bool {
-	return strings.ToUpper(r.Action) == "DENY" && normalizePort(r.Port) == "" && normalizeFrom(r.From) == ""
+	return strings.ToUpper(r.Action) == "DENY" && normalizePort(r.Port) == "" && normalizeFrom(r.From) == "" && r.scope == ""
 }
 
 // hasDefaultDeny reports whether a blanket IPv4 deny any/any is present.
@@ -230,6 +230,11 @@ func ruleToUFWArgs(r Rule) ([]string, error) {
 	if action != "allow" && action != "deny" && action != "reject" {
 		return nil, fmt.Errorf("unsupported action %q", r.Action)
 	}
+	// The argv below only carries action/port/proto/from; recreating an
+	// app-profile, interface, destination or OUT rule from it would broaden it.
+	if r.scope != "" {
+		return nil, fmt.Errorf("cannot reorder a rule scoped to an app profile, interface, destination or direction — delete and recreate it")
+	}
 	from := normalizeFrom(r.From)
 
 	var args []string
@@ -253,7 +258,7 @@ func ruleToUFWArgs(r Rule) ([]string, error) {
 
 // ruleFingerprint identifies equivalent rules across v4/v6 twins.
 func ruleFingerprint(r Rule) string {
-	return strings.ToUpper(r.Action) + "|" + normalizePort(r.Port) + "|" + strings.ToLower(r.Proto) + "|" + normalizeFrom(r.From)
+	return strings.ToUpper(r.Action) + "|" + normalizePort(r.Port) + "|" + strings.ToLower(r.Proto) + "|" + normalizeFrom(r.From) + "|" + r.scope
 }
 
 // matchingRuleNumbers returns all numbered rules (v4+v6) matching r's content.
@@ -425,7 +430,7 @@ func DeduplicateRules() {
 			// Staged rules (ufw inactive) have no numbers — delete after enable.
 			continue
 		}
-		key := strings.ToUpper(r.Action) + "|" + normalizePort(r.Port) + "/" + strings.ToLower(r.Proto) + "|" + normalizeFrom(r.From) + "|" + fmt.Sprint(r.V6)
+		key := strings.ToUpper(r.Action) + "|" + normalizePort(r.Port) + "/" + strings.ToLower(r.Proto) + "|" + normalizeFrom(r.From) + "|" + fmt.Sprint(r.V6) + "|" + r.scope
 		if _, ok := seen[key]; ok {
 			toDelete = append(toDelete, r.Number)
 			continue

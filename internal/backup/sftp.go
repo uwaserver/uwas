@@ -120,7 +120,10 @@ func (p *SFTPProvider) Upload(ctx context.Context, filename string, data io.Read
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- session.Run("cat > " + shellQuote(remoteTmp))
+		// umask 077: archives hold uwas.yaml secrets and TLS private keys, so
+		// create them owner-only like the local provider instead of inheriting
+		// the remote login umask (typically 022 -> world-readable 0644).
+		errCh <- session.Run("umask 077 && cat > " + shellQuote(remoteTmp))
 	}()
 
 	// Stream the archive straight to the remote `cat` instead of buffering it

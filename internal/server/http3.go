@@ -40,10 +40,10 @@ func (s *Server) startHTTP3() error {
 func (s *Server) altSvcHeader() string {
 	// Read config under the lock: this runs on the request hot path and reload
 	// rewrites *s.config under configMu (data race otherwise).
-	s.configMu.RLock()
+	s.cfgMu().RLock()
 	enabled := s.config.Global.HTTP3Enabled
 	addr := s.config.Global.HTTPSListen
-	s.configMu.RUnlock()
+	s.cfgMu().RUnlock()
 
 	if !enabled || s.h3srv == nil {
 		return ""

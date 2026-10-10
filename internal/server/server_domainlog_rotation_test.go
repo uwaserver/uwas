@@ -798,7 +798,9 @@ func TestCloseRacesInFlightRotation(t *testing.T) {
 func hostIndex(t *testing.T, cfgs []config.AccessLogConfig, host string) int {
 	t.Helper()
 	for i := range cfgs {
-		if host == fmt.Sprintf("host%d.test", i) {
+		// Entries are keyed by log path; the host name form is kept for
+		// callers that still pass one.
+		if host == cfgs[i].Path || host == fmt.Sprintf("host%d.test", i) {
 			return i
 		}
 	}
@@ -893,7 +895,7 @@ func TestRotateReopenFailureDoesNotWedgeClose(t *testing.T) {
 	// The reopen failed, so the stale entry must be dropped -- that is what the
 	// deferred delete in Write exists to do.
 	m.mu.RLock()
-	_, stillThere := m.files[host]
+	_, stillThere := m.files[cfg.Path] // entries are keyed by log path
 	m.mu.RUnlock()
 	if stillThere {
 		t.Errorf("m.files still holds %q after its log failed to reopen; the entry must be dropped", host)
