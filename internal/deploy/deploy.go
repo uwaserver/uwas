@@ -260,8 +260,9 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, cancelCh 
 
 	if _, err := os.Stat(gitDir); err == nil {
 		// Existing repo — fetch + reset
-		// If token provided, update remote URL
-		if req.GitToken != "" && gitURL != "" {
+		// Repoint origin at the configured URL: fetch uses the stored remote,
+		// and the token rewrite below only applies when it equals gitURL.
+		if gitURL != "" {
 			runCmd(appRoot, gitEnv, "git", "remote", "set-url", "origin", gitURL)
 		}
 		if n := clearStaleGitLocks(gitDir, 30*time.Second); n > 0 {

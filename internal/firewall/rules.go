@@ -130,7 +130,9 @@ func ruleExists(rules []Rule, action, port, proto, from string) bool {
 			continue
 		}
 		rp := strings.ToLower(r.Proto)
-		if proto != "" && rp != "" && rp != proto {
+		// A rule without a protocol covers every protocol; a protocol-specific
+		// rule covers a request for all protocols (proto "") only in part.
+		if rp != "" && rp != proto {
 			continue
 		}
 		if normalizeFrom(r.From) != from {

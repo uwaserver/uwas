@@ -142,17 +142,31 @@ func updateINI(path, key, value string) error {
 	}
 
 	lines := strings.Split(string(data), "\n")
-	found := false
 	newLine := key + " = " + value
 
+	// PHP honours the last active assignment, so replace that one. A
+	// commented-out line is only a fallback: replacing it while an active
+	// line exists left the effective value unchanged.
+	idx, commented := -1, -1
 	for i, line := range lines {
-		if iniLineSetsKey(strings.TrimSpace(line), key) {
-			lines[i] = newLine
-			found = true
-			break
+		t := strings.TrimSpace(line)
+		if !iniLineSetsKey(t, key) {
+			continue
+		}
+		if strings.HasPrefix(t, ";") {
+			if commented < 0 {
+				commented = i
+			}
+		} else {
+			idx = i
 		}
 	}
-	if !found {
+	if idx < 0 {
+		idx = commented
+	}
+	if idx >= 0 {
+		lines[idx] = newLine
+	} else {
 		lines = append(lines, newLine)
 	}
 

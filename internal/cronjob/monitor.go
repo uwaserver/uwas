@@ -42,6 +42,38 @@ func isDomainSafe(domain string) bool {
 	return validDomainName.MatchString(domain)
 }
 
+// maxRecordedOutput caps the stdout and stderr kept per execution. Records are
+// held 100 deep per job and rewritten to cron_history.json on every run, so an
+// uncapped chatty command grew server memory and that file without bound.
+const maxRecordedOutput = 64 << 10
+
+// cappedBuffer keeps the first maxRecordedOutput bytes written and discards the
+// rest, still reporting full writes so the command is never blocked on its pipe.
+type cappedBuffer struct {
+	buf       bytes.Buffer
+	truncated bool
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	if room := maxRecordedOutput - c.buf.Len(); room < len(p) {
+		c.truncated = true
+		if room > 0 {
+			c.buf.Write(p[:room])
+		}
+		return len(p), nil
+	}
+	return c.buf.Write(p)
+}
+
+func (c *cappedBuffer) Len() int { return c.buf.Len() }
+
+func (c *cappedBuffer) String() string {
+	if c.truncated {
+		return c.buf.String() + "\n...[output truncated]"
+	}
+	return c.buf.String()
+}
+
 // ExecutionRecord tracks a single cron job execution.
 type ExecutionRecord struct {
 	ID        string        `json:"id"`
@@ -194,9 +226,9 @@ func (m *Monitor) Execute(domain, schedule, command string) ExecutionRecord {
 		}
 	}
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout, stderr := &cappedBuffer{}, &cappedBuffer{}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 
 	m.mu.RLock()
 	timeout := m.timeout

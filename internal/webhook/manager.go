@@ -10,9 +10,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -207,7 +209,7 @@ func (m *Manager) FireTo(url string, eventType EventType, data any) {
 
 	// SSRF check
 	if err := m.checkURLSafe(url); err != nil {
-		m.logger.Warn("webhook SSRF blocked", "url", url, "error", err)
+		m.logger.Warn("webhook SSRF blocked", "url", logURL(url), "error", redactURLError(err))
 		return
 	}
 
@@ -236,7 +238,7 @@ func (m *Manager) FireTo(url string, eventType EventType, data any) {
 	}
 
 	qe := &queuedEvent{webhook: wh, event: event}
-	m.sendToQueue(qe, url)
+	m.sendToQueue(qe, logURL(url))
 }
 
 // webhookWorkers is the number of concurrent delivery workers draining the
@@ -254,7 +256,7 @@ func (m *Manager) worker() {
 func (m *Manager) deliver(qe *queuedEvent) {
 	// SSRF check before attempting delivery
 	if err := m.checkURLSafe(qe.webhook.URL); err != nil {
-		m.logger.Warn("webhook SSRF blocked", "url", qe.webhook.URL, "error", err)
+		m.logger.Warn("webhook SSRF blocked", "url", logURL(qe.webhook.URL), "error", redactURLError(err))
 		return
 	}
 
@@ -283,7 +285,7 @@ func (m *Manager) deliver(qe *queuedEvent) {
 		case <-m.done:
 			m.logger.Warn("webhook delivery abandoned: manager closed",
 				"event", qe.event.Type,
-				"url", qe.webhook.URL,
+				"url", logURL(qe.webhook.URL),
 			)
 			return
 		default:
@@ -333,7 +335,7 @@ func (m *Manager) deliver(qe *queuedEvent) {
 				backoff.Stop()
 				m.logger.Warn("webhook retries abandoned: manager closed",
 					"event", qe.event.Type,
-					"url", qe.webhook.URL,
+					"url", logURL(qe.webhook.URL),
 					"attempt", attempt+1,
 				)
 				return
@@ -368,16 +370,16 @@ func (m *Manager) deliver(qe *queuedEvent) {
 			if ctx.Err() != nil {
 				m.logger.Warn("webhook delivery abandoned: manager closed",
 					"event", qe.event.Type,
-					"url", qe.webhook.URL,
+					"url", logURL(qe.webhook.URL),
 					"attempt", attempt+1,
 				)
 				return
 			}
 			m.logger.Warn("webhook delivery failed",
 				"event", qe.event.Type,
-				"url", qe.webhook.URL,
+				"url", logURL(qe.webhook.URL),
 				"attempt", attempt+1,
-				"error", err,
+				"error", redactURLError(err),
 			)
 			continue
 		}
@@ -386,7 +388,7 @@ func (m *Manager) deliver(qe *queuedEvent) {
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			m.logger.Debug("webhook delivered",
 				"event", qe.event.Type,
-				"url", qe.webhook.URL,
+				"url", logURL(qe.webhook.URL),
 				"attempt", attempt+1,
 			)
 			return
@@ -394,7 +396,7 @@ func (m *Manager) deliver(qe *queuedEvent) {
 
 		m.logger.Warn("webhook returned error status",
 			"event", qe.event.Type,
-			"url", qe.webhook.URL,
+			"url", logURL(qe.webhook.URL),
 			"attempt", attempt+1,
 			"status", resp.StatusCode,
 		)
@@ -402,9 +404,29 @@ func (m *Manager) deliver(qe *queuedEvent) {
 
 	m.logger.Error("webhook delivery exhausted all retries",
 		"event", qe.event.Type,
-		"url", qe.webhook.URL,
+		"url", logURL(qe.webhook.URL),
 		"retries", maxRetries,
 	)
+}
+
+// logURL reduces a receiver URL to scheme://host for logging. The path and
+// query routinely carry the credential (Slack hook path, ?token=).
+func logURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "(unparsable url)"
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+// redactURLError drops the request URL that *url.Error prints, keeping the
+// operation and the cause.
+func redactURLError(err error) error {
+	var uerr *url.Error
+	if errors.As(err, &uerr) {
+		return fmt.Errorf("%s: %w", uerr.Op, uerr.Err)
+	}
+	return err
 }
 
 func (m *Manager) checkURLSafe(url string) error {

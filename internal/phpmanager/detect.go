@@ -78,6 +78,19 @@ func (m *Manager) Detect() error {
 	}
 
 	m.mu.Lock()
+	// Re-detection (e.g. after installing another PHP version) must keep
+	// versions the operator disabled.
+	disabled := make(map[string]bool)
+	for _, inst := range m.installations {
+		if inst.Disabled {
+			disabled[shortVersion(inst.Version)] = true
+		}
+	}
+	for i := range found {
+		if disabled[shortVersion(found[i].Version)] {
+			found[i].Disabled = true
+		}
+	}
 	m.installations = found
 	m.mu.Unlock()
 
