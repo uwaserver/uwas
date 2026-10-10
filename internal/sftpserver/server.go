@@ -980,6 +980,11 @@ func (sess *sftpSession) handleRemove(id uint32, payload []byte) {
 	}
 	path, _ := readString(payload)
 	safe := sess.safePath(path)
+	if safe == "" {
+		// A symlink pointing outside the root (e.g. one a PHP script
+		// planted) fails safePath, but unlinking touches only the link.
+		safe = sess.symlinkEntry(path)
+	}
 	if safe == "" || safe == sess.root {
 		sess.sendStatus(id, sshFXPermissionDenied, "access denied")
 		return
@@ -989,6 +994,30 @@ func (sess *sftpSession) handleRemove(id uint32, payload []byte) {
 		return
 	}
 	sess.sendStatus(id, sshFXOK, "")
+}
+
+// symlinkEntry returns the path of p when it names a symlink whose parent
+// directory is inside the chroot, whatever the link points to; "" otherwise.
+// Only for operations that remove the entry itself.
+func (sess *sftpSession) symlinkEntry(p string) string {
+	for _, part := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if part == ".." {
+			return ""
+		}
+	}
+	clean := filepath.Clean("/" + p)
+	if clean == "/" {
+		return ""
+	}
+	parent := sess.safePath(filepath.Dir(clean))
+	if parent == "" {
+		return ""
+	}
+	full := filepath.Join(parent, filepath.Base(clean))
+	if info, err := os.Lstat(full); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return ""
+	}
+	return full
 }
 
 func (sess *sftpSession) handleMkDir(id uint32, payload []byte) {

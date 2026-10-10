@@ -50,8 +50,7 @@ func TestPHPInstallSerializedWithOtherInstalls(t *testing.T) {
 	defer restore()
 
 	gate := make(chan struct{})
-	oldRun := phpRunInstall
-	phpRunInstall = func(string) (string, error) { <-gate; return "stub", nil }
+	restoreRun := swapPHPRunInstall(func(string) (string, error) { <-gate; return "stub", nil })
 	var queues []*install.Queue
 	defer func() {
 		close(gate)
@@ -61,7 +60,7 @@ func TestPHPInstallSerializedWithOtherInstalls(t *testing.T) {
 			}
 			q.Stop()
 		}
-		phpRunInstall = oldRun
+		restoreRun()
 	}()
 	newServer := func() (*Server, *install.Queue) {
 		s := testServer()

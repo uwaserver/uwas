@@ -1148,6 +1148,13 @@ func dumpAllDatabasesReal() ([]byte, error) {
 }
 
 func addDirToTar(tw *tar.Writer, srcDir, archivePrefix string) error {
+	// WalkDir visits a symlinked root as a lone symlink entry, which the
+	// skip below would drop: a root on a second volume (linked into place)
+	// was archived empty and reported as a good backup. Resolve the root
+	// itself; links found inside it are still skipped.
+	if real, err := filepath.EvalSymlinks(srcDir); err == nil {
+		srcDir = real
+	}
 	return filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err

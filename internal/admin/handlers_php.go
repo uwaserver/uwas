@@ -2,6 +2,7 @@ package admin
 
 import (
 	"net/http"
+	"sync"
 
 	phpadmin "github.com/uwaserver/uwas/internal/admin/php"
 	"github.com/uwaserver/uwas/internal/auth"
@@ -105,7 +106,7 @@ func (d *phpDeps) PersistDomainPHPOverrides(domain string) {
 
 func (d *phpDeps) PHPManager() *phpmanager.Manager { return d.s.phpMgr }
 func (d *phpDeps) PhpRunInstall(distro string) (string, error) {
-	return phpRunInstall(distro)
+	return callPHPRunInstall(distro)
 }
 
 // SetPHPManager sets the PHP manager and initializes the PHP handler.
@@ -276,6 +277,31 @@ func (s *Server) handlePHPDomainConfigPut(w http.ResponseWriter, r *http.Request
 // phpRunInstall is a test seam for the PHP install path. TestMain points it
 // at a no-op so `go test` never invokes real apt commands.
 var phpRunInstall = phpmanager.RunInstall
+
+// phpRunInstallMu orders reads of phpRunInstall by install-queue workers
+// against test swaps, so a worker left over from an earlier test does not
+// race a later test's write (F1540).
+var phpRunInstallMu sync.RWMutex
+
+func callPHPRunInstall(version string) (string, error) {
+	phpRunInstallMu.RLock()
+	fn := phpRunInstall
+	phpRunInstallMu.RUnlock()
+	return fn(version)
+}
+
+// swapPHPRunInstall replaces the seam and returns the restore function.
+func swapPHPRunInstall(fn func(string) (string, error)) (restore func()) {
+	phpRunInstallMu.Lock()
+	old := phpRunInstall
+	phpRunInstall = fn
+	phpRunInstallMu.Unlock()
+	return func() {
+		phpRunInstallMu.Lock()
+		phpRunInstall = old
+		phpRunInstallMu.Unlock()
+	}
+}
 
 // validPHPVersion reports whether s is a bare PHP version of the form N.N.
 func validPHPVersion(s string) bool {

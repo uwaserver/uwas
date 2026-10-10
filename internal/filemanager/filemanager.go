@@ -152,6 +152,11 @@ func WriteFile(baseDir, relPath string, content []byte) error {
 func Delete(baseDir, relPath string) error {
 	fullPath := safePath(baseDir, relPath)
 	if fullPath == "" {
+		// A symlink whose target lies outside the base (a tenant's PHP
+		// symlink()) fails safePath, yet unlinking touches only the link.
+		fullPath = symlinkEntryPath(baseDir, relPath)
+	}
+	if fullPath == "" {
 		return fmt.Errorf("invalid path")
 	}
 	// Prevent deleting the base dir itself. Both sides must be resolved the
@@ -169,6 +174,25 @@ func Delete(baseDir, relPath string) error {
 		return fmt.Errorf("cannot delete web root")
 	}
 	return os.RemoveAll(fullPath)
+}
+
+// symlinkEntryPath returns the path of relPath when it names a symlink whose
+// parent directory is inside baseDir, whatever the link points to; "" otherwise.
+// Callers may only remove the entry, never follow it.
+func symlinkEntryPath(baseDir, relPath string) string {
+	rel := filepath.Clean(relPath)
+	if rel == "." || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	parent := safePath(baseDir, filepath.Dir(rel))
+	if parent == "" {
+		return ""
+	}
+	full := filepath.Join(parent, filepath.Base(rel))
+	if info, err := os.Lstat(full); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return ""
+	}
+	return full
 }
 
 // CreateDir creates a directory.

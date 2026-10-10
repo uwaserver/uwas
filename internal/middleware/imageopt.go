@@ -104,7 +104,7 @@ func ImageOptimization(cfg ImageOptConfig, docRoot string) Middleware {
 
 				// A variant of a deleted or since-replaced original is stale.
 				srcInfo, err := os.Stat(filepath.Join(docRoot, relPath))
-				if err != nil {
+				if err != nil || !srcInfo.Mode().IsRegular() {
 					continue
 				}
 				info, ok := variantFresh(srcInfo, diskPath)
@@ -175,10 +175,12 @@ func convertImage(src, dst, format string) bool {
 }
 
 // variantFresh reports whether dst is a usable optimized variant of the
-// original described by src: a regular file not older than the original.
+// original described by src: a regular file not older than the original. A
+// FIFO or device planted at the variant name would park the serving request
+// in open(2) (F1571).
 func variantFresh(src os.FileInfo, dst string) (os.FileInfo, bool) {
 	info, err := os.Stat(dst)
-	if err != nil || info.IsDir() || info.ModTime().Before(src.ModTime()) {
+	if err != nil || !info.Mode().IsRegular() || info.ModTime().Before(src.ModTime()) {
 		return nil, false
 	}
 	return info, true
@@ -189,6 +191,11 @@ func convertImageReal(src, dst, format string) bool {
 	// conversion of it; a dst older than src is regenerated.
 	srcInfo, err := os.Stat(src)
 	if err != nil {
+		return false
+	}
+	// A FIFO original would park the converter on open(2) while it holds
+	// convertMu, stalling every tenant's conversions (F1571).
+	if !srcInfo.Mode().IsRegular() {
 		return false
 	}
 	if _, ok := variantFresh(srcInfo, dst); ok {
@@ -206,7 +213,16 @@ func convertImageReal(src, dst, format string) bool {
 	// Convert to a sibling temp file and rename: the pre-lock Stat(dst) fast
 	// path above must only ever see a fully written destination, never a
 	// partially converted one (a concurrent request would serve it).
-	dstTmp := dst + ".tmp"
+	// The temp file is created exclusively under an unpredictable name: the
+	// converter runs as the server user, and a tenant-planted symlink at a
+	// predictable dst+".tmp" would redirect its write onto any file (F1570).
+	tf, err := os.CreateTemp(filepath.Dir(dst), ".uwas-img-*.tmp")
+	if err != nil {
+		return false
+	}
+	dstTmp := tf.Name()
+	tf.Close()
+	_ = os.Chmod(dstTmp, 0o644)
 
 	var cmd *exec.Cmd
 	switch format {

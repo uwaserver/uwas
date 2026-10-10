@@ -114,7 +114,7 @@ func (s *Server) packageTaskFn(pkg knownPkg, action string) install.TaskFunc {
 func (s *Server) phpInstallTaskFn(version string) install.TaskFunc {
 	phpMgr := s.phpMgr
 	return func(appendOutput func(string)) error {
-		output, err := phpRunInstall(version)
+		output, err := callPHPRunInstall(version)
 		appendOutput(output)
 		if err != nil {
 			s.logger.Error("PHP install failed", "version", version, "error", err)
