@@ -5,6 +5,7 @@ package deploy
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -533,6 +534,23 @@ func detectBuildCmds(appRoot string) []string {
 	return nil
 }
 
+// pipeWaitDelay bounds how long a finished command's output pipes may stay
+// open. A hook that starts a daemon (setsid -f ...) leaves it holding the
+// pipes, and without this Run would block for the daemon's whole lifetime and
+// hang the deploy (F1691).
+const pipeWaitDelay = time.Second
+
+// runBounded runs cmd like cmd.Run but does not wait on pipes held open by
+// leftover descendants once the command itself has exited successfully.
+func runBounded(cmd *exec.Cmd) error {
+	cmd.WaitDelay = pipeWaitDelay
+	err := cmd.Run()
+	if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+		err = nil
+	}
+	return err
+}
+
 func runCmd(dir string, env map[string]string, name string, args ...string) (string, error) {
 	return runCmdFn(dir, env, name, args...)
 }
@@ -547,7 +565,7 @@ func runCmdImpl(dir string, env map[string]string, name string, args ...string) 
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
-	err := cmd.Run()
+	err := runBounded(cmd)
 	return buf.String(), err
 }
 
@@ -576,7 +594,7 @@ func runShellImpl(dir string, env map[string]string, command string) (string, er
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
-	err := cmd.Run()
+	err := runBounded(cmd)
 	return buf.String(), err
 }
 

@@ -53,6 +53,9 @@ type Client struct {
 	storageDir   string
 	logger       *logger.Logger
 	dnsProvider  DNSProvider
+	// contactEmail is the account contact (RFC 8555 §7.3); the CA sends
+	// expiry and revocation notices to it.
+	contactEmail string
 
 	// initMu guards directory and account initialization (directory,
 	// accountKey, accountURL) against concurrent ObtainCertificate calls
@@ -114,6 +117,14 @@ func NewClient(directoryURL, storageDir string, log *logger.Logger) *Client {
 // SetDNSProvider sets the DNS provider for DNS-01 challenges.
 func (c *Client) SetDNSProvider(provider DNSProvider) {
 	c.dnsProvider = provider
+}
+
+// SetContactEmail sets the account contact address registered with the CA.
+// It applies to accounts registered after the call.
+func (c *Client) SetContactEmail(email string) {
+	c.initMu.Lock()
+	c.contactEmail = strings.TrimSpace(email)
+	c.initMu.Unlock()
 }
 
 // ObtainCertificate performs the full ACME flow for the given domains.
@@ -267,6 +278,9 @@ func (c *Client) ensureAccount(ctx context.Context) error {
 	// Register account (or get existing)
 	payload := map[string]any{
 		"termsOfServiceAgreed": true,
+	}
+	if c.contactEmail != "" {
+		payload["contact"] = []string{"mailto:" + c.contactEmail}
 	}
 
 	resp, err := c.signedRequest(ctx, c.directory.NewAccount, payload)

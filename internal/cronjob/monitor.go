@@ -3,6 +3,7 @@ package cronjob
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -121,6 +122,10 @@ type Monitor struct {
 // is to reap a genuinely hung process (which would otherwise block the job
 // forever via the overlap guard), not to bound normal runtimes.
 const defaultJobTimeout = 24 * time.Hour
+
+// pipeWaitDelay bounds how long Execute waits for the output pipes to close
+// after the job's process has exited.
+const pipeWaitDelay = time.Second
 
 // NewMonitor creates a new cron job monitor.
 func NewMonitor(dataDir string) *Monitor {
@@ -460,11 +465,23 @@ func (m *Monitor) ClearHistory(domain, command string) {
 // kill to avoid a zombie.
 func runWithTimeout(cmd *exec.Cmd, timeout time.Duration) error {
 	setProcessGroup(cmd)
+	// A descendant that left the process group (setsid, a daemonizing
+	// command) keeps the output pipes open past the job and past the group
+	// kill; without WaitDelay, Wait would block until it exits and the
+	// overlap guard would stay set (F1690).
+	cmd.WaitDelay = pipeWaitDelay
 	if err := cmd.Start(); err != nil {
 		return err
 	}
 	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	go func() {
+		err := cmd.Wait()
+		// The job itself succeeded; only a leftover descendant held the pipes.
+		if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+			err = nil
+		}
+		done <- err
+	}()
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {

@@ -223,6 +223,15 @@ func convertImageReal(src, dst, format string) bool {
 	dstTmp := tf.Name()
 	tf.Close()
 	_ = os.Chmod(dstTmp, 0o644)
+	// Every exit before the rename must drop the temp file, including the
+	// missing-converter and unknown-format returns: each image request would
+	// otherwise leave another empty file in the tenant's directory (F1630).
+	published := false
+	defer func() {
+		if !published {
+			os.Remove(dstTmp)
+		}
+	}()
 
 	var cmd *exec.Cmd
 	switch format {
@@ -243,12 +252,11 @@ func convertImageReal(src, dst, format string) bool {
 	}
 
 	if err := cmd.Run(); err != nil {
-		os.Remove(dstTmp) // cleanup partial file
 		return false
 	}
 	if err := os.Rename(dstTmp, dst); err != nil {
-		os.Remove(dstTmp)
 		return false
 	}
+	published = true
 	return true
 }

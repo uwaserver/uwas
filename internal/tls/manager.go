@@ -115,6 +115,7 @@ func NewManager(cfg config.ACMEConfig, domains []config.Domain, log *logger.Logg
 	// Initialize ACME client if email is configured
 	if cfg.Email != "" {
 		m.acme = acme.NewClient(cfg.CAURL, cfg.Storage, log)
+		m.acme.SetContactEmail(cfg.Email)
 
 		// Wire up DNS provider for DNS-01 challenges if configured.
 		if cfg.DNSProvider != "" {
