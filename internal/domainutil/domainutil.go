@@ -232,7 +232,10 @@ func RemoveDomainAlias(aliases []string, host string) []string {
 	if host == "" {
 		return aliases
 	}
-	out := aliases[:0]
+	// Zero capacity forces append to allocate: filtering in place would
+	// rewrite the caller's backing array, which a snapshot of the live
+	// config (or a concurrent reader) still shares (F1481).
+	out := aliases[:0:0]
 	for _, alias := range aliases {
 		if NormalizeDomainHostname(alias) == host {
 			continue

@@ -326,6 +326,15 @@ func (h *Handler) Add(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "forbidden: cannot set field "+key, http.StatusForbidden)
 			return
 		}
+		createRoot := h.deps.WebRoot()
+		if createRoot == "" {
+			createRoot = "/var/www"
+		}
+		if key := addForbiddenField(d, createRoot); key != "" {
+			h.deps.RecordAudit(r, "domain.create", "domain: "+d.Host+" (forbidden field: "+key+")", false)
+			jsonError(w, "forbidden: cannot set field "+key, http.StatusForbidden)
+			return
+		}
 	}
 
 	if d.Host == "" {
@@ -1215,6 +1224,24 @@ func webAccessFieldChange(cur *config.Domain, next config.Domain) string {
 			return "locations"
 		}
 	}
+	// php.fpm_address points the domain at any FastCGI endpoint (a sibling
+	// tenant's pool socket or an internal service); ssl.cert / key / client_ca
+	// are file paths the server reads. PHP assignment and certificate upload
+	// set these server-side, so a non-admin may keep a stored value but not
+	// introduce or change one (F1510).
+	var curPHP config.PHPConfig
+	var curSSL config.SSLConfig
+	if cur != nil {
+		curPHP, curSSL = cur.PHP, cur.SSL
+	}
+	if next.PHP.FPMAddress != "" && next.PHP.FPMAddress != curPHP.FPMAddress {
+		return "php.fpm_address"
+	}
+	if (next.SSL.Cert != "" && next.SSL.Cert != curSSL.Cert) ||
+		(next.SSL.Key != "" && next.SSL.Key != curSSL.Key) ||
+		(next.SSL.ClientCA != "" && next.SSL.ClientCA != curSSL.ClientCA) {
+		return "ssl"
+	}
 	if len(next.ErrorPages) > 0 {
 		var curPages map[int]string
 		if cur != nil {
@@ -1227,6 +1254,25 @@ func webAccessFieldChange(cur *config.Domain, next config.Domain) string {
 		}
 	}
 	return ""
+}
+
+// addForbiddenField returns the first privilege-sensitive field a non-admin
+// set on a new domain, or "". Update and RawPut already refuse these from
+// non-admins; Add must too, or a reseller assigned a not-yet-created hostname
+// could create it with root pointing at a sibling tenant's docroot (it still
+// passes the under-web_root check), an access_log path written as the server
+// user, or a webhook secret of its choosing (F1480). Only static/php sites at
+// the default docroot are the reseller's to create.
+func addForbiddenField(d config.Domain, webRoot string) string {
+	switch d.Type {
+	case "", string(config.DomainTypeStatic), string(config.DomainTypePHP):
+	default:
+		return "type"
+	}
+	if d.Root != "" && filepath.Clean(d.Root) != filepath.Join(webRoot, d.Host, "public_html") {
+		return "root"
+	}
+	return rawPutForbiddenChange(config.Domain{Type: d.Type, Root: d.Root}, d)
 }
 
 // rawPutForbiddenChange returns the first privilege-sensitive field (the set

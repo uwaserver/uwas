@@ -350,15 +350,26 @@ func (s *Server) htaccessAccess(root, target string, isDir bool, clientIP net.IP
 	return res
 }
 
+// maxHtaccessSize bounds the .htaccess a tenant can make the server parse.
+const maxHtaccessSize = 8 << 20
+
 func (s *Server) parseHtaccessFull(root string) *htaccessCacheEntry {
 	htPath := filepath.Join(root, ".htaccess")
-	f, err := os.Open(htPath)
+	// O_NONBLOCK: a FIFO planted as .htaccess must not hang every request.
+	f, err := os.OpenFile(htPath, os.O_RDONLY|nonBlockFlag, 0)
 	if err != nil {
 		return &htaccessCacheEntry{} // cache "no file" to avoid repeated stat
 	}
 	defer f.Close()
 
 	info, _ := f.Stat()
+	if info != nil && (!info.Mode().IsRegular() || info.Size() > maxHtaccessSize) {
+		// A device or FIFO cannot be a real .htaccess, and a file this large
+		// is not read (truncating it would drop denies); its denies are
+		// unknown, so fail closed like an unparsable file.
+		s.logger.Warn("htaccess is not a regular file or too large; refusing to serve until fixed", "path", htPath)
+		return &htaccessCacheEntry{parseFailed: true, modTime: info.ModTime()}
+	}
 
 	directives, err := htaccess.Parse(f)
 	if err != nil {

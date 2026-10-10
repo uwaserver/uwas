@@ -2,12 +2,46 @@ package server
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/pathsafe"
 )
+
+// maxErrorPageSize bounds a custom error page read from a tenant docroot.
+const maxErrorPageSize = 1 << 20
+
+// readErrorPage reads a custom error page named by tenant-controlled config or
+// .htaccess. The server runs as root, so the page must stay inside the docroot
+// ("../" and symlinked directories are refused), the final component must not
+// be a symlink, and only a bounded regular file is read (a FIFO never blocks).
+func readErrorPage(root, page string) ([]byte, error) {
+	full := filepath.Join(root, page)
+	base, err := pathsafe.CachedBase(root)
+	if err != nil || !base.Contains(full) {
+		return nil, os.ErrPermission
+	}
+	f, err := os.OpenFile(full, os.O_RDONLY|noFollowFlag|nonBlockFlag, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() || fi.Size() > maxErrorPageSize {
+		return nil, os.ErrPermission
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxErrorPageSize+1))
+	if err != nil || len(data) > maxErrorPageSize {
+		return nil, os.ErrPermission
+	}
+	return data, nil
+}
 
 var defaultErrorTitles = map[int]string{
 	400: "Bad Request",
@@ -32,7 +66,7 @@ func (s *Server) renderDomainError(w http.ResponseWriter, code int, domain *conf
 		if s != nil {
 			if entry := s.getHtaccessRuleSet(domain.Root); entry != nil && entry.errorPages != nil {
 				if pagePath, ok := entry.errorPages[code]; ok {
-					if data, err := os.ReadFile(filepath.Join(domain.Root, pagePath)); err == nil {
+					if data, err := readErrorPage(domain.Root, pagePath); err == nil {
 						w.Header().Set("Content-Type", "text/html; charset=utf-8")
 						w.WriteHeader(code)
 						w.Write(data)
@@ -43,7 +77,7 @@ func (s *Server) renderDomainError(w http.ResponseWriter, code int, domain *conf
 		}
 		if domain.ErrorPages != nil {
 			if pagePath, ok := domain.ErrorPages[code]; ok {
-				if data, err := os.ReadFile(filepath.Join(domain.Root, pagePath)); err == nil {
+				if data, err := readErrorPage(domain.Root, pagePath); err == nil {
 					w.Header().Set("Content-Type", "text/html; charset=utf-8")
 					w.WriteHeader(code)
 					w.Write(data)
