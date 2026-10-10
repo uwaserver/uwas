@@ -11,6 +11,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -525,6 +527,30 @@ func (h *Handler) DeployHistory(w http.ResponseWriter, r *http.Request) {
 		"name":  name,
 		"items": history,
 	})
+}
+
+// ForgetApp drops everything deploy keeps for a deleted app: the in-memory
+// history and last webhook status, the persisted history file and the
+// generated deploy key directory. Without it an app re-created under the same
+// name inherits the old history and the old private key stays on disk.
+func (h *Handler) ForgetApp(storeDir, name string) {
+	h.deployHistoryMu.Lock()
+	delete(h.deployHistory, name)
+	h.deployHistoryMu.Unlock()
+	h.lastWebhookMu.Lock()
+	delete(h.lastWebhookByName, name)
+	h.lastWebhookMu.Unlock()
+	if storeDir == "" || name == "" || name != filepath.Base(name) {
+		return
+	}
+	if p := deployHistoryPath(storeDir, name); p != "" {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			log.Printf("deploy history remove failed: name=%s error=%v", name, err)
+		}
+	}
+	if err := os.RemoveAll(filepath.Join(storeDir, "deploy-keys", name)); err != nil {
+		log.Printf("deploy key remove failed: name=%s error=%v", name, err)
+	}
 }
 
 // RunWebhookDeploy is exported for the admin adapter.

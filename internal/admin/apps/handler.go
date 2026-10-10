@@ -513,6 +513,11 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Optional hook: lets the deploy package drop the deleted app's history and
+	// deploy key so a re-created app of the same name starts clean.
+	if f, ok := h.deps.(interface{ ForgetApp(storeDir, name string) }); ok {
+		f.ForgetApp(mgr.Store().Dir, name)
+	}
 	h.deps.RecordAudit(r, "app.delete", name, true)
 	h.maybeReload()
 	jsonResponse(w, map[string]string{"status": "deleted", "name": name})

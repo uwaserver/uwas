@@ -45,6 +45,13 @@ func (d *appsDeps) Reload() error {
 
 func (d *appsDeps) ConfigPath() string { return d.s.configPath }
 
+// ForgetApp clears deploy state (history, deploy key) of a deleted app.
+func (d *appsDeps) ForgetApp(storeDir, name string) {
+	if deployHandler != nil {
+		deployHandler.ForgetApp(storeDir, name)
+	}
+}
+
 func (d *appsDeps) ValidateDeployConfig(def *apps.App) error {
 	return validateDeployConfig(def)
 }

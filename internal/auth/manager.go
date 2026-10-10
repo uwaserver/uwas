@@ -736,11 +736,17 @@ func (m *Manager) UpdateUser(username string, updates *User) error {
 	}
 
 	user.UpdatedAt = time.Now()
-	m.saveUsers()
+	// The change stays live in memory (and sessions are still revoked below),
+	// but a failed write is reported: otherwise a disable or password reset
+	// would silently be undone by the next restart.
+	saveErr := m.saveUsers()
 
 	// MEDIUM-9: invalidate sessions on password change or disable
 	if updates.Password != "" || (updates.EnabledSet && !updates.Enabled) {
 		m.invalidateUserSessionsLocked(user.ID)
+	}
+	if saveErr != nil {
+		return fmt.Errorf("persist user: %w", saveErr)
 	}
 	return nil
 }
@@ -809,8 +815,11 @@ func (m *Manager) DeleteUser(username string) error {
 	if user.APIKeyHash != "" {
 		delete(m.usersByAPIKeyHash, user.APIKeyHash)
 	}
-	m.saveUsers()
+	saveErr := m.saveUsers()
 	m.invalidateUserSessionsLocked(user.ID)
+	if saveErr != nil {
+		return fmt.Errorf("persist user: %w", saveErr)
+	}
 	return nil
 }
 
@@ -837,6 +846,7 @@ func (m *Manager) RegenerateAPIKey(username string) (string, error) {
 	// Rotate the secondary index entry: drop the old hash mapping (if any)
 	// before installing the new one so a regenerated key cannot collide
 	// with a stale entry left over from this user.
+	oldPrefix, oldHash := user.APIKey, user.APIKeyHash
 	if user.APIKeyHash != "" {
 		delete(m.usersByAPIKeyHash, user.APIKeyHash)
 	}
@@ -844,7 +854,16 @@ func (m *Manager) RegenerateAPIKey(username string) (string, error) {
 	user.APIKeyHash = hashAPIKey(apiKey)
 	m.usersByAPIKeyHash[user.APIKeyHash] = user
 	user.UpdatedAt = time.Now()
-	m.saveUsers()
+	if err := m.saveUsers(); err != nil {
+		// Roll back: handing out a key that is gone after a restart (while the
+		// old one is revoked in memory) would lock the user out.
+		delete(m.usersByAPIKeyHash, user.APIKeyHash)
+		user.APIKey, user.APIKeyHash = oldPrefix, oldHash
+		if oldHash != "" {
+			m.usersByAPIKeyHash[oldHash] = user
+		}
+		return "", fmt.Errorf("persist user: %w", err)
+	}
 
 	return apiKey, nil
 }
@@ -870,8 +889,11 @@ func (m *Manager) ChangePassword(username, currentPassword, newPassword string) 
 
 	user.Password = string(hash)
 	user.UpdatedAt = time.Now()
-	m.saveUsers()
+	saveErr := m.saveUsers()
 	m.invalidateUserSessionsLocked(user.ID)
+	if saveErr != nil {
+		return fmt.Errorf("persist user: %w", saveErr)
+	}
 	return nil
 }
 
