@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,16 +38,15 @@ func TestSystemInfoRefreshDoesNotBlockConcurrentRequests(t *testing.T) {
 	}
 	s.config.Global.WebRoot = t.TempDir()
 
-	var aFinished atomic.Bool
 	var wg sync.WaitGroup
 	start := make(chan struct{})
 
-	// Request A: cache is cold (first call), so it enters the refresh and
-	// parks inside the slow apt subprocess.
+	// Request A: cache is cold (first call), so it wins the refresh. The
+	// refresh itself now runs in the background (F1720), so A returns at once
+	// while apt is still parked inside its subprocess.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer aFinished.Store(true)
 		<-start
 		s.handleSystem(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/v1/system", nil))
 	}()
@@ -65,9 +63,6 @@ func TestSystemInfoRefreshDoesNotBlockConcurrentRequests(t *testing.T) {
 
 	if bElapsed > 8*time.Second {
 		t.Fatalf("concurrent /system request blocked on the refresh for %v (apt stub sleeps 12s)", bElapsed)
-	}
-	if aFinished.Load() {
-		t.Fatal("request B completed only after A's refresh finished")
 	}
 
 	wg.Wait()

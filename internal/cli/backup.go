@@ -58,8 +58,13 @@ func createBackup(output, configPath, certsDir string) error {
 		return fmt.Errorf("create backup file: %w", err)
 	}
 	defer outFile.Close()
-	if err := outFile.Chmod(0o600); err != nil {
-		return fmt.Errorf("chmod backup file: %w", err)
+	// Tighten a pre-existing wider file, but only a regular one: devices and
+	// pipes (/dev/null, /dev/stdout) cannot or need not be chmod'ed, and a
+	// filesystem that refuses chmod (vfat, cifs) must not make the backup fail.
+	if st, err := outFile.Stat(); err == nil && st.Mode().IsRegular() {
+		if err := outFile.Chmod(0o600); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not restrict %s to owner-only: %v\n", output, err)
+		}
 	}
 
 	gw := gzip.NewWriter(outFile)

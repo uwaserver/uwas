@@ -556,7 +556,23 @@ func (h *Handler) ForgetApp(storeDir, name string) {
 // RunWebhookDeploy is exported for the admin adapter.
 func (h *Handler) RunWebhookDeploy(name, ref string) { h.runWebhookDeploy(name, ref) }
 
+// appDeleted reports whether the app store positively no longer holds name. A
+// deploy already running when its app is deleted would otherwise record its
+// result after ForgetApp cleared it, and an app re-created under that name
+// would inherit the entry (F1751). A store error is not "deleted".
+func (h *Handler) appDeleted(name string) bool {
+	appsMgr := h.deps.AppsManager()
+	if appsMgr == nil {
+		return false
+	}
+	def, err := appsMgr.Store().Get(name)
+	return err == nil && def == nil
+}
+
 func (h *Handler) recordHistory(name string, entry DeployHistoryEntry) {
+	if h.appDeleted(name) {
+		return
+	}
 	h.deployHistoryMu.Lock()
 	items := append([]DeployHistoryEntry{entry}, h.deployHistory[name]...)
 	if len(items) > 20 {
@@ -573,6 +589,9 @@ func (h *Handler) recordHistory(name string, entry DeployHistoryEntry) {
 }
 
 func (h *Handler) recordLastWebhook(name string, status *WebhookDeployStatus) {
+	if h.appDeleted(name) {
+		return
+	}
 	h.lastWebhookMu.Lock()
 	h.lastWebhookByName[name] = status
 	h.lastWebhookMu.Unlock()

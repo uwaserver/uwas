@@ -49,3 +49,23 @@ func mustMode(t *testing.T, p string) os.FileMode {
 	}
 	return st.Mode().Perm()
 }
+
+// A destination that is not a regular file (a dry run to /dev/null, a pipe)
+// cannot be chmod'ed by an unprivileged user; the F1150 chmod must not turn
+// that into a failed backup (F1780).
+func TestCreateBackupToDeviceDestination(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root may chmod /dev/null")
+	}
+	if st, err := os.Stat("/dev/null"); err != nil || st.Mode()&os.ModeCharDevice == 0 {
+		t.Skip("no /dev/null")
+	}
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "uwas.yaml")
+	os.WriteFile(cfg, []byte("api_key: secret\n"), 0o600)
+	certs := filepath.Join(dir, "certs")
+	os.MkdirAll(certs, 0o700)
+	if err := createBackup("/dev/null", cfg, certs); err != nil {
+		t.Fatalf("createBackup(/dev/null): %v", err)
+	}
+}

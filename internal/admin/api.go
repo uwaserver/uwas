@@ -156,6 +156,15 @@ type Server struct {
 	sysInfoDiskUsed   int64
 	sysInfoRefreshing atomic.Bool
 
+	// Cached host facts shown by /system. uname/df/timedatectl used to be
+	// spawned on every request (the dashboard polls every 10s, and any
+	// authenticated user may call it), so they are cached (F1721).
+	sysInfoHostOnce sync.Once
+	sysInfoKernel   string
+	sysInfoHostMu   sync.Mutex
+	sysInfoHostTime time.Time
+	sysInfoHost     map[string]any
+
 	// Auth manager for multi-user support
 	authMgr AuthManager
 
@@ -581,8 +590,13 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if out, err := exec.Command("uname", "-r").Output(); err == nil {
-			result["kernel"] = strings.TrimSpace(string(out))
+		s.sysInfoHostOnce.Do(func() {
+			if out, err := sysInfoOutput("uname", "-r"); err == nil {
+				s.sysInfoKernel = strings.TrimSpace(string(out))
+			}
+		})
+		if s.sysInfoKernel != "" {
+			result["kernel"] = s.sysInfoKernel
 		}
 		// Total RAM
 		if data, err := os.ReadFile("/proc/meminfo"); err == nil {
@@ -616,33 +630,9 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 				result["load_15m"] = fields[2]
 			}
 		}
-		// Disk total/free for root partition
-		if out, err := exec.Command("df", "-B1", "/").Output(); err == nil {
-			lines := strings.Split(string(out), "\n")
-			if len(lines) >= 2 {
-				fields := strings.Fields(lines[1])
-				if len(fields) >= 4 {
-					if total, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
-						result["disk_total_bytes"] = total
-						result["disk_total_human"] = formatDiskSize(total)
-					}
-					if used, err := strconv.ParseInt(fields[2], 10, 64); err == nil {
-						result["disk_root_used_bytes"] = used
-					}
-					if free, err := strconv.ParseInt(fields[3], 10, 64); err == nil {
-						result["disk_free_bytes"] = free
-						result["disk_free_human"] = formatDiskSize(free)
-					}
-				}
-			}
-		}
-		// Timezone
-		if out, err := exec.Command("timedatectl", "show", "--property=Timezone", "--value").Output(); err == nil {
-			result["timezone"] = strings.TrimSpace(string(out))
-		} else if tz, err := os.Readlink("/etc/localtime"); err == nil {
-			if idx := strings.Index(tz, "zoneinfo/"); idx >= 0 {
-				result["timezone"] = tz[idx+9:]
-			}
+		// Disk total/free for root partition and timezone: short-lived cache.
+		for k, v := range s.sysInfoHostFacts() {
+			result[k] = v
 		}
 		// Package updates + web-root disk usage, cached for 10 minutes. The
 		// refresh runs OUTSIDE sysInfoCacheMu: `apt list` can stall for
@@ -658,30 +648,13 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 		s.sysInfoCacheMu.Unlock()
 
 		if refreshing {
-			refreshCtx, cancelRefresh := context.WithTimeout(context.Background(), 60*time.Second)
-			if out, err := exec.CommandContext(refreshCtx, "bash", "-c", "apt list --upgradable 2>/dev/null | grep -c upgradable || echo 0").Output(); err == nil {
-				pkgUpdates = strings.TrimSpace(string(out))
-			}
-			// Web root disk usage (cached together). The walk itself stays
-			// outside the lock; only the field commit is guarded.
+			// The refresh runs in the background (F1720): `apt list` plus a
+			// web-root walk can take many seconds, and the request that wins
+			// the single-flight CAS used to wait for both before answering.
 			s.configMu.RLock()
 			wr := s.config.Global.WebRoot
 			s.configMu.RUnlock()
-			duFresh, duOK := int64(0), false
-			if wr != "" {
-				if du, err := filemanager.DiskUsage(wr); err == nil {
-					duFresh, duOK = du, true
-				}
-			}
-			s.sysInfoCacheMu.Lock()
-			s.sysInfoPkgUpdates = pkgUpdates
-			if duOK {
-				s.sysInfoDiskUsed = duFresh
-			}
-			s.sysInfoCacheTime = time.Now()
-			s.sysInfoCacheMu.Unlock()
-			s.sysInfoRefreshing.Store(false)
-			cancelRefresh()
+			go s.refreshSysInfoCache(wr)
 		}
 		if pkgUpdates != "" {
 			result["package_updates"] = pkgUpdates
@@ -706,6 +679,89 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, result)
+}
+
+// refreshSysInfoCache recomputes the cached package-update count and web-root
+// disk usage. The apt and walk work stays outside sysInfoCacheMu; only the
+// field commit is guarded.
+func (s *Server) refreshSysInfoCache(webRoot string) {
+	defer s.sysInfoRefreshing.Store(false)
+	refreshCtx, cancelRefresh := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancelRefresh()
+	pkgUpdates := ""
+	if out, err := exec.CommandContext(refreshCtx, "bash", "-c", "apt list --upgradable 2>/dev/null | grep -c upgradable || echo 0").Output(); err == nil {
+		pkgUpdates = strings.TrimSpace(string(out))
+	}
+	duFresh, duOK := int64(0), false
+	if webRoot != "" {
+		if du, err := filemanager.DiskUsage(webRoot); err == nil {
+			duFresh, duOK = du, true
+		}
+	}
+	s.sysInfoCacheMu.Lock()
+	if pkgUpdates != "" {
+		s.sysInfoPkgUpdates = pkgUpdates
+	}
+	if duOK {
+		s.sysInfoDiskUsed = duFresh
+	}
+	s.sysInfoCacheTime = time.Now()
+	s.sysInfoCacheMu.Unlock()
+}
+
+const (
+	sysInfoCmdTimeout = 5 * time.Second
+	sysInfoHostTTL    = 15 * time.Second
+)
+
+// sysInfoOutput runs a short host-inspection command with a timeout so a
+// wedged binary (timedatectl waiting on dbus, df on a stale mount) cannot
+// hold a /system request open.
+func sysInfoOutput(name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), sysInfoCmdTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = time.Second
+	return cmd.Output()
+}
+
+// sysInfoHostFacts returns root-partition disk figures and the timezone,
+// refreshed at most once per sysInfoHostTTL. Callers must not modify the map.
+func (s *Server) sysInfoHostFacts() map[string]any {
+	s.sysInfoHostMu.Lock()
+	defer s.sysInfoHostMu.Unlock()
+	if s.sysInfoHost != nil && time.Since(s.sysInfoHostTime) < sysInfoHostTTL {
+		return s.sysInfoHost
+	}
+	facts := map[string]any{}
+	if out, err := sysInfoOutput("df", "-B1", "/"); err == nil {
+		lines := strings.Split(string(out), "\n")
+		if len(lines) >= 2 {
+			fields := strings.Fields(lines[1])
+			if len(fields) >= 4 {
+				if total, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
+					facts["disk_total_bytes"] = total
+					facts["disk_total_human"] = formatDiskSize(total)
+				}
+				if used, err := strconv.ParseInt(fields[2], 10, 64); err == nil {
+					facts["disk_root_used_bytes"] = used
+				}
+				if free, err := strconv.ParseInt(fields[3], 10, 64); err == nil {
+					facts["disk_free_bytes"] = free
+					facts["disk_free_human"] = formatDiskSize(free)
+				}
+			}
+		}
+	}
+	if out, err := sysInfoOutput("timedatectl", "show", "--property=Timezone", "--value"); err == nil {
+		facts["timezone"] = strings.TrimSpace(string(out))
+	} else if tz, err := os.Readlink("/etc/localtime"); err == nil {
+		if idx := strings.Index(tz, "zoneinfo/"); idx >= 0 {
+			facts["timezone"] = tz[idx+9:]
+		}
+	}
+	s.sysInfoHost, s.sysInfoHostTime = facts, time.Now()
+	return facts
 }
 
 func formatDiskSize(b int64) string {
