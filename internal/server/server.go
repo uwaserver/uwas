@@ -396,7 +396,19 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 				domains[i].Aliases = append([]string(nil), domains[i].Aliases...)
 			}
 			trustedProxies := s.config.Global.TrustedProxies
+			var bkWebRoot, bkDomainsDir string
+			var bkRoots []string
+			if s.backupMgr != nil {
+				bkWebRoot, bkDomainsDir, bkRoots = backupDomainPaths(s.config, s.configPath)
+			}
 			s.cfgMu().RUnlock()
+
+			// A domain added or removed through the panel changes what a
+			// backup must archive; without this its content was missing from
+			// every backup until restart (F2862).
+			if s.backupMgr != nil {
+				s.backupMgr.SetDomainPaths(bkWebRoot, bkDomainsDir, bkRoots)
+			}
 
 			s.vhosts.Update(domains)
 
@@ -797,6 +809,21 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 }
 
 // SetConfigPath stores the config file path for reload support and config editor.
+// backupDomainPaths returns what a full backup archives besides the config and
+// certificates: the web root, the domains.d directory and each domain's root.
+func backupDomainPaths(cfg *config.Config, configPath string) (webRoot, domainsDir string, roots []string) {
+	domainsDir = cfg.DomainsDir
+	if domainsDir != "" && !filepath.IsAbs(domainsDir) {
+		domainsDir = filepath.Join(filepath.Dir(configPath), domainsDir)
+	}
+	for _, d := range cfg.Domains {
+		if d.Root != "" {
+			roots = append(roots, d.Root)
+		}
+	}
+	return cfg.Global.WebRoot, domainsDir, roots
+}
+
 func (s *Server) SetConfigPath(path string) {
 	s.configPath = path
 
@@ -812,17 +839,8 @@ func (s *Server) SetConfigPath(path string) {
 		s.backupMgr.SetPaths(path, certsDir)
 
 		// Set domain content paths for full backup (web files + databases)
-		domainsDir := s.config.DomainsDir
-		if domainsDir != "" && !filepath.IsAbs(domainsDir) {
-			domainsDir = filepath.Join(filepath.Dir(path), domainsDir)
-		}
-		var roots []string
-		for _, d := range s.config.Domains {
-			if d.Root != "" {
-				roots = append(roots, d.Root)
-			}
-		}
-		s.backupMgr.SetDomainPaths(s.config.Global.WebRoot, domainsDir, roots)
+		webRoot, domainsDir, roots := backupDomainPaths(s.config, path)
+		s.backupMgr.SetDomainPaths(webRoot, domainsDir, roots)
 
 		// Wire Docker DB dump into backup
 		backup.SetDockerDumpFunc(func() map[string][]byte {

@@ -53,13 +53,16 @@ func (c *proxyProtoConn) parseHeader() {
 		c.parsed = true
 		c.reader = bufio.NewReader(c.Conn)
 		_ = c.Conn.SetReadDeadline(time.Now().Add(proxyHeaderTimeout))
-		line, err := c.reader.ReadString('\n')
+		// A v1 header is at most 107 bytes. ReadSlice stops at the reader's
+		// buffer size (bufio.ErrBufferFull) instead of buffering without
+		// bound until a newline shows up (F2830).
+		raw, err := c.reader.ReadSlice('\n')
 		_ = c.Conn.SetReadDeadline(time.Time{})
 		if err != nil {
 			c.parseErr = fmt.Errorf("proxy protocol: %w", err)
 			return
 		}
-		line = strings.TrimRight(line, "\r\n")
+		line := strings.TrimRight(string(raw), "\r\n")
 		if strings.HasPrefix(line, "PROXY ") {
 			parts := strings.Fields(line)
 			// PROXY TCP4 <srcIP> <dstIP> <srcPort> <dstPort>

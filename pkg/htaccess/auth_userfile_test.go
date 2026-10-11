@@ -1,6 +1,9 @@
 package htaccess
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestAuthUserFileRequiresAuth pins the fail-closed contract for an .htaccess
 // AuthUserFile block.
@@ -79,20 +82,22 @@ func TestAuthUserFileConvertedFromDirectives(t *testing.T) {
 			wantFile: ".htpasswd",
 		},
 		{
-			name: "traversal path is dropped by the converter guard",
+			// The path is never kept (so it can never be read), but the
+			// directory is still password-protected: gate it (F2800).
+			name: "traversal path is dropped by the converter guard but still gates",
 			directives: []Directive{
 				{Name: "AuthUserFile", Args: []string{"../../../etc/passwd"}},
 				{Name: "Require", Args: []string{"valid-user"}},
 			},
-			wantAuth: false,
+			wantAuth: true,
 			wantFile: "",
 		},
 		{
-			name: "absolute path is dropped by the converter guard",
+			name: "absolute path is dropped by the converter guard but still gates",
 			directives: []Directive{
 				{Name: "AuthUserFile", Args: []string{"/etc/shadow"}},
 			},
-			wantAuth: false,
+			wantAuth: true,
 			wantFile: "",
 		},
 		{
@@ -139,3 +144,60 @@ func TestAuthUserFileSurvivesMerge(t *testing.T) {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// F2800: an AuthUserFile whose path the converter refuses to keep (absolute or
+// traversal) is still an authentication requirement and must still gate.
+func TestAuthUserFileRejectedPathStillRequiresAuth(t *testing.T) {
+	for _, tc := range []struct {
+		name, src string
+		want      bool
+	}{
+		{"relative", "AuthUserFile .htpasswd", true},
+		{"absolute", "AuthUserFile /home/u/.htpasswd", true},
+		{"traversal", "AuthUserFile ../../x", true},
+		{"none", "AuthType Basic", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ds, err := Parse(strings.NewReader(tc.src + "\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			rs := Convert(ds)
+			if got := AuthUserFileRequiresAuth(rs); got != tc.want {
+				t.Errorf("AuthUserFileRequiresAuth = %v, want %v", got, tc.want)
+			}
+			merged := NewRuleSet()
+			merged.Merge(rs)
+			if got := AuthUserFileRequiresAuth(merged); got != tc.want {
+				t.Errorf("after Merge = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// F2801: authentication-based Require lines that are the only access rule
+// cannot be verified here and must deny instead of leaving the access unset.
+func TestAuthOnlyRequireDeniesAccess(t *testing.T) {
+	for _, tc := range []struct {
+		name, src string
+		want      AccessDecision
+	}{
+		{"valid-user", "Require valid-user", AccessDenied},
+		{"user", "Require user bob", AccessDenied},
+		{"group", "Require group staff", AccessDenied},
+		{"RequireAll", "<RequireAll>\nRequire valid-user\n</RequireAll>", AccessDenied},
+		{"ip plus valid-user keeps the ip rule", "Require ip 10.0.0.0/8\nRequire valid-user", AccessDenied}, // client below matches no ip
+		{"all granted", "Require all granted", AccessGranted},
+		{"nothing", "Options -Indexes", AccessUnset},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ds, err := Parse(strings.NewReader(tc.src + "\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := Convert(ds).AccessFor(nil); got != tc.want {
+				t.Errorf("AccessFor = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

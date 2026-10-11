@@ -160,6 +160,12 @@ func forwardedEntryIP(entry string) string {
 	if net.ParseIP(entry) != nil {
 		return entry
 	}
+	// "[2001:db8::7]" — a bracketed IPv6 hop with no port (F2831).
+	if n := len(entry); n > 2 && entry[0] == '[' && entry[n-1] == ']' {
+		if inner := entry[1 : n-1]; net.ParseIP(inner) != nil {
+			return inner
+		}
+	}
 	if host, _, err := net.SplitHostPort(entry); err == nil {
 		return host
 	}

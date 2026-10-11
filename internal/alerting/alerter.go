@@ -102,9 +102,29 @@ func New(enabled bool, webhookURL string, channels []notify.Channel, log *logger
 	return a
 }
 
+// Update replaces the delivery settings after a config reload. They were fixed
+// when the Alerter was built, so a changed Slack/Telegram/email destination, a
+// rotated webhook URL, or alerting switched on or off in the panel never took
+// effect until restart (F2860).
+func (a *Alerter) Update(enabled bool, webhookURL string, channels []notify.Channel) {
+	a.mu.Lock()
+	a.enabled = enabled
+	a.webhookURL = webhookURL
+	a.channels = channels
+	a.mu.Unlock()
+}
+
+// settings returns a consistent snapshot of the delivery settings.
+func (a *Alerter) settings() (enabled bool, webhookURL string, channels []notify.Channel) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.enabled, a.webhookURL, a.channels
+}
+
 // Alert records an alert in the ring buffer and sends it via webhook if configured.
 func (a *Alerter) Alert(alert Alert) {
-	if !a.enabled {
+	enabled, webhookURL, channels := a.settings()
+	if !enabled {
 		return
 	}
 
@@ -131,7 +151,7 @@ func (a *Alerter) Alert(alert Alert) {
 		"message", alert.Message,
 	)
 
-	if a.webhookURL != "" {
+	if webhookURL != "" {
 		go func() {
 			if err := a.sendWebhook(alert); err != nil {
 				a.logger.Warn("webhook delivery failed", "error", err)
@@ -143,7 +163,7 @@ func (a *Alerter) Alert(alert Alert) {
 	// unreachable SMTP server must not delay Slack, and none of them may
 	// delay the caller — Alert is invoked from request-path recorders and
 	// certificate renewal alike.
-	for _, ch := range a.channels {
+	for _, ch := range channels {
 		if !ch.Enabled {
 			continue
 		}
@@ -189,7 +209,7 @@ func alertTitle(typ string) string {
 // RecordRequest records a request result for error spike detection.
 // Call this for every request; it tracks a 5-minute sliding window.
 func (a *Alerter) RecordRequest(isError bool) {
-	if !a.enabled {
+	if enabled, _, _ := a.settings(); !enabled {
 		return
 	}
 
@@ -291,8 +311,9 @@ func (a *Alerter) Alerts() []Alert {
 }
 
 func (a *Alerter) sendWebhook(alert Alert) error {
+	_, webhookURL, _ := a.settings()
 	if a.urlSafetyCheck != nil {
-		if err := a.urlSafetyCheck(a.webhookURL); err != nil {
+		if err := a.urlSafetyCheck(webhookURL); err != nil {
 			return fmt.Errorf("webhook URL not allowed: %w", err)
 		}
 	}
@@ -303,7 +324,7 @@ func (a *Alerter) sendWebhook(alert Alert) error {
 		return fmt.Errorf("marshal alert for webhook: %w", err)
 	}
 
-	resp, err := a.client.Post(a.webhookURL, "application/json", bytes.NewReader(payload))
+	resp, err := a.client.Post(webhookURL, "application/json", bytes.NewReader(payload))
 	if err != nil {
 		// The URL is a credential (Slack hook path, ?token=): *url.Error
 		// prints it, so keep only the operation and the cause.

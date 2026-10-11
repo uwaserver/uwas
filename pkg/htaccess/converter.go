@@ -48,9 +48,11 @@ func IsModuleLoaded(module string) bool {
 // caller must therefore fail closed rather than treat the directive as absent.
 // Only a converter-validated path reaches RuleSet.AuthUserFile — absolute and
 // traversal forms are dropped at parse time (see the "authuserfile" case), so
-// this cannot be triggered by a hostile path.
+// the path itself is never read. The directive is still an authentication
+// requirement, though: AuthUserFileRejected remembers it so the common
+// absolute form ("AuthUserFile /home/u/.htpasswd") also fails closed (F2800).
 func AuthUserFileRequiresAuth(rules *RuleSet) bool {
-	return rules != nil && rules.AuthUserFile != ""
+	return rules != nil && (rules.AuthUserFile != "" || rules.AuthUserFileRejected)
 }
 
 // RuleSet represents the converted internal rules from .htaccess directives.
@@ -69,10 +71,14 @@ type RuleSet struct {
 	AuthType         string
 	AuthName         string
 	AuthUserFile     string
-	Require          string
-	FilesMatch       []FilesMatchBlock
-	PHPValues        map[string]string // php_value directives
-	PHPFlags         map[string]string // php_flag directives (on/off → 1/0)
+	// AuthUserFileRejected records an AuthUserFile directive whose path the
+	// converter refused to keep (absolute or traversal). The directory is
+	// still password-protected in Apache, so it must not be served openly.
+	AuthUserFileRejected bool
+	Require              string
+	FilesMatch           []FilesMatchBlock
+	PHPValues            map[string]string // php_value directives
+	PHPFlags             map[string]string // php_flag directives (on/off → 1/0)
 	// Access is the directory-wide decision of the top-level (outside
 	// <Files>/<FilesMatch>) Require / Order-Allow-Deny directives for a
 	// client that matches no IP condition. Use AccessFor for the decision
@@ -264,6 +270,8 @@ func Convert(directives []Directive) *RuleSet {
 				clean := filepath.Clean(f)
 				if !filepath.IsAbs(clean) && clean != ".." && !strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 					rules.AuthUserFile = f
+				} else {
+					rules.AuthUserFileRejected = true
 				}
 			}
 
@@ -375,6 +383,12 @@ func evalAccess(ds []Directive, ip net.IP) AccessDecision {
 		}
 		return AccessDenied
 	}
+	if hasAuthRequire(requires) {
+		// Only authentication-based Require lines (valid-user, user, group,
+		// ...) decide here, and credentials cannot be verified: fail closed
+		// instead of serving the protected directory openly (F2801).
+		return AccessDenied
+	}
 	if len(allows) == 0 && len(denies) == 0 {
 		return AccessUnset
 	}
@@ -418,6 +432,28 @@ func requireChildren(ds []Directive) []Directive {
 		}
 	}
 	return out
+}
+
+// hasAuthRequire reports whether any active Require line or container among
+// ds (recursively) is authentication-based.
+func hasAuthRequire(ds []Directive) bool {
+	for _, d := range ds {
+		switch strings.ToLower(d.Name) {
+		case "require":
+			if authRequire(d) {
+				return true
+			}
+		case "requireall", "requireany", "requirenone":
+			if hasAuthRequire(d.Block) {
+				return true
+			}
+		case "ifmodule":
+			if ifModuleActive(d) && hasAuthRequire(d.Block) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // authRequire reports whether d is an authentication-based Require line,
@@ -617,6 +653,14 @@ func (rs *RuleSet) Merge(other *RuleSet) {
 	}
 	if other.FollowSymlinks != nil {
 		rs.FollowSymlinks = other.FollowSymlinks
+	}
+	if other.AuthUserFileRejected {
+		rs.AuthUserFileRejected = true
+	}
+	if other.AuthUserFile != "" {
+		// An AuthUserFile in a merged block without its own AuthType (split
+		// across <IfModule> blocks) must not lose the requirement.
+		rs.AuthUserFile = other.AuthUserFile
 	}
 	if other.AuthType != "" {
 		rs.AuthType = other.AuthType

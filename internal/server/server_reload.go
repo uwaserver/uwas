@@ -66,6 +66,22 @@ func (s *Server) reload() error {
 		s.authMgr.SetSessionTTL(newCfg.Global.Users.SessionTTL)
 	}
 
+	// The alerter was built from the startup alerting settings; apply the new
+	// ones so a changed destination or an enabled/disabled toggle takes effect
+	// (F2860).
+	if s.alerter != nil {
+		a := newCfg.Global.Alerting
+		s.alerter.Update(a.Enabled, a.WebhookURL, alertChannels(a))
+	}
+
+	// The backup manager copied its destinations at startup; apply the new
+	// ones and the current set of domain content roots (F2861, F2862).
+	if s.backupMgr != nil {
+		s.backupMgr.Reconfigure(newCfg.Global.Backup)
+		webRoot, domainsDir, roots := backupDomainPaths(newCfg, s.configPath)
+		s.backupMgr.SetDomainPaths(webRoot, domainsDir, roots)
+	}
+
 	// Update vhosts
 	s.vhosts.Update(newCfg.Domains)
 

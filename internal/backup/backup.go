@@ -69,7 +69,7 @@ type BackupManager struct {
 func New(cfg config.BackupConfig, log *logger.Logger) *BackupManager {
 	m := &BackupManager{
 		logger:    log,
-		providers: make(map[string]StorageProvider),
+		providers: buildProviders(cfg),
 		cfg:       cfg,
 		keepCount: cfg.Keep,
 	}
@@ -81,17 +81,24 @@ func New(cfg config.BackupConfig, log *logger.Logger) *BackupManager {
 			m.schedule = d
 		}
 	}
+	return m
+}
+
+// buildProviders registers the providers that cfg configures (local is always
+// available as a fallback).
+func buildProviders(cfg config.BackupConfig) map[string]StorageProvider {
+	providers := make(map[string]StorageProvider)
 
 	// Always register local provider.
 	localPath := cfg.Local.Path
 	if localPath == "" {
 		localPath = "/var/lib/uwas/backups"
 	}
-	m.providers["local"] = NewLocalProvider(localPath)
+	providers["local"] = NewLocalProvider(localPath)
 
 	// S3 provider.
 	if cfg.S3.Bucket != "" {
-		m.providers["s3"] = NewS3Provider(
+		providers["s3"] = NewS3Provider(
 			cfg.S3.Endpoint,
 			cfg.S3.Bucket,
 			cfg.S3.AccessKey,
@@ -102,7 +109,7 @@ func New(cfg config.BackupConfig, log *logger.Logger) *BackupManager {
 
 	// SFTP provider.
 	if cfg.SFTP.Host != "" {
-		m.providers["sftp"] = NewSFTPProvider(
+		providers["sftp"] = NewSFTPProvider(
 			cfg.SFTP.Host,
 			cfg.SFTP.Port,
 			cfg.SFTP.User,
@@ -113,7 +120,32 @@ func New(cfg config.BackupConfig, log *logger.Logger) *BackupManager {
 		)
 	}
 
-	return m
+	return providers
+}
+
+// Reconfigure applies a reloaded backup config: the destinations (local path,
+// S3, SFTP), the default provider, the retention count and the restore size
+// limits. They were fixed when the manager was built, so a moved backup
+// directory or rotated S3 credentials kept being ignored until restart (F2861).
+// The schedule is left alone; it has its own setters.
+func (m *BackupManager) Reconfigure(cfg config.BackupConfig) {
+	providers := buildProviders(cfg)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.providers = providers
+	m.cfg = cfg
+	if cfg.Keep > 0 {
+		m.keepCount = cfg.Keep
+	} else {
+		m.keepCount = 7
+	}
+}
+
+// provider returns the named provider under the lock Reconfigure holds.
+func (m *BackupManager) provider(name string) StorageProvider {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.providers[name]
 }
 
 // SetPaths configures the config file path and certificates directory used
@@ -143,7 +175,7 @@ func (m *BackupManager) SetOnBackup(fn func(info *BackupInfo, err error)) {
 
 // Provider returns the named provider, or nil.
 func (m *BackupManager) Provider(name string) StorageProvider {
-	return m.providers[name]
+	return m.provider(name)
 }
 
 // CreateBackup creates a tar.gz archive containing the UWAS config file and
@@ -158,7 +190,7 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 		return nil, fmt.Errorf("config path not set")
 	}
 
-	p := m.providers[provider]
+	p := m.provider(provider)
 	if p == nil {
 		return nil, fmt.Errorf("unknown backup provider %q", provider)
 	}
@@ -308,7 +340,7 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 		return fmt.Errorf("domain backups cannot be restored through this endpoint")
 	}
 
-	p := m.providers[provider]
+	p := m.provider(provider)
 	if p == nil {
 		return fmt.Errorf("unknown backup provider %q", provider)
 	}
@@ -329,11 +361,14 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 	defer gr.Close()
 
 	// Set default limits.
-	maxFileSize := m.cfg.MaxFileSize
+	m.mu.Lock()
+	cfgMaxFile, cfgMaxTotal := m.cfg.MaxFileSize, m.cfg.MaxTotalSize
+	m.mu.Unlock()
+	maxFileSize := cfgMaxFile
 	if maxFileSize <= 0 {
 		maxFileSize = 500 * 1 << 20 // 500MB
 	}
-	maxTotalSize := m.cfg.MaxTotalSize
+	maxTotalSize := cfgMaxTotal
 	if maxTotalSize <= 0 {
 		maxTotalSize = 10 << 30 // 10GB
 	}
@@ -540,8 +575,15 @@ func (m *BackupManager) ListBackups() []BackupInfo {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	var all []BackupInfo
+	m.mu.Lock()
+	providers := make([]StorageProvider, 0, len(m.providers))
 	for _, p := range m.providers {
+		providers = append(providers, p)
+	}
+	m.mu.Unlock()
+
+	var all []BackupInfo
+	for _, p := range providers {
 		items, err := p.List(ctx)
 		if err != nil {
 			m.logger.Warn("list backups failed", "provider", p.Name(), "error", err)
@@ -557,7 +599,7 @@ func (m *BackupManager) ListBackups() []BackupInfo {
 
 // DeleteBackup deletes a backup by name from the specified provider.
 func (m *BackupManager) DeleteBackup(name, provider string) error {
-	p := m.providers[provider]
+	p := m.provider(provider)
 	if p == nil {
 		return fmt.Errorf("unknown backup provider %q", provider)
 	}
@@ -889,7 +931,7 @@ func (m *BackupManager) Stop() {
 // pruneOld removes the oldest backups from the provider, keeping at most
 // m.keepCount entries.
 func (m *BackupManager) pruneOld(provider string) {
-	p := m.providers[provider]
+	p := m.provider(provider)
 	if p == nil {
 		return
 	}
@@ -1046,7 +1088,7 @@ func importDatabaseDumpReal(data []byte, log *logger.Logger) error {
 
 // CreateDomainBackup creates a backup of a single domain (web root + domain config + DB).
 func (m *BackupManager) CreateDomainBackup(domain, webRoot, dbName, provider string) (*BackupInfo, error) {
-	p := m.providers[provider]
+	p := m.provider(provider)
 	if p == nil {
 		return nil, fmt.Errorf("unknown backup provider %q", provider)
 	}

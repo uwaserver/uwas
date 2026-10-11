@@ -158,11 +158,12 @@ func TestHtaccessAuthUserFilePHPControlNoAuthDirective(t *testing.T) {
 	}
 }
 
-// TestHtaccessAuthUserFilePHPControlTraversalPath pins that the gate keys off
-// the converter-validated path, not the mere presence of the directive text.
-// The converter drops absolute and traversal AuthUserFile values, so a hostile
-// .htaccess cannot use them to trigger a site-wide 403 (a DoS vector).
-func TestHtaccessAuthUserFilePHPControlTraversalPath(t *testing.T) {
+// TestHtaccessAuthUserFilePHPRejectedPathStillGates pins that an absolute or
+// traversal AuthUserFile is still an authentication requirement. The converter
+// never keeps (or reads) such a path, but dropping the whole requirement with
+// it served a password-protected directory to anyone (F2800). A tenant's
+// .htaccess only governs its own docroot, so gating it is not a DoS vector.
+func TestHtaccessAuthUserFilePHPRejectedPathStillGates(t *testing.T) {
 	cases := []struct {
 		name string
 		ht   string
@@ -176,10 +177,8 @@ func TestHtaccessAuthUserFilePHPControlTraversalPath(t *testing.T) {
 			h := phpAuthTestServer(t, root)
 
 			rec := authGet(t, h, "/open.php")
-			if rec.Code == http.StatusForbidden {
-				t.Errorf("control failed: %s AuthUserFile is rejected by the converter, so "+
-					"no auth is configured and nothing should be denied, but got 403. "+
-					"An attacker could 403 a whole site by writing a traversal path.", tc.name)
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("%s AuthUserFile must fail closed with 403 like the relative form, got %d", tc.name, rec.Code)
 			}
 		})
 	}

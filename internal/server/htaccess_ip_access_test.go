@@ -28,7 +28,7 @@ func TestHtaccessIPAccessEnforced(t *testing.T) {
 		{"Allow all + Deny ip, that ip", outsider, "/a.txt", map[string]string{".htaccess": "Order allow,deny\nAllow from all\nDeny from 203.0.113.50\n", "a.txt": "x"}, http.StatusForbidden},
 		{"RequireAll not ip", outsider, "/a.txt", map[string]string{".htaccess": "<RequireAll>\nRequire all granted\nRequire not ip 203.0.113.0/24\n</RequireAll>\n", "a.txt": "x"}, http.StatusForbidden},
 		{"Require host fails closed", allowed, "/a.txt", map[string]string{".htaccess": "Require host example.com\n", "a.txt": "x"}, http.StatusForbidden},
-		{"Require valid-user stays with the auth gate", outsider, "/a.txt", map[string]string{".htaccess": "Require valid-user\n", "a.txt": "x"}, http.StatusOK},
+		{"Require valid-user alone fails closed (credentials cannot be verified)", outsider, "/a.txt", map[string]string{".htaccess": "Require valid-user\n", "a.txt": "x"}, http.StatusForbidden},
 		{"<Files> Require ip, outsider", outsider, "/wp-login.php", map[string]string{".htaccess": login, "wp-login.php": "x"}, http.StatusForbidden},
 		{"<Files> Require ip, other file", outsider, "/a.txt", map[string]string{".htaccess": login, "a.txt": "x"}, http.StatusOK},
 		{"<Files> Deny one ip, other client", allowed, "/a.txt", map[string]string{".htaccess": "<Files a.txt>\nOrder allow,deny\nAllow from all\nDeny from 203.0.113.50\n</Files>\n", "a.txt": "x"}, http.StatusOK},
