@@ -80,7 +80,11 @@ func RealIPDynamic(t *RealIPTrust) Middleware {
 				return
 			}
 
-			if ip := r.Header.Get("X-Real-IP"); acceptableForwardedIP(ip) {
+			// X-Real-IP is held to the same rule: a trusted proxy that only
+			// appends to X-Forwarded-For forwards a client-set X-Real-IP
+			// verbatim, so with XFF present the two must agree (F2740).
+			if ip := r.Header.Get("X-Real-IP"); acceptableForwardedIP(ip) &&
+				(xff == "" || sameIP(ip, extractRealIP(xff, trusted))) {
 				r.RemoteAddr = net.JoinHostPort(ip, "0")
 				next.ServeHTTP(w, r)
 				return

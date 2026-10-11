@@ -728,6 +728,12 @@ func MatchRedirect(rule RedirectRule, urlPath string) (location string, status i
 	if !strings.HasPrefix(urlPath, rule.Pattern) {
 		return "", 0, false
 	}
+	// mod_alias matches whole path segments only. Without the boundary,
+	// "Redirect /old https://new.example.com" matched "/old@evil.com" and
+	// produced "https://new.example.com@evil.com", a visitor-chosen host (F2710).
+	if rest := urlPath[len(rule.Pattern):]; rest != "" && rest[0] != '/' && !strings.HasSuffix(rule.Pattern, "/") {
+		return "", 0, false
+	}
 	if rule.Target == "" {
 		// The "gone" form has no target: report gone, no Location.
 		return "", status, true

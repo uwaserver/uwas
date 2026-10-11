@@ -918,6 +918,14 @@ func (m *Manager) UpdateDomains(domains []config.Domain) {
 	// Publish *after* the slice swap so any handshake that races us either
 	// sees the old allowlist+old domains or the new allowlist+new domains.
 	m.allowlist.Store(allowlist)
+
+	// Manual certificates and client CA bundles are read from disk, not from
+	// the config, so swapping the domain list alone left a replaced
+	// certificate, a newly added manual-SSL domain and a new ssl.client_ca
+	// unapplied until restart (F2770). LoadManualCerts keeps the previous
+	// certificate when the new files do not parse.
+	m.LoadManualCerts()
+	_ = m.LoadClientCAs() // logs per-domain failures itself
 }
 
 func (m *Manager) snapshotDomains() []config.Domain {
