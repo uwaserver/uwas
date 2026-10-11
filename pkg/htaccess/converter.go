@@ -337,10 +337,29 @@ func Convert(directives []Directive) *RuleSet {
 // server already resolved (RealIP, honouring trusted proxies); nil means
 // unknown and matches no IP condition.
 func (rs *RuleSet) AccessFor(ip net.IP) AccessDecision {
+	return rs.AccessForMethod(ip, "")
+}
+
+// AccessForMethod is AccessFor for a request with the given HTTP method, so
+// <Limit> and <LimitExcept> sections apply. An empty method means unknown:
+// those sections are skipped.
+func (rs *RuleSet) AccessForMethod(ip net.IP, method string) AccessDecision {
 	if rs == nil {
 		return AccessUnset
 	}
-	return evalAccess(rs.topLevel, ip)
+	return evalAccess(rs.topLevel, ip, method)
+}
+
+// limitCovers reports whether method is among the section's listed methods;
+// like Apache, a GET entry also covers HEAD.
+func limitCovers(d Directive, method string) bool {
+	for _, m := range d.Args {
+		m = strings.ToUpper(m)
+		if m == method || (method == "HEAD" && m == "GET") {
+			return true
+		}
+	}
+	return false
 }
 
 // evalAccess implements the access-control subset of mod_authz_core and
@@ -354,8 +373,8 @@ func (rs *RuleSet) AccessFor(ip net.IP) AccessDecision {
 // to the AuthUserFile gate and ignored here. Anything else ("host", "env",
 // "expr", hostnames in Allow/Deny ...) cannot be evaluated here and fails
 // closed: it never grants, and an unevaluable "Deny from" counts as matching.
-func evalAccess(ds []Directive, ip net.IP) AccessDecision {
-	var requires, allows, denies []Directive
+func evalAccess(ds []Directive, ip net.IP, method string) AccessDecision {
+	var requires, allows, denies, limited []Directive
 	order := ""
 	var walk func([]Directive)
 	walk = func(ds []Directive) {
@@ -373,10 +392,33 @@ func evalAccess(ds []Directive, ip net.IP) AccessDecision {
 				if ifModuleActive(d) {
 					walk(d.Block)
 				}
+			case "limit":
+				if method != "" && limitCovers(d, method) {
+					limited = append(limited, d)
+				}
+			case "limitexcept":
+				if method != "" && !limitCovers(d, method) {
+					limited = append(limited, d)
+				}
 			}
 		}
 	}
 	walk(ds)
+	// An applicable <Limit>/<LimitExcept> section's own access directives
+	// decide for this method (F2892): a denial wins, a grant overrides the
+	// directory-wide directives.
+	granted := false
+	for _, l := range limited {
+		switch evalAccess(l.Block, ip, method) {
+		case AccessDenied:
+			return AccessDenied
+		case AccessGranted:
+			granted = true
+		}
+	}
+	if granted {
+		return AccessGranted
+	}
 	if len(requireChildren(requires)) > 0 {
 		if requireAnyPasses(requires, ip) {
 			return AccessGranted
@@ -855,7 +897,7 @@ func FilesMatchDeniesFor(rules *RuleSet, filename string, ip net.IP) bool {
 		if block.Pattern == "" || !filesBlockMatches(block, filename) {
 			continue
 		}
-		if evalAccess(block.Directives, ip) == AccessDenied {
+		if evalAccess(block.Directives, ip, "") == AccessDenied {
 			return true
 		}
 	}

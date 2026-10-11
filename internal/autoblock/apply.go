@@ -10,6 +10,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/uwaserver/uwas/internal/logger"
 )
 
 // apply installs a block. It is the single path through which every block —
@@ -177,7 +179,7 @@ func (b *Blocker) Start(ctx context.Context) {
 	// is cancelled, and a caller that sees Start return must be able to
 	// treat the state as flushed (F2261).
 	var workers sync.WaitGroup
-	defer workers.Wait()
+	defer joinWorkers(&workers, b.log)
 	workers.Add(2)
 	go func() { defer workers.Done(); b.firewallWorker(ctx) }()
 	go func() { defer workers.Done(); b.saveWorker(ctx) }()
@@ -192,6 +194,22 @@ func (b *Blocker) Start(ctx context.Context) {
 			b.expire()
 			b.gcTracks()
 		}
+	}
+}
+
+// workerJoinTimeout bounds how long Start waits for its workers after ctx is
+// cancelled. The final save is quick; a ufw call is not guaranteed to be (it
+// takes a global lock and runs without a timeout), and one hung call must not
+// hold the whole server shutdown (F2951).
+var workerJoinTimeout = 3 * time.Second
+
+func joinWorkers(workers *sync.WaitGroup, log *logger.Logger) {
+	done := make(chan struct{})
+	go func() { workers.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(workerJoinTimeout):
+		log.Warn("autoblock workers still busy at shutdown, not waiting any longer")
 	}
 }
 

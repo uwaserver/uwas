@@ -148,6 +148,53 @@ func (m *BackupManager) provider(name string) StorageProvider {
 	return m.providers[name]
 }
 
+// defaultProvider returns the configured default provider name. The scheduler
+// goroutines call it when a run fires rather than capturing the name when the
+// schedule starts, so a reload that changes backup.provider is followed by the
+// next scheduled backup (F2920).
+func (m *BackupManager) defaultProvider() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cfg.Provider == "" {
+		return "local"
+	}
+	return m.cfg.Provider
+}
+
+// ApplySchedule applies a configured schedule (a cron expression, else an
+// interval string such as "24h"; neither means no schedule). It restarts the
+// scheduler only when the desired schedule differs from the running one, so a
+// reload that leaves it alone does not reset the interval timer and starve a
+// long interval (F2921).
+func (m *BackupManager) ApplySchedule(cronExpr, schedule string) {
+	var d time.Duration
+	if cronExpr == "" && schedule != "" {
+		if p, err := time.ParseDuration(schedule); err == nil && p > 0 {
+			d = p
+		}
+	}
+	m.mu.Lock()
+	var same bool
+	switch {
+	case cronExpr != "":
+		same = m.running && m.cronExpr == cronExpr
+	case d > 0:
+		same = m.running && m.cronExpr == "" && m.schedule == d
+	default:
+		same = !m.running
+	}
+	m.mu.Unlock()
+	if same {
+		return
+	}
+	switch {
+	case cronExpr != "":
+		m.ScheduleBackupCron(cronExpr)
+	default:
+		m.ScheduleBackup(d)
+	}
+}
+
 // SetPaths configures the config file path and certificates directory used
 // when creating backups.
 func (m *BackupManager) SetPaths(configPath, certsDir string) {
@@ -626,11 +673,7 @@ func (m *BackupManager) ScheduleBackup(interval time.Duration) {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	m.running = true
-
-	provider := m.cfg.Provider
-	if provider == "" {
-		provider = "local"
-	}
+	m.cronExpr = ""
 
 	go func() {
 		ticker := time.NewTicker(interval)
@@ -638,7 +681,7 @@ func (m *BackupManager) ScheduleBackup(interval time.Duration) {
 		for {
 			select {
 			case <-ticker.C:
-				info, err := m.CreateBackup(provider)
+				info, err := m.CreateBackup(m.defaultProvider())
 				if err != nil {
 					m.logger.Error("scheduled backup failed", "error", err)
 				}
@@ -683,11 +726,6 @@ func (m *BackupManager) ScheduleBackupCron(cronExpr string) {
 	m.cancel = cancel
 	m.running = true
 
-	provider := m.cfg.Provider
-	if provider == "" {
-		provider = "local"
-	}
-
 	go func() {
 		timer := time.NewTimer(0) // allocated once; reset each iteration
 		defer timer.Stop()
@@ -719,7 +757,7 @@ func (m *BackupManager) ScheduleBackupCron(cronExpr string) {
 
 			select {
 			case <-timer.C:
-				info, err := m.CreateBackup(provider)
+				info, err := m.CreateBackup(m.defaultProvider())
 				if err != nil {
 					m.logger.Error("scheduled backup failed", "error", err)
 				}

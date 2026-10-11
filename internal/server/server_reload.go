@@ -80,6 +80,9 @@ func (s *Server) reload() error {
 		s.backupMgr.Reconfigure(newCfg.Global.Backup)
 		webRoot, domainsDir, roots := backupDomainPaths(newCfg, s.configPath)
 		s.backupMgr.SetDomainPaths(webRoot, domainsDir, roots)
+		// Start() applies the schedule once; a changed or removed one has to
+		// follow the reload too (F2921).
+		s.backupMgr.ApplySchedule(newCfg.Global.Backup.Cron, newCfg.Global.Backup.Schedule)
 	}
 
 	// Update vhosts

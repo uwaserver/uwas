@@ -885,7 +885,7 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 			rawPath := filepath.Join(domain.Root, filepath.Clean("/"+ctx.Request.URL.Path))
 			if dirListingAllowed(domain.Root, rawPath, ctx.Request.URL.Path) {
 				if info, err := os.Stat(rawPath); err == nil && info.IsDir() {
-					if deny := s.htaccessAccess(domain.Root, rawPath, true, net.ParseIP(normalizedRemoteIP(ctx.Request))); deny.status != 0 {
+					if deny := s.htaccessAccess(domain.Root, rawPath, true, net.ParseIP(normalizedRemoteIP(ctx.Request)), ctx.Request.Method); deny.status != 0 {
 						s.renderDomainError(ctx.Response, deny.status, domain)
 						return
 					}
@@ -929,7 +929,7 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 	// AuthUserFile marks a directory as requiring HTTP Basic auth against an
 	// htpasswd file UWAS does not verify; fail closed with 403 and record it
 	// so the Security dashboard and the autoblocker see the denial.
-	if deny := s.htaccessAccess(domain.Root, resolved, false, net.ParseIP(normalizedRemoteIP(ctx.Request))); deny.status != 0 {
+	if deny := s.htaccessAccess(domain.Root, resolved, false, net.ParseIP(normalizedRemoteIP(ctx.Request)), ctx.Request.Method); deny.status != 0 {
 		if deny.reason == "auth" {
 			s.logger.Warn("htaccess AuthUserFile present but UWAS does not verify htpasswd; denying request",
 				"host", domain.Host, "path", ctx.ResolvedPath)

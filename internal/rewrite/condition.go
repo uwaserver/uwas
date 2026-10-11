@@ -1,6 +1,7 @@
 package rewrite
 
 import (
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
@@ -146,6 +147,8 @@ type Variables struct {
 	DocumentRoot    string
 	ServerName      string
 	TheRequest      string // "GET /path HTTP/1.1"
+	Proto           string // "HTTP/1.1"
+	Header          http.Header
 }
 
 // Expand resolves a variable reference like %{REQUEST_URI} to its value.
@@ -209,7 +212,35 @@ func (v *Variables) lookup(name string) string {
 		return v.ServerName
 	case "THE_REQUEST":
 		return v.TheRequest
+	case "SERVER_PROTOCOL":
+		return v.Proto
+	case "REQUEST_SCHEME":
+		if v.HTTPS == "on" {
+			return "https"
+		}
+		return "http"
+	case "HTTP_COOKIE":
+		return v.header("Cookie")
+	case "HTTP_ACCEPT":
+		return v.header("Accept")
+	case "HTTP_FORWARDED":
+		return v.header("Forwarded")
+	case "HTTP_CONNECTION":
+		return v.header("Connection")
+	case "HTTP_PROXY_CONNECTION":
+		return v.header("Proxy-Connection")
 	default:
+		// %{HTTP:Header-Name} reads any request header, as in Apache; an
+		// unsupported variable used to be silently empty, so a deny rule
+		// keyed on it never matched (F2891).
+		if name, ok := strings.CutPrefix(strings.ToUpper(name), "HTTP:"); ok && name != "" {
+			return v.header(name)
+		}
 		return ""
 	}
+}
+
+// header returns the request header's values joined as Apache does.
+func (v *Variables) header(name string) string {
+	return strings.Join(v.Header.Values(name), ", ")
 }

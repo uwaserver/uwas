@@ -56,9 +56,9 @@ func TestResellerCannotSetPHPAndSSLPathFields(t *testing.T) {
 			{"raw php.fpm_address", func() int {
 				return raw(e, auth.RoleReseller, rawBase(e)+"php:\n  fpm_address: 127.0.0.1:9000\n")
 			}},
-			{"add php.fpm_address", func() int {
+			{"add ssl.cert", func() int {
 				return e.do(http.MethodPost, "/api/v1/domains",
-					`{"host":"mine.reseller.com","type":"php","ssl":{"mode":"off"},"php":{"fpm_address":"127.0.0.1:9000"}}`,
+					`{"host":"mine.reseller.com","type":"php","ssl":{"mode":"manual","cert":"/etc/shadow","key":"/etc/shadow"}}`,
 					auth.RoleReseller, "reseller.com", "mine.reseller.com")
 			}},
 		}

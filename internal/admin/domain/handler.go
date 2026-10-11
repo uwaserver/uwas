@@ -321,6 +321,11 @@ func (h *Handler) Add(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
 			return
 		}
+		// The panel's PHP and WordPress templates always post php.fpm_address,
+		// and Add assigns the pool itself below, so a non-admin's value is
+		// dropped rather than refused: refusing it made creating a PHP site
+		// from the panel impossible for a reseller (F2950).
+		d.PHP.FPMAddress = ""
 		if key := webAccessFieldChange(nil, d); key != "" {
 			h.deps.RecordAudit(r, "domain.create", "domain: "+d.Host+" (forbidden field: "+key+")", false)
 			jsonError(w, "forbidden: cannot set field "+key, http.StatusForbidden)

@@ -1,6 +1,7 @@
 package rewrite
 
 import (
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -248,6 +249,14 @@ func BuildVariables(r *http.Request, docRoot, resolvedPath string, isHTTPS bool)
 		host = host[:idx]
 	}
 
+	// REMOTE_ADDR is the bare client address; the socket form carries a port,
+	// which made anchored IP conditions ("^203\.0\.113\.9$") never match
+	// (F2890).
+	remote := r.RemoteAddr
+	if h, _, err := net.SplitHostPort(remote); err == nil {
+		remote = h
+	}
+
 	return &Variables{
 		RequestURI:      r.URL.Path,
 		RequestFilename: resolvedPath,
@@ -255,13 +264,15 @@ func BuildVariables(r *http.Request, docRoot, resolvedPath string, isHTTPS bool)
 		HTTPHost:        r.Host,
 		HTTPReferer:     r.Header.Get("Referer"),
 		HTTPUserAgent:   r.Header.Get("User-Agent"),
-		RemoteAddr:      r.RemoteAddr,
+		RemoteAddr:      remote,
 		RequestMethod:   r.Method,
 		ServerPort:      port,
 		HTTPS:           httpsVal,
 		DocumentRoot:    docRoot,
 		ServerName:      host,
 		TheRequest:      theRequest,
+		Proto:           r.Proto,
+		Header:          r.Header,
 	}
 }
 

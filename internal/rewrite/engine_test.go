@@ -299,7 +299,7 @@ func TestBuildVariables(t *testing.T) {
 		{"HTTPHost", vars.HTTPHost, "example.com:8080"},
 		{"HTTPReferer", vars.HTTPReferer, "https://other.com/"},
 		{"HTTPUserAgent", vars.HTTPUserAgent, "TestAgent/1.0"},
-		{"RemoteAddr", vars.RemoteAddr, req.RemoteAddr},
+		{"RemoteAddr", vars.RemoteAddr, "192.0.2.1"}, // bare address, no port (F2890)
 		{"RequestMethod", vars.RequestMethod, "POST"},
 		{"ServerPort", vars.ServerPort, "80"},
 		{"HTTPS", vars.HTTPS, "off"},

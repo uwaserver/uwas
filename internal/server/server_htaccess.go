@@ -314,8 +314,9 @@ type htaccessDeny struct {
 // be lexically inside root (ResolveRequest guarantees this); anything else
 // is checked against root's .htaccess only. clientIP is the client address
 // RealIP resolved (trusted proxies honoured), against which IP-based
-// Require/Allow/Deny forms are evaluated; nil matches no IP condition.
-func (s *Server) htaccessAccess(root, target string, isDir bool, clientIP net.IP) htaccessDeny {
+// Require/Allow/Deny forms are evaluated; nil matches no IP condition. method
+// is the request method, which <Limit>/<LimitExcept> sections key on.
+func (s *Server) htaccessAccess(root, target string, isDir bool, clientIP net.IP, method string) htaccessDeny {
 	dir := target
 	if !isDir {
 		dir = filepath.Dir(target)
@@ -349,7 +350,7 @@ func (s *Server) htaccessAccess(root, target string, isDir bool, clientIP net.IP
 		if htaccess.AuthUserFileRequiresAuth(entry.raw) && res.reason == "" {
 			res = htaccessDeny{status: http.StatusForbidden, reason: "auth"}
 		}
-		if a := entry.raw.AccessFor(clientIP); a != htaccess.AccessUnset {
+		if a := entry.raw.AccessForMethod(clientIP, method); a != htaccess.AccessUnset {
 			access = a
 		}
 	}
