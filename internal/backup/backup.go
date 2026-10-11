@@ -2,6 +2,7 @@ package backup
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"fmt"
@@ -1032,7 +1033,8 @@ func importDatabaseDumpReal(data []byte, log *logger.Logger) error {
 	}
 	cmd := exec.Command(mysqlBin, mysqlConnectArgs()...)
 	cmd.Env = mysqlConnectEnv()
-	cmd.Stdin = strings.NewReader(string(data))
+	// bytes.NewReader: a dump can be gigabytes; string(data) copied it whole (F2410).
+	cmd.Stdin = bytes.NewReader(data)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Error("backup restore: mysql import failed", "error", err, "output", string(out))

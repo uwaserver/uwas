@@ -675,10 +675,14 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hasSSLForce := false
-	if rawSSL, ok := raw["ssl"]; ok {
+	// Keys match case-insensitively, as encoding/json fills the struct (F2350).
+	for k, rawSSL := range raw {
+		if !strings.EqualFold(k, "ssl") {
+			continue
+		}
 		var sslRaw map[string]json.RawMessage
-		if err := json.Unmarshal(rawSSL, &sslRaw); err == nil {
-			_, hasSSLForce = sslRaw["force_ssl"]
+		if err := json.Unmarshal(rawSSL, &sslRaw); err == nil && rawHas(sslRaw, "force_ssl") {
+			hasSSLForce = true
 		}
 	}
 

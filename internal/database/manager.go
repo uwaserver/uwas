@@ -2,6 +2,7 @@
 package database
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -806,7 +807,7 @@ func ImportDatabase(name string, sqlData []byte) error {
 			continue
 		}
 		cmd := execCommandFn(bin, "-u", "root", name)
-		cmd.Stdin = strings.NewReader(string(sqlData))
+		cmd.Stdin = bytes.NewReader(sqlData) // no string(sqlData) copy (F2410)
 		out, err := cmd.CombinedOutput()
 		if err == nil {
 			return nil
@@ -819,7 +820,7 @@ func ImportDatabase(name string, sqlData []byte) error {
 		}
 		// Try without -u root (let socket auth auto-detect user)
 		cmd = execCommandFn(bin, name)
-		cmd.Stdin = strings.NewReader(string(sqlData))
+		cmd.Stdin = bytes.NewReader(sqlData) // no string(sqlData) copy (F2410)
 		out, err = cmd.CombinedOutput()
 		if err == nil {
 			return nil
