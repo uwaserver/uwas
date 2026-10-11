@@ -337,6 +337,11 @@ func (s *Server) ensureAuthManagerFromConfig() {
 	}
 	if mgr, ok := s.authMgr.(*auth.Manager); ok {
 		mgr.SetAllowLegacyPlaintextKey(allowLegacyPlaintext)
+		// A settings PUT of global.admin.api_key / users.session_ttl only
+		// changed the config; the live manager captured both at construction
+		// and kept honouring the old key until restart (F2170).
+		mgr.SetGlobalAPIKey(apiKey)
+		mgr.SetSessionTTL(sessionTTL)
 	}
 }
 

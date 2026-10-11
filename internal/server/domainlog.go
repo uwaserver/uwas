@@ -54,6 +54,10 @@ type domainLogFile struct {
 	path    string
 	written int64
 	rotate  config.RotateConfig
+	// closed is set by retain once the manager has released the file; a
+	// writer that fetched the entry just before drops its line instead of
+	// writing to a closed descriptor.
+	closed bool
 	// buf wraps f when access_log.buffer_size is set. nil means unbuffered,
 	// which stays the default: a buffered log loses its tail if the process
 	// dies, so the operator has to ask for it.
@@ -185,6 +189,14 @@ func (m *domainLogManager) Write(host string, cfg config.AccessLogConfig, method
 	// Per-host lock: writes for different domains run in parallel; only
 	// the same domain's writes serialize (needed for correct line order).
 	dlf.mu.Lock()
+	if dlf.closed {
+		dlf.mu.Unlock()
+		return
+	}
+	// The limits come from the live config on every write: the entry outlives
+	// a reload, so the values captured when the file was first opened kept
+	// governing rotation after the operator changed them (F2200).
+	dlf.rotate = rotate
 	_, _ = io.WriteString(dlf.writer(), line)
 	dlf.written += int64(len(line))
 
@@ -332,6 +344,25 @@ func (m *domainLogManager) cleanupOld() {
 				os.Remove(rf)
 			}
 		}
+	}
+}
+
+// retain closes every open log whose path is not in keep. A domain removed by
+// a reload (or whose access_log.path changed) otherwise held its descriptor
+// until shutdown (F2201). Lock order matches Close: m.mu, then dlf.mu.
+func (m *domainLogManager) retain(keep map[string]struct{}) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key, dlf := range m.files {
+		if _, ok := keep[key]; ok {
+			continue
+		}
+		dlf.mu.Lock()
+		dlf.flushLocked()
+		dlf.f.Close()
+		dlf.closed = true
+		dlf.mu.Unlock()
+		delete(m.files, key)
 	}
 }
 

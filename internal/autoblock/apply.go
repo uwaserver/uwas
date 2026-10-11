@@ -327,6 +327,13 @@ func (b *Blocker) saveWorker(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			// A save requested just before shutdown may still be queued;
+			// select chose Done over it, so take it before deciding (F2230).
+			select {
+			case <-b.saveOnce:
+				dirty = true
+			default:
+			}
 			if dirty {
 				b.save()
 			}

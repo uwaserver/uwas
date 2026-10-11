@@ -177,7 +177,9 @@ type Manager struct {
 
 	// sessionTTL is the session lifetime; 0 means use the 24h default. Set from
 	// global.users.session_ttl via SetSessionTTL.
-	sessionTTL time.Duration
+	// Stored atomically (nanoseconds): reload and settings PUT change it while
+	// logins read it (F2170).
+	sessionTTL atomic.Int64
 
 	// Background session pruner. Closed by Stop(). Nil when sessionCleanupInterval
 	// is 0 (e.g. tests that want full control).
@@ -192,7 +194,7 @@ type Manager struct {
 // 24h default. Wires up the previously-ignored global.users.session_ttl.
 func (m *Manager) SetSessionTTL(hours int) {
 	if hours > 0 {
-		m.sessionTTL = time.Duration(hours) * time.Hour
+		m.sessionTTL.Store(int64(time.Duration(hours) * time.Hour))
 	}
 }
 
@@ -204,8 +206,8 @@ func (m *Manager) SetAuditRecorder(fn func(r *http.Request, action, detail strin
 
 // sessionLifetime returns the configured session TTL, or 24h if unset.
 func (m *Manager) sessionLifetime() time.Duration {
-	if m.sessionTTL > 0 {
-		return m.sessionTTL
+	if ttl := time.Duration(m.sessionTTL.Load()); ttl > 0 {
+		return ttl
 	}
 	return 24 * time.Hour
 }

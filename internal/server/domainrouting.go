@@ -99,6 +99,15 @@ func (s *Server) rebuildDomainRouting(domains []config.Domain, trustedProxies []
 		}
 	}
 
+	// Release access logs of domains that are gone or moved to another file.
+	keepLogs := make(map[string]struct{}, len(domains))
+	for _, d := range domains {
+		if d.AccessLog.Path != "" {
+			keepLogs[d.AccessLog.Path] = struct{}{}
+		}
+	}
+	s.domainLogs.retain(keepLogs)
+
 	s.routeMu.Lock()
 	s.rewriteCache = newRewriteCache
 	s.domainChains = newDomainChains
