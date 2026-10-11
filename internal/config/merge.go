@@ -21,6 +21,29 @@ type DomainPatchFields struct {
 	HasSSLForce     bool
 	HasResources    bool
 	HasCanonical    bool
+
+	// Fields MergeDomain used to drop silently: PUT answered 200 but kept the
+	// stored value (F2440). Presence of the key replaces the stored value.
+	HasRewrites          bool
+	HasHeaders           bool
+	HasErrorPages        bool
+	HasTryFiles          bool
+	HasSPAMode           bool
+	HasIndexFiles        bool
+	HasDirectoryListing  bool
+	HasImageOptimization bool
+	HasCORS              bool
+	HasBandwidth         bool
+	HasMaintenance       bool
+	HasSecurityHeaders   bool
+	HasInternalAliases   bool
+	HasWebhookSecret     bool
+	HasAccessLog         bool
+
+	// Nested collections: an explicit empty value clears them (F2441).
+	HasPHPEnv        bool
+	HasPHPIndexFiles bool
+	HasAppEnv        bool
 }
 
 // MergeDomain produces a merged domain by overlaying patch fields onto
@@ -103,13 +126,13 @@ func MergeDomain(existing, patch Domain, fields DomainPatchFields, replaceMode b
 	if patch.PHP.FPMAddress != "" {
 		merged.PHP.FPMAddress = patch.PHP.FPMAddress
 	}
-	if len(patch.PHP.IndexFiles) > 0 {
+	if len(patch.PHP.IndexFiles) > 0 || fields.HasPHPIndexFiles {
 		merged.PHP.IndexFiles = patch.PHP.IndexFiles
 	}
 	if patch.PHP.MaxUpload > 0 {
 		merged.PHP.MaxUpload = patch.PHP.MaxUpload
 	}
-	if len(patch.PHP.Env) > 0 {
+	if len(patch.PHP.Env) > 0 || fields.HasPHPEnv {
 		merged.PHP.Env = patch.PHP.Env
 	}
 
@@ -138,7 +161,7 @@ func MergeDomain(existing, patch Domain, fields DomainPatchFields, replaceMode b
 	if patch.App.WorkDir != "" {
 		merged.App.WorkDir = patch.App.WorkDir
 	}
-	if len(patch.App.Env) > 0 {
+	if len(patch.App.Env) > 0 || fields.HasAppEnv {
 		merged.App.Env = patch.App.Env
 	}
 	// Bool fields need separate gating because zero-value (false) can be a
@@ -186,6 +209,55 @@ func MergeDomain(existing, patch Domain, fields DomainPatchFields, replaceMode b
 		if fields.HasBrowserCache {
 			merged.BrowserCache = patch.BrowserCache
 		}
+	}
+
+	// Remaining sub-configs are presence-keyed: the dashboard never sends them
+	// on a partial PUT, and an API caller that does means to replace (or, with
+	// an empty value, clear) the stored one (F2440).
+	if fields.HasRewrites {
+		merged.Rewrites = patch.Rewrites
+	}
+	if fields.HasHeaders {
+		merged.Headers = patch.Headers
+	}
+	if fields.HasErrorPages {
+		merged.ErrorPages = patch.ErrorPages
+	}
+	if fields.HasTryFiles {
+		merged.TryFiles = patch.TryFiles
+	}
+	if fields.HasSPAMode {
+		merged.SPAMode = patch.SPAMode
+	}
+	if fields.HasIndexFiles {
+		merged.IndexFiles = patch.IndexFiles
+	}
+	if fields.HasDirectoryListing {
+		merged.DirectoryListing = patch.DirectoryListing
+	}
+	if fields.HasImageOptimization {
+		merged.ImageOptimization = patch.ImageOptimization
+	}
+	if fields.HasCORS {
+		merged.CORS = patch.CORS
+	}
+	if fields.HasBandwidth {
+		merged.Bandwidth = patch.Bandwidth
+	}
+	if fields.HasMaintenance {
+		merged.Maintenance = patch.Maintenance
+	}
+	if fields.HasSecurityHeaders {
+		merged.SecurityHeaders = patch.SecurityHeaders
+	}
+	if fields.HasInternalAliases {
+		merged.InternalAliases = patch.InternalAliases
+	}
+	if fields.HasWebhookSecret {
+		merged.WebhookSecret = patch.WebhookSecret
+	}
+	if fields.HasAccessLog {
+		merged.AccessLog = patch.AccessLog
 	}
 
 	return merged

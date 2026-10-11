@@ -9,10 +9,28 @@
 package pathmatch
 
 import (
+	"path"
 	"regexp"
 	"strings"
 	"sync"
 )
+
+// Clean returns the canonical form of a request path: dot segments and
+// repeated slashes resolved, a trailing slash kept. The static handler opens
+// files through filepath.Clean, so "//private/x" and "/a/../private/x" reach
+// the same file as "/private/x"; a rule that decides on the path as sent
+// (a location's basic_auth, a WAF bypass prefix) must decide on this form or
+// the rule can be skipped while the file is still served (F2500).
+func Clean(p string) string {
+	if p == "" || p[0] != '/' {
+		return p
+	}
+	c := path.Clean(p)
+	if c != p && c != "/" && strings.HasSuffix(p, "/") {
+		c += "/"
+	}
+	return c
+}
 
 // regexCache keeps compiled patterns so a request never pays for a recompile.
 // Patterns come from operator config, so the key space is bounded by it.
@@ -54,6 +72,7 @@ func Location(path, pattern string) bool {
 	if pattern == "" {
 		return false
 	}
+	path = Clean(path)
 	if regexStr, ok := strings.CutPrefix(pattern, "~"); ok {
 		re := compile(strings.TrimSpace(regexStr))
 		return re != nil && re.MatchString(path)

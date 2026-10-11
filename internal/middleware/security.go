@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/pathmatch"
 )
 
 const maxBodyScan = 64 * 1024 // scan first 64KB of request body
@@ -209,8 +210,11 @@ func DomainWAFGuard(log *logger.Logger, bypassPaths []string, rules []string, st
 	families := wafFamilySet(rules)
 	return func(w http.ResponseWriter, r *http.Request) bool {
 		path := r.URL.Path
+		// The exemption is decided on the canonical path: "/wp-admin/../x"
+		// starts with an exempt prefix but is served as "/x" (F2501).
+		canonical := pathmatch.Clean(path)
 		for _, prefix := range bypassPaths {
-			if strings.HasPrefix(path, prefix) {
+			if strings.HasPrefix(canonical, prefix) {
 				return true
 			}
 		}

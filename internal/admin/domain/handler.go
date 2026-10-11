@@ -699,6 +699,26 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		HasSSLForce:     hasSSLForce,
 		HasResources:    rawHas(raw, "resources"),
 		HasCanonical:    rawHas(raw, "canonical_host"),
+
+		HasRewrites:          rawHas(raw, "rewrites"),
+		HasHeaders:           rawHas(raw, "headers"),
+		HasErrorPages:        rawHas(raw, "error_pages"),
+		HasTryFiles:          rawHas(raw, "try_files"),
+		HasSPAMode:           rawHas(raw, "spa_mode"),
+		HasIndexFiles:        rawHas(raw, "index_files"),
+		HasDirectoryListing:  rawHas(raw, "directory_listing"),
+		HasImageOptimization: rawHas(raw, "image_optimization"),
+		HasCORS:              rawHas(raw, "cors"),
+		HasBandwidth:         rawHas(raw, "bandwidth"),
+		HasMaintenance:       rawHas(raw, "maintenance"),
+		HasSecurityHeaders:   rawHas(raw, "security_headers"),
+		HasInternalAliases:   rawHas(raw, "internal_aliases"),
+		HasWebhookSecret:     rawHas(raw, "webhook_secret"),
+		HasAccessLog:         rawHas(raw, "access_log"),
+
+		HasPHPEnv:        rawNestedHas(raw, "php", "env"),
+		HasPHPIndexFiles: rawNestedHas(raw, "php", "index_files"),
+		HasAppEnv:        rawNestedHas(raw, "app", "env"),
 	}
 
 	// Capture webRoot before LockConfig to avoid a deadlock: WebRoot() acquires
@@ -884,6 +904,21 @@ func (h *Handler) domainTypeForHost(host string) string {
 		}
 	}
 	return ""
+}
+
+// rawNestedHas reports whether the object under parent carries child, matching
+// both keys case-insensitively like rawHas.
+func rawNestedHas(raw map[string]json.RawMessage, parent, child string) bool {
+	for k, v := range raw {
+		if !strings.EqualFold(k, parent) {
+			continue
+		}
+		var sub map[string]json.RawMessage
+		if json.Unmarshal(v, &sub) == nil && rawHas(sub, child) {
+			return true
+		}
+	}
+	return false
 }
 
 // rawHas reports whether the request body carries key. encoding/json matches

@@ -267,6 +267,7 @@ func (m *Manager) deliver(qe *queuedEvent) {
 		// A negative retry count means "no retries", not "no attempts".
 		maxRetries = 0
 	}
+	maxRetries = webhookMaxRetries(maxRetries)
 
 	timeout := qe.webhook.Timeout
 	if timeout <= 0 {
@@ -329,7 +330,7 @@ func (m *Manager) deliver(qe *queuedEvent) {
 		if attempt > 0 {
 			// Exponential backoff: 1s, 2s, 4s... Abandoned once the manager
 			// is closed so a worker never outlives Close by a long backoff.
-			backoff := time.NewTimer(time.Duration(1<<uint(attempt-1)) * time.Second)
+			backoff := time.NewTimer(webhookBackoff(attempt))
 			select {
 			case <-m.done:
 				backoff.Stop()
@@ -473,4 +474,38 @@ func (m *Manager) historyFile() string {
 		return ""
 	}
 	return filepath.Join(m.dataDir, "webhook_history.json")
+}
+
+const (
+	// maxWebhookBackoff caps the doubling retry delay. Uncapped, attempt 20
+	// waited ~6 days, attempt 40 overflowed to a negative delay and 64+ to
+	// zero, turning a large retry_max into a hot retry loop (F2470).
+	maxWebhookBackoff = time.Minute
+	// maxWebhookRetries bounds retry_max, which the API and config only
+	// reject when negative; a dead endpoint would otherwise pin one of the
+	// few delivery workers indefinitely.
+	maxWebhookRetries = 10
+)
+
+// webhookBackoff is the delay before retry number attempt (1-based): 1s, 2s,
+// 4s... capped at maxWebhookBackoff.
+func webhookBackoff(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	if attempt > 7 { // 1<<6 s = 64s already exceeds the cap
+		return maxWebhookBackoff
+	}
+	if d := time.Duration(1<<uint(attempt-1)) * time.Second; d < maxWebhookBackoff {
+		return d
+	}
+	return maxWebhookBackoff
+}
+
+// webhookMaxRetries clamps a configured retry count to maxWebhookRetries.
+func webhookMaxRetries(n int) int {
+	if n > maxWebhookRetries {
+		return maxWebhookRetries
+	}
+	return n
 }
