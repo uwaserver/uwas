@@ -359,7 +359,7 @@ func ensureSFTPConfig(username, chrootDir string, startDirs ...string) error {
 		if !changed {
 			return nil
 		}
-		if err := osWriteFileFn(sshdConfigPath, []byte(content), 0644); err != nil {
+		if err := writeSSHDConfig([]byte(content)); err != nil {
 			return fmt.Errorf("write sshd_config: %w", err)
 		}
 		if err := execCommandFn("systemctl", "reload", "ssh").Run(); err != nil {
@@ -378,13 +378,38 @@ func ensureSFTPConfig(username, chrootDir string, startDirs ...string) error {
 		return nil
 	}
 
-	if err := osWriteFileFn(sshdConfigPath, []byte(content), 0644); err != nil {
+	if err := writeSSHDConfig([]byte(content)); err != nil {
 		return fmt.Errorf("write sshd_config: %w", err)
 	}
 
 	// Reload sshd — try both service names
 	if err := execCommandFn("systemctl", "reload", "ssh").Run(); err != nil {
 		execCommandFn("systemctl", "reload", "sshd").Run()
+	}
+	return nil
+}
+
+// writeSSHDConfig replaces sshd_config atomically: the new content goes to a
+// sibling file that is renamed over the original, so a crash or a full disk
+// cannot leave a truncated config that stops sshd from starting (F2050). The
+// original's permission bits are kept.
+func writeSSHDConfig(content []byte) error {
+	mode := os.FileMode(0644)
+	if info, err := osStatFn(sshdConfigPath); err == nil {
+		mode = info.Mode().Perm()
+	}
+	tmp := sshdConfigPath + ".uwas-new"
+	if err := osWriteFileFn(tmp, content, mode); err != nil {
+		_ = osRemoveFn(tmp)
+		return err
+	}
+	if err := os.Chmod(tmp, mode); err != nil {
+		_ = osRemoveFn(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, sshdConfigPath); err != nil {
+		_ = osRemoveFn(tmp)
+		return err
 	}
 	return nil
 }

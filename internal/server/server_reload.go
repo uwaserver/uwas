@@ -45,6 +45,18 @@ func (s *Server) reload() error {
 	// toggle would write the new value to disk and keep logging regardless.
 	s.requestLog.Store(newCfg.Global.AccessLog.RequestLogEnabled())
 
+	// Likewise the RealIP trusted-proxy set: a removed proxy must stop being
+	// believed and freshly synced Cloudflare ranges must start being (F1990).
+	if s.realIPTrust != nil {
+		s.realIPTrust.Set(realIPTrustedFrom(newCfg))
+	}
+
+	// global.rate_limit is the same story: the limiter was built from the
+	// startup values, so a changed or newly enabled limit never took effect.
+	if s.globalRL != nil {
+		s.globalRL.set(newCfg.Global.RateLimit.Requests, newCfg.Global.RateLimit.Window.Duration)
+	}
+
 	// Update vhosts
 	s.vhosts.Update(newCfg.Domains)
 

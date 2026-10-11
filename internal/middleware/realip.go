@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 )
 
 type directIPContextKey struct{}
@@ -13,10 +14,33 @@ type directIPContextKey struct{}
 // Checks X-Forwarded-For, X-Real-IP, CF-Connecting-IP.
 // Uses rightmost untrusted IP from X-Forwarded-For for spoofing protection.
 func RealIP(trustedProxies []string) Middleware {
-	trusted := parseCIDRs(trustedProxies)
+	return RealIPDynamic(NewRealIPTrust(trustedProxies))
+}
 
+// RealIPTrust is a trusted-proxy set that can be replaced while the middleware
+// is serving, so a config reload takes effect without a restart (F1990).
+type RealIPTrust struct {
+	nets atomic.Pointer[[]*net.IPNet]
+}
+
+// NewRealIPTrust parses cidrs into a trust set.
+func NewRealIPTrust(cidrs []string) *RealIPTrust {
+	t := &RealIPTrust{}
+	t.Set(cidrs)
+	return t
+}
+
+// Set atomically replaces the trusted proxy list.
+func (t *RealIPTrust) Set(cidrs []string) {
+	nets := parseCIDRs(cidrs)
+	t.nets.Store(&nets)
+}
+
+// RealIPDynamic is RealIP reading its trusted proxies from t on every request.
+func RealIPDynamic(t *RealIPTrust) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			trusted := *t.nets.Load()
 			if directIP := extractIP(r.RemoteAddr); directIP != nil {
 				r = r.WithContext(context.WithValue(r.Context(), directIPContextKey{}, directIP.String()))
 			}

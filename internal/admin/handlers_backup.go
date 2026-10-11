@@ -29,6 +29,20 @@ func (d *backupDeps) ParsePagination(r *http.Request) (limit, offset int) {
 	return parsePagination(r)
 }
 func (d *backupDeps) BackupManager() *backup.BackupManager { return d.s.backupMgr }
+
+// PersistBackupSchedule stores the interval schedule in the config. The cron
+// expression is cleared because an interval PUT replaces it at runtime, and
+// startup prefers a non-empty cron over the interval (F2022).
+func (d *backupDeps) PersistBackupSchedule(schedule string, keep int) error {
+	d.s.configMu.Lock()
+	d.s.config.Global.Backup.Schedule = schedule
+	d.s.config.Global.Backup.Cron = ""
+	if keep > 0 {
+		d.s.config.Global.Backup.Keep = keep
+	}
+	d.s.configMu.Unlock()
+	return d.s.persistConfig()
+}
 func (d *backupDeps) WebhookFire(event webhook.EventType, payload map[string]any) {
 	if d.s.webhookMgr != nil {
 		d.s.webhookMgr.Fire(event, payload)

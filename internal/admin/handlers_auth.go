@@ -458,7 +458,21 @@ func (s *Server) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 		s.configMu.Unlock()
 	}
 
-	s.persistConfig()
+	if err := s.persistConfig(); err != nil && fromPending {
+		// Reporting success here would leave 2FA active only until the next
+		// restart; roll back and keep the setup pending so it can be retried (F2020).
+		s.configMu.Lock()
+		s.config.Global.Admin.TOTPSecret = ""
+		s.configMu.Unlock()
+		s.pendingTOTPMu.Lock()
+		if s.pendingTOTP == nil {
+			s.pendingTOTP = make(map[string]string)
+		}
+		s.pendingTOTP[username] = secret
+		s.pendingTOTPMu.Unlock()
+		jsonError(w, "could not persist 2FA setup: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	s.recordAuditR(r, "2fa.enabled", "TOTP activated", true)
 
 	jsonResponse(w, StatusResponse{Status: "2fa_enabled"})
@@ -495,7 +509,15 @@ func (s *Server) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 	s.config.Global.Admin.TOTPSecret = ""
 	s.configMu.Unlock()
 
-	s.persistConfig()
+	if err := s.persistConfig(); err != nil {
+		// 2FA would silently come back after a restart; keep it on and tell
+		// the caller the disable did not take effect (F2020).
+		s.configMu.Lock()
+		s.config.Global.Admin.TOTPSecret = secret
+		s.configMu.Unlock()
+		jsonError(w, "could not persist 2FA change: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	s.recordAuditR(r, "2fa.disabled", "TOTP deactivated", true)
 
 	jsonResponse(w, StatusResponse{Status: "2fa_disabled"})

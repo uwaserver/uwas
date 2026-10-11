@@ -375,6 +375,9 @@ func (h *Handler) SchedulePut(w http.ResponseWriter, r *http.Request) {
 			mgr.SetKeepCount(req.Keep)
 		}
 		mgr.ScheduleBackup(0)
+		if !h.persistSchedule(w, r, "", req.Keep) {
+			return
+		}
 		h.deps.RecordAudit(r, "backup.schedule", "disabled", true)
 		jsonResponse(w, mgr.ScheduleDetail())
 		return
@@ -399,8 +402,32 @@ func (h *Handler) SchedulePut(w http.ResponseWriter, r *http.Request) {
 		mgr.SetKeepCount(req.Keep)
 	}
 	mgr.ScheduleBackup(d)
+	if !h.persistSchedule(w, r, d.String(), req.Keep) {
+		return
+	}
 	h.deps.RecordAudit(r, "backup.schedule", "interval: "+d.String(), true)
 	jsonResponse(w, mgr.ScheduleDetail())
+}
+
+// schedulePersister is implemented by Deps that can write the schedule back to
+// the config file. It is optional so existing Deps implementations keep working.
+type schedulePersister interface {
+	PersistBackupSchedule(schedule string, keep int) error
+}
+
+// persistSchedule writes the applied schedule to the config so it survives a
+// restart (F2022). It reports false after answering the request with an error.
+func (h *Handler) persistSchedule(w http.ResponseWriter, r *http.Request, schedule string, keep int) bool {
+	p, ok := h.deps.(schedulePersister)
+	if !ok {
+		return true
+	}
+	if err := p.PersistBackupSchedule(schedule, keep); err != nil {
+		h.deps.RecordAudit(r, "backup.schedule", "persist failed: "+err.Error(), false)
+		jsonError(w, "schedule applied but could not be persisted: "+err.Error(), http.StatusInternalServerError)
+		return false
+	}
+	return true
 }
 
 // parseScheduleInterval accepts a Go duration or the "<N>d" day shorthand that

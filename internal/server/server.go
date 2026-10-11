@@ -85,12 +85,18 @@ type Server struct {
 	// built once, so the AccessLog middleware reads this instead of a
 	// captured bool and reload can flip it without a restart.
 	requestLog atomic.Bool
-	httpSrv    *http.Server
-	httpsSrv   *http.Server
-	h3srv      *http3.Server
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
+	// realIPTrust is the RealIP middleware's trusted-proxy set; reload
+	// replaces it so trusted_proxies and the Cloudflare ranges follow the
+	// config instead of staying frozen at startup (F1990).
+	realIPTrust *middleware.RealIPTrust
+	// globalRL is the swappable global.rate_limit stage of the chain.
+	globalRL *globalRateLimit
+	httpSrv  *http.Server
+	httpsSrv *http.Server
+	h3srv    *http3.Server
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
 
 	alerter     *alerting.Alerter
 	backupMgr   *backup.BackupManager
@@ -869,22 +875,22 @@ func alertChannels(cfg config.AlertingConfig) []notify.Channel {
 }
 
 func (s *Server) buildMiddlewareChain() http.Handler {
+	if s.realIPTrust == nil {
+		s.realIPTrust = middleware.NewRealIPTrust(s.realIPTrustedProxies())
+	}
 	mws := []middleware.Middleware{
 		middleware.Recovery(s.logger),
 		middleware.RequestID(),
-		middleware.RealIP(s.realIPTrustedProxies()),
+		middleware.RealIPDynamic(s.realIPTrust),
 		middleware.SecurityHeaders(),
 		middleware.CompressWith(1024, s.compressionPolicyFor),
 	}
 
-	// Global rate limiting (fallback for unknown domains and admin API)
-	if s.config.Global.RateLimit.Requests > 0 {
-		mws = append(mws, middleware.RateLimit(
-			s.ctx,
-			s.config.Global.RateLimit.Requests,
-			s.config.Global.RateLimit.Window.Duration,
-		))
-	}
+	// Global rate limiting (fallback for unknown domains and admin API). It is
+	// swappable so a reload applies a changed or newly enabled limit (F1991).
+	s.globalRL = &globalRateLimit{ctx: s.ctx}
+	s.globalRL.set(s.config.Global.RateLimit.Requests, s.config.Global.RateLimit.Window.Duration)
+	mws = append(mws, s.globalRL.middleware)
 
 	// Security guard (blocked paths only) + bot guard
 	var blockedPaths []string
@@ -904,9 +910,14 @@ func (s *Server) realIPTrustedProxies() []string {
 	if s == nil || s.config == nil {
 		return nil
 	}
-	trusted := append([]string(nil), s.config.Global.TrustedProxies...)
-	trusted = append(trusted, s.config.Global.Cloudflare.IPRanges...)
-	return trusted
+	return realIPTrustedFrom(s.config)
+}
+
+// realIPTrustedFrom lists the proxies whose forwarded client address is
+// believed: the operator's trusted_proxies plus the Cloudflare edge ranges.
+func realIPTrustedFrom(cfg *config.Config) []string {
+	trusted := append([]string(nil), cfg.Global.TrustedProxies...)
+	return append(trusted, cfg.Global.Cloudflare.IPRanges...)
 }
 
 // Start starts all listeners and blocks until shutdown.

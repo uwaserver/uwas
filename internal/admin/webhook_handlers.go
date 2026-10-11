@@ -115,6 +115,12 @@ func (s *Server) handleWebhookCreate(w http.ResponseWriter, r *http.Request) {
 		s.webhookMgr.UpdateWebhooks(toWebhookConfigs(webhooks))
 	}
 
+	// Without this the webhook vanished on the next restart (F2021).
+	if err := s.persistConfig(); err != nil {
+		s.recordAuditR(r, "webhook.create", req.URL+": "+err.Error(), false)
+		jsonError(w, "webhook applied but could not be persisted: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	s.recordAuditR(r, "webhook.create", req.URL, true)
 	jsonResponse(w, map[string]any{"success": true})
 }
@@ -160,6 +166,11 @@ func (s *Server) handleWebhookDelete(w http.ResponseWriter, r *http.Request) {
 		s.webhookMgr.UpdateWebhooks(toWebhookConfigs(webhooks))
 	}
 
+	if err := s.persistConfig(); err != nil {
+		s.recordAuditR(r, "webhook.delete", url+": "+err.Error(), false)
+		jsonError(w, "webhook removed but could not be persisted: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	s.recordAuditR(r, "webhook.delete", url, true)
 	jsonResponse(w, map[string]any{"success": true})
 }
