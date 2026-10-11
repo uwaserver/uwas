@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -172,8 +173,14 @@ func (b *Blocker) Start(ctx context.Context) {
 	if b == nil || !b.cfg.Enabled {
 		return
 	}
-	go b.firewallWorker(ctx)
-	go b.saveWorker(ctx)
+	// Join the workers on the way out: the final state save runs after ctx
+	// is cancelled, and a caller that sees Start return must be able to
+	// treat the state as flushed (F2261).
+	var workers sync.WaitGroup
+	defer workers.Wait()
+	workers.Add(2)
+	go func() { defer workers.Done(); b.firewallWorker(ctx) }()
+	go func() { defer workers.Done(); b.saveWorker(ctx) }()
 
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()

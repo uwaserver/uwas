@@ -242,6 +242,7 @@ type htaccessCacheEntry struct {
 	compiledRules []*rewrite.Rule
 	engine        *rewrite.Engine // pre-built rewrite engine, nil when RewriteEnabled is false
 	modTime       time.Time       // file modification time for auto-invalidation
+	size          int64           // file size, so a replacement that kept its mtime (cp -p, rsync -t) is still noticed
 	errorPages    map[int]string  // precomputed ErrorDocument map (immutable after parseHtaccessFull)
 	parseFailed   bool            // .htaccess exists but could not be parsed; its denies are unknown
 }
@@ -254,7 +255,7 @@ func (s *Server) getHtaccessRuleSet(root string) *htaccessCacheEntry {
 		s.htaccessCacheMu.RUnlock()
 		// Check if file changed since last parse
 		if info, err := os.Stat(htPath); err == nil {
-			if !info.ModTime().Equal(entry.modTime) {
+			if !info.ModTime().Equal(entry.modTime) || info.Size() != entry.size {
 				// File changed — re-parse
 				newEntry := s.parseHtaccessFull(root)
 				s.htaccessCacheMu.Lock()
@@ -368,7 +369,7 @@ func (s *Server) parseHtaccessFull(root string) *htaccessCacheEntry {
 		// is not read (truncating it would drop denies); its denies are
 		// unknown, so fail closed like an unparsable file.
 		s.logger.Warn("htaccess is not a regular file or too large; refusing to serve until fixed", "path", htPath)
-		return &htaccessCacheEntry{parseFailed: true, modTime: info.ModTime()}
+		return &htaccessCacheEntry{parseFailed: true, modTime: info.ModTime(), size: info.Size()}
 	}
 
 	directives, err := htaccess.Parse(f)
@@ -381,6 +382,7 @@ func (s *Server) parseHtaccessFull(root string) *htaccessCacheEntry {
 		failed := &htaccessCacheEntry{parseFailed: true}
 		if info != nil {
 			failed.modTime = info.ModTime()
+			failed.size = info.Size()
 		}
 		return failed
 	}
@@ -389,6 +391,7 @@ func (s *Server) parseHtaccessFull(root string) *htaccessCacheEntry {
 	entry := &htaccessCacheEntry{raw: ruleSet}
 	if info != nil {
 		entry.modTime = info.ModTime()
+		entry.size = info.Size()
 	}
 
 	// Compile rewrite rules

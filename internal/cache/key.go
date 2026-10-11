@@ -55,7 +55,10 @@ func NormalizeHost(host string) string {
 	} else if idx := strings.LastIndex(host, ":"); idx != -1 {
 		host = host[:idx]
 	}
-	return strings.ToLower(host)
+	// The router trims the absolute-form dot ("example.com." routes to the
+	// "example.com" domain), so the key and the site: tag must too, or a
+	// per-domain purge misses entries stored under the dotted Host (F2320).
+	return strings.TrimSuffix(strings.ToLower(host), ".")
 }
 
 // SiteTag is the tag every cached entry carries identifying the domain that

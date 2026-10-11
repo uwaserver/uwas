@@ -1032,7 +1032,13 @@ func (s *Server) Start() error {
 
 	// Autoblock expiry, firewall sync and state persistence
 	if s.autoblocker.Enabled() {
-		s.logger.SafeGo("autoblock", func() { s.autoblocker.Start(s.ctx) })
+		// Joined by Start's wg.Wait after shutdown, so the final state save
+		// finishes before the process exits (F2261).
+		s.wg.Add(1)
+		s.logger.SafeGo("autoblock", func() {
+			defer s.wg.Done()
+			s.autoblocker.Start(s.ctx)
+		})
 	}
 
 	// Backup scheduler

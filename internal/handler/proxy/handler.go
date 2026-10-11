@@ -536,9 +536,12 @@ func isRetryableError(err error) bool {
 		strings.Contains(errStr, "connection reset")
 }
 
+// "Trailer" (not "Trailers": RFC 2616 errata 4522) and the legacy
+// "Proxy-Connection" are laundered too, as net/http/httputil.ReverseProxy does
+// (F2321).
 var hopByHopHeaders = []string{
-	"Connection", "Keep-Alive", "Proxy-Authenticate",
-	"Proxy-Authorization", "Te", "Trailers",
+	"Connection", "Proxy-Connection", "Keep-Alive", "Proxy-Authenticate",
+	"Proxy-Authorization", "Te", "Trailer",
 	"Transfer-Encoding", "Upgrade",
 }
 

@@ -882,9 +882,20 @@ func (h *Handler) domainTypeForHost(host string) string {
 	return ""
 }
 
+// rawHas reports whether the request body carries key. encoding/json matches
+// object keys case-insensitively when it fills config.Domain, so the lookup
+// must too: an exact match let {"Root": ...} reach the struct past the
+// non-admin field guard (F2290).
 func rawHas(raw map[string]json.RawMessage, key string) bool {
-	_, ok := raw[key]
-	return ok
+	if _, ok := raw[key]; ok {
+		return true
+	}
+	for k := range raw {
+		if strings.EqualFold(k, key) {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Handler) Detail(w http.ResponseWriter, r *http.Request) {
