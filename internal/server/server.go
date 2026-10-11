@@ -892,12 +892,10 @@ func (s *Server) buildMiddlewareChain() http.Handler {
 	s.globalRL.set(s.config.Global.RateLimit.Requests, s.config.Global.RateLimit.Window.Duration)
 	mws = append(mws, s.globalRL.middleware)
 
-	// Security guard (blocked paths only) + bot guard
-	var blockedPaths []string
-	for _, d := range s.config.Domains {
-		blockedPaths = append(blockedPaths, d.Security.BlockedPaths...)
-	}
-	mws = append(mws, middleware.SecurityGuard(s.logger, blockedPaths, s.securityStats))
+	// Security guard (built-in blocked paths only; each domain's own
+	// security.blocked_paths is enforced per request in handleRequest, F2140)
+	// + bot guard
+	mws = append(mws, middleware.SecurityGuard(s.logger, nil, s.securityStats))
 	mws = append(mws, middleware.BotGuard(s.logger, s.securityStats))
 
 	mws = append(mws, middleware.AccessLog(s.logger, s.requestLog.Load))

@@ -57,6 +57,15 @@ func (s *Server) reload() error {
 		s.globalRL.set(newCfg.Global.RateLimit.Requests, newCfg.Global.RateLimit.Window.Duration)
 	}
 
+	// The multi-user auth manager captured the admin API key and the users.*
+	// switches when it was built; without this a rotated key kept the old one
+	// valid until restart (F2141).
+	if s.authMgr != nil {
+		s.authMgr.SetGlobalAPIKey(newCfg.Global.Admin.APIKey)
+		s.authMgr.SetAllowLegacyPlaintextKey(newCfg.Global.Users.AllowLegacyPlaintextAPIKey)
+		s.authMgr.SetSessionTTL(newCfg.Global.Users.SessionTTL)
+	}
+
 	// Update vhosts
 	s.vhosts.Update(newCfg.Domains)
 

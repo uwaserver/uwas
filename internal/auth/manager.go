@@ -154,6 +154,7 @@ type Manager struct {
 	// is held (read or write) so writes commit in snapshot order (F166).
 	sessionsPersistMu sync.Mutex
 	dataDir           string
+	apiKeyMu          sync.RWMutex
 	apiKey            string // Global admin API key (backward compat)
 	jwtSecret         []byte
 
@@ -570,10 +571,22 @@ func (m *Manager) AuthenticateFromRequest(r *http.Request, username, password, c
 	return cloneSession(session), nil
 }
 
+// SetGlobalAPIKey replaces the global admin API key. The manager captured it
+// at construction, so a rotated global.admin.api_key kept authenticating the
+// old key (and rejected the new one) until restart (F2141).
+func (m *Manager) SetGlobalAPIKey(key string) {
+	m.apiKeyMu.Lock()
+	m.apiKey = key
+	m.apiKeyMu.Unlock()
+}
+
 // AuthenticateAPIKey validates an API key and returns the user.
 func (m *Manager) AuthenticateAPIKey(key string) (*User, error) {
+	m.apiKeyMu.RLock()
+	globalKey := m.apiKey
+	m.apiKeyMu.RUnlock()
 	// Check global API key first (backward compatibility)
-	if m.apiKey != "" && subtle.ConstantTimeCompare([]byte(key), []byte(m.apiKey)) == 1 {
+	if globalKey != "" && subtle.ConstantTimeCompare([]byte(key), []byte(globalKey)) == 1 {
 		return &User{
 			ID:       "admin",
 			Username: "admin",

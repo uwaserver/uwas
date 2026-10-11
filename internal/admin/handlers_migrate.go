@@ -477,7 +477,14 @@ func (s *Server) handleBulkDomainImport(w http.ResponseWriter, r *http.Request) 
 	s.configMu.Unlock()
 
 	if len(added) > 0 {
-		s.persistConfig()
+		// Same contract as the settings/cloudflare/php handlers: a config that
+		// could not be written is a failed request, not a silent success that
+		// vanishes on restart (F2080).
+		if err := s.persistConfig(); err != nil {
+			s.recordAuditR(r, "domain.bulk_import", err.Error(), false)
+			jsonError(w, "failed to persist config: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 		s.notifyDomainChange()
 		s.recordAuditR(r, "domain.bulk_import", fmt.Sprintf("%d added", len(added)), true)
 	}

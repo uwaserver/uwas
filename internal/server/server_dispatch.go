@@ -291,6 +291,17 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		sh.SetHeaders(ctx.Response.Header())
 	}
 
+	// Per-domain blocked paths. Enforced here, ahead of the location handlers,
+	// rather than in the global SecurityGuard: that guard only knows the
+	// built-in list, so one domain's list no longer blocks the same path on
+	// every other domain (F2140).
+	for _, blocked := range domain.Security.BlockedPaths {
+		if strings.Contains(r.URL.Path, blocked) {
+			s.renderDomainError(ctx.Response, http.StatusForbidden, domain)
+			return
+		}
+	}
+
 	basicAuthChecked := false
 
 	// Per-path location overrides (headers, cache-control, proxy, redirect, static root)
@@ -418,7 +429,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				ssrfCheck = config.IsPrivateProxyUpstreamSafe
 			}
 			if err := ssrfCheck(targetURL); err != nil {
-				s.logger.Warn("location proxy SSRF blocked", "match", loc.Match, "target", targetURL, "error", err)
+				s.logger.Warn("location proxy SSRF blocked", "match", loc.Match, "target", loc.ProxyPass+path, "error", err)
 				s.renderDomainError(ctx.Response, http.StatusForbidden, domain)
 				return
 			}
@@ -455,8 +466,17 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				if isDeadline(err) {
 					status = http.StatusGatewayTimeout
 				}
+				// Client.Do wraps the failure in a *url.Error whose text embeds
+				// the full request URL, including the visitor's query string
+				// (tokens, signed URLs). The access log redacts that query, so
+				// log only the cause (F2110).
+				logErr := err
+				var ue *url.Error
+				if errors.As(err, &ue) {
+					logErr = ue.Err
+				}
 				s.logger.Error("location proxy error", "match", loc.Match, "target", loc.ProxyPass,
-					"status", status, "error", err)
+					"status", status, "error", logErr)
 				s.renderDomainError(ctx.Response, status, domain)
 				return
 			}
@@ -494,14 +514,6 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 
 		break // first match wins (like Nginx) — if no handler, continue to normal dispatch
-	}
-
-	// Per-domain blocked paths
-	for _, blocked := range domain.Security.BlockedPaths {
-		if strings.Contains(r.URL.Path, blocked) {
-			s.renderDomainError(ctx.Response, http.StatusForbidden, domain)
-			return
-		}
 	}
 
 	// Per-domain IP ACL (whitelist/blacklist) — predicate form (P2/P3).

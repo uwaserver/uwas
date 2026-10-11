@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -259,6 +260,17 @@ func (m *Manager) isDomainConfigured(host string) bool {
 	return m.allowlist.Load().allow(host)
 }
 
+// askURLCause drops the URL a *url.Error carries. The on-demand ask URL is
+// operator config and usually holds a shared secret in its query, which the
+// error text would otherwise copy into logs and handshake errors (F2112).
+func askURLCause(err error) error {
+	var ue *neturl.Error
+	if errors.As(err, &ue) {
+		return ue.Err
+	}
+	return err
+}
+
 // GetCertificate is the tls.Config.GetCertificate callback for SNI routing.
 func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	name := strings.ToLower(hello.ServerName)
@@ -294,7 +306,7 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 		if m.config.OnDemandAsk != "" {
 			askURL, err := neturl.Parse(m.config.OnDemandAsk)
 			if err != nil {
-				return nil, fmt.Errorf("invalid on-demand ask URL: %w", err)
+				return nil, fmt.Errorf("invalid on-demand ask URL: %w", askURLCause(err))
 			}
 			query := askURL.Query()
 			query.Set("domain", name)
@@ -304,11 +316,12 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 			defer cancel()
 			req, err := http.NewRequestWithContext(askCtx, http.MethodGet, askURL.String(), nil)
 			if err != nil {
-				return nil, fmt.Errorf("on-demand ask request failed for %s: %w", name, err)
+				return nil, fmt.Errorf("on-demand ask request failed for %s: %w", name, askURLCause(err))
 			}
 
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
+				err = askURLCause(err)
 				m.logger.Error("on-demand ask failed", "domain", name, "error", err)
 				return nil, fmt.Errorf("on-demand ask error for %s: %w", name, err)
 			}

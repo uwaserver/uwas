@@ -277,7 +277,9 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 		if err := proxyUpstreamSafetyCheck(domain, upstreamURL.String()); err != nil {
 			backend.ActiveConns.Add(-1)
 			backend.TotalFails.Add(1)
-			h.logger.Warn("proxy SSRF blocked", "upstream", upstreamURL.String(), "error", err)
+			// Log the backend, not upstreamURL: that carries the visitor's query
+			// string (tokens, signed URLs), which the access log redacts (F2111).
+			h.logger.Warn("proxy SSRF blocked", "upstream", backend.URL.Redacted(), "error", err)
 			ctx.Response.Error(http.StatusForbidden, "403 Forbidden — upstream blocked (SSRF protection)")
 			return
 		}
