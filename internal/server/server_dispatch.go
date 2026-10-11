@@ -418,11 +418,17 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 		// Location-level proxy_pass (e.g. /api/ → http://127.0.0.1:4000)
 		if loc.ProxyPass != "" {
-			path := r.URL.Path
+			// The escaped form keeps an encoded "?"/"#" in the path; the
+			// decoded one is re-read as query/fragment once concatenated. A
+			// match without a trailing slash ("/api") leaves a remainder that
+			// need not start with "/", and "http://up" + "@host/x" would make
+			// the configured upstream userinfo and the client's host the
+			// authority, so the remainder is always rooted (F2620).
+			path := r.URL.EscapedPath()
 			if loc.StripPrefix && !strings.HasPrefix(loc.Match, "~") {
 				path = strings.TrimPrefix(path, strings.TrimSuffix(loc.Match, "/"))
-				if path == "" {
-					path = "/"
+				if !strings.HasPrefix(path, "/") {
+					path = "/" + path
 				}
 			}
 			targetURL := loc.ProxyPass + path

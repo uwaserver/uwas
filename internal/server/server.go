@@ -107,7 +107,12 @@ type Server struct {
 	sftpSrv     *sftpserver.Server
 	// sftpMu serializes SFTP user-table rebuilds (startup, domain change,
 	// reload) and guards sftpHashes, the bcrypt hash cache keyed by host.
-	sftpMu     sync.Mutex
+	sftpMu sync.Mutex
+
+	// pruneMu guards cacheHosts, the host set of the previous domain
+	// snapshot, so pruneDomainStats can tell which hosts were removed (F2680).
+	pruneMu    sync.Mutex
+	cacheHosts map[string]struct{}
 	sftpHashes map[string]sftpHashEntry
 	// routeMu guards all per-domain routing maps below (proxy pools/balancers/
 	// breakers/mirrors/canaries/health-checkers, rewriteCache, the *Guards, the
@@ -441,6 +446,11 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 				}
 			}
 		})
+	}
+
+	s.cacheHosts = make(map[string]struct{}, len(cfg.Domains))
+	for _, d := range cfg.Domains {
+		s.cacheHosts[cache.NormalizeHost(d.Host)] = struct{}{}
 	}
 
 	// Uptime monitor
@@ -882,6 +892,7 @@ func (s *Server) buildMiddlewareChain() http.Handler {
 		middleware.Recovery(s.logger),
 		middleware.RequestID(),
 		middleware.RealIPDynamic(s.realIPTrust),
+		s.blockedClientGate,
 		middleware.SecurityHeaders(),
 		middleware.CompressWith(1024, s.compressionPolicyFor),
 	}
@@ -902,6 +913,24 @@ func (s *Server) buildMiddlewareChain() http.Handler {
 
 	chain := middleware.Chain(mws...)
 	return chain(http.HandlerFunc(s.handleRequest))
+}
+
+// blockedClientGate refuses a request whose resolved client address is banned
+// by the autoblocker. The listener guard only sees the TCP peer, so a ban never
+// applied to HTTP/3 (UDP, no guarded listener), to PROXY-protocol listeners
+// (guard skipped) or to a client behind a trusted proxy or CDN (the peer is the
+// whitelisted edge; the banned address is the forwarded one). It sits after
+// RealIP so r.RemoteAddr is the client, and before everything that counts or
+// logs the request (F2650).
+func (s *Server) blockedClientGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ab := s.autoblocker; ab.Enabled() && ab.BlockedAddr(r.RemoteAddr) {
+			w.Header().Set("Connection", "close")
+			http.Error(w, "403 Forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) realIPTrustedProxies() []string {
@@ -1800,6 +1829,26 @@ func (s *Server) pruneDomainStats(domains []config.Domain) {
 	}
 	if s.metrics != nil {
 		s.metrics.RetainDomains(hosts)
+	}
+
+	// Cached responses of a removed host belong to its previous owner; drop
+	// them so the next tenant given the hostname is not served that content
+	// until the TTL runs out (F2680).
+	current := make(map[string]struct{}, len(hosts))
+	for _, h := range hosts {
+		current[cache.NormalizeHost(h)] = struct{}{}
+	}
+	s.pruneMu.Lock()
+	var removed []string
+	for h := range s.cacheHosts {
+		if _, ok := current[h]; !ok {
+			removed = append(removed, cache.SiteTag(h))
+		}
+	}
+	s.cacheHosts = current
+	s.pruneMu.Unlock()
+	if s.cache != nil && len(removed) > 0 {
+		s.cache.PurgeByTag(removed...)
 	}
 }
 
