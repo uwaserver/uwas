@@ -1153,7 +1153,7 @@ func (s *Server) startHTTPS() error {
 	tlsCfg := s.tlsMgr.TLSConfig()
 
 	s.httpsSrv = &http.Server{
-		Handler:           s.handler,
+		Handler:           s.configuredHostsOnly(s.handler),
 		TLSConfig:         tlsCfg,
 		ReadTimeout:       s.config.Global.Timeouts.Read.Duration,
 		ReadHeaderTimeout: s.config.Global.Timeouts.ReadHeader.Duration,
@@ -1191,6 +1191,32 @@ func (s *Server) startHTTPS() error {
 	return nil
 }
 
+// rejectUnknownHost answers a Host that matches no configured domain: it is
+// recorded as unknown and refused, or refused outright once blocked.
+func (s *Server) rejectUnknownHost(w http.ResponseWriter, r *http.Request) {
+	if s.unknownHosts.Record(r.Host) {
+		w.Header().Set("Connection", "close")
+		http.Error(w, "403 Forbidden", http.StatusForbidden)
+		return
+	}
+	renderErrorPage(w, 421)
+}
+
+// configuredHostsOnly puts the plain-HTTP listener's unknown-host rule in
+// front of the TLS entry handlers. The router answers an unknown Host with its
+// fallback domain (the first configured one), so without this gate a client
+// with a valid SNI read that tenant's site under any Host and the unknown-host
+// tracker never saw it (F2561).
+func (s *Server) configuredHostsOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, configured := s.vhosts.LookupWithStatus(r.Host); !configured {
+			s.rejectUnknownHost(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // handleHTTP handles port 80: ACME challenges, HTTPS redirect, or serve non-SSL domains.
 // Unknown/blocked domains are rejected immediately — they never touch the middleware chain.
 // Wrapped in recovery to prevent panics from crashing the connection handler.
@@ -1211,14 +1237,7 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Fallback domain exists for serving configured domains, not for tracking unknown ones.
 	domain, configured := s.vhosts.LookupWithStatus(r.Host)
 	if !configured {
-		// Host does not match any configured domain — record as unknown and reject.
-		blocked := s.unknownHosts.Record(r.Host)
-		if blocked {
-			w.Header().Set("Connection", "close")
-			http.Error(w, "403 Forbidden", http.StatusForbidden)
-		} else {
-			renderErrorPage(w, 421)
-		}
+		s.rejectUnknownHost(w, r)
 		return
 	}
 	if s.rejectNonCloudflareOrigin(w, r, domain) {
@@ -1232,7 +1251,12 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// redirect path kicks in automatically on the next request. Force SSL is
 	// the operator's explicit override for domains that must always redirect.
 	sslEnabled := domain.SSL.Mode == "auto" || domain.SSL.Mode == "manual"
-	if sslEnabled && (domain.SSL.ForceSSL || s.tlsMgr.HasCert(r.Host)) {
+	// The redirect goes to domain.Host, so the cert check asks about that name
+	// too: r.Host is raw client text (port, trailing dot, the router's derived
+	// www or apex variant) and on its own is not a cert-store key (F2560). The
+	// normalised request host stays in the check for per-host certs under a
+	// wildcard domain.
+	if sslEnabled && (domain.SSL.ForceSSL || s.tlsMgr.HasCert(domain.Host) || s.tlsMgr.HasCert(cache.NormalizeHost(r.Host))) {
 		// Redirect straight to the canonical host so http://apex does not take
 		// two hops (→ https://apex → https://www) when www is primary.
 		// Use domain.Host (operator-configured) rather than r.Host (client-supplied)

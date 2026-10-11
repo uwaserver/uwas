@@ -52,9 +52,12 @@ func compile(pattern string) *regexp.Regexp {
 // Regex reports whether a path matches a cache-rule pattern, which is always
 // a regular expression. An uncompilable pattern never matches; config
 // validation warns about those separately.
+//
+// The path is matched in canonical form (Clean): a cache bypass rule for
+// "^/cart" must also cover "//cart/x", which is served as "/cart/x" (F2531).
 func Regex(path, pattern string) bool {
 	re := compile(pattern)
-	return re != nil && re.MatchString(path)
+	return re != nil && re.MatchString(Clean(path))
 }
 
 // Location reports whether a path matches a location pattern. A leading "~"

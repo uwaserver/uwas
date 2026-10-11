@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/pathmatch"
 	"github.com/uwaserver/uwas/internal/phpmanager"
 	"github.com/uwaserver/uwas/internal/rewrite"
 	"github.com/uwaserver/uwas/internal/router"
@@ -26,12 +27,17 @@ func (s *Server) applyRewrites(ctx *router.RequestContext, domain *config.Domain
 	// no rule pattern can match this URI. Big win for domains with
 	// rewrites configured but most paths uninteresting (the WP-Admin /
 	// rest of-site split). Refs: refactor.md P12.
-	if !engine.MightMatch(ctx.Request.URL.Path) {
+	//
+	// Rules decide on the canonical path: the static handler opens files
+	// through filepath.Clean, so "//private/x" reaches the same file as
+	// "/private/x" and must meet the same ^/private/ [F] rule (F2532).
+	reqPath := pathmatch.Clean(ctx.Request.URL.Path)
+	if !engine.MightMatch(reqPath) {
 		return false
 	}
 
 	vars := rewrite.BuildVariables(ctx.Request, domain.Root, ctx.ResolvedPath, ctx.IsHTTPS)
-	result := engine.Process(ctx.Request.URL.Path, ctx.Request.URL.RawQuery, vars)
+	result := engine.Process(reqPath, ctx.Request.URL.RawQuery, vars)
 
 	if result.Forbidden {
 		s.renderDomainError(ctx.Response, http.StatusForbidden, domain)
@@ -74,7 +80,9 @@ func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain
 	// Apache matches per-directory RewriteRule patterns against the path with
 	// the directory prefix ("/" for the docroot .htaccess) removed, so
 	// "^backup/" must see "backup/db.sql", not "/backup/db.sql".
-	perDirPath := strings.TrimPrefix(ctx.Request.URL.Path, "/")
+	// The path is canonicalised first: "//backup/x" is served as "/backup/x",
+	// so it must meet the same "^backup/" [F] rule (F2530).
+	perDirPath := strings.TrimPrefix(pathmatch.Clean(ctx.Request.URL.Path), "/")
 	if ruleSet.engine != nil && ruleSet.engine.MightMatch(perDirPath) {
 		requestFilename := filepath.Join(domain.Root, filepath.Clean("/"+ctx.Request.URL.Path))
 		vars := rewrite.BuildVariables(ctx.Request, domain.Root, requestFilename, ctx.IsHTTPS)

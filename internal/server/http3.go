@@ -16,7 +16,7 @@ func (s *Server) startHTTP3() error {
 	h3srv := &http3.Server{
 		Addr:      addr,
 		TLSConfig: http3.ConfigureTLSConfig(tlsCfg),
-		Handler:   s.handler,
+		Handler:   s.configuredHostsOnly(s.handler),
 	}
 
 	s.h3srv = h3srv

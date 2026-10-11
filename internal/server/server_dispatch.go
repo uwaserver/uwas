@@ -23,6 +23,7 @@ import (
 	proxyhandler "github.com/uwaserver/uwas/internal/handler/proxy"
 	"github.com/uwaserver/uwas/internal/handler/static"
 	"github.com/uwaserver/uwas/internal/middleware"
+	"github.com/uwaserver/uwas/internal/pathmatch"
 	"github.com/uwaserver/uwas/internal/pathsafe"
 	"github.com/uwaserver/uwas/internal/router"
 )
@@ -295,8 +296,12 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// rather than in the global SecurityGuard: that guard only knows the
 	// built-in list, so one domain's list no longer blocks the same path on
 	// every other domain (F2140).
+	// Checked on the path as sent and on its canonical form: "/private//x" and
+	// "/private/./x" are served as "/private/x" and must meet the same entry
+	// (F2533).
+	canonPath := pathmatch.Clean(r.URL.Path)
 	for _, blocked := range domain.Security.BlockedPaths {
-		if strings.Contains(r.URL.Path, blocked) {
+		if strings.Contains(r.URL.Path, blocked) || strings.Contains(canonPath, blocked) {
 			s.renderDomainError(ctx.Response, http.StatusForbidden, domain)
 			return
 		}
@@ -660,8 +665,9 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		// Bypass cache for WordPress admin/login paths (always dynamic)
-		p := r.URL.Path
+		// Bypass cache for WordPress admin/login paths (always dynamic).
+		// Canonical form, so "//wp-admin/x" cannot slip past the prefix (F2531).
+		p := pathmatch.Clean(r.URL.Path)
 		if strings.HasPrefix(p, "/wp-admin") ||
 			strings.HasPrefix(p, "/wp-login") ||
 			strings.HasPrefix(p, "/wp-cron") ||
