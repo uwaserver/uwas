@@ -13,6 +13,7 @@ import (
 type Logger struct {
 	*slog.Logger
 	level *slog.LevelVar
+	out   *asyncWriter
 }
 
 func New(level, format string) *Logger {
@@ -21,18 +22,33 @@ func New(level, format string) *Logger {
 
 	opts := &slog.HandlerOptions{Level: lv}
 
+	// Never write to stdout from the caller's goroutine: a backed-up journald
+	// would stall every request that logs (see asyncWriter).
+	out := newAsyncWriter(os.Stdout)
+
 	var handler slog.Handler
 	switch strings.ToLower(format) {
 	case "json":
-		handler = slog.NewJSONHandler(os.Stdout, opts)
+		handler = slog.NewJSONHandler(out, opts)
 	default:
-		handler = slog.NewTextHandler(os.Stdout, opts)
+		handler = slog.NewTextHandler(out, opts)
 	}
 
 	return &Logger{
 		Logger: slog.New(handler),
 		level:  lv,
+		out:    out,
 	}
+}
+
+// Flush waits, up to timeout, for queued lines to reach the output. Call it
+// before the process exits so the last lines — usually the reason it is
+// exiting — are not lost.
+func (l *Logger) Flush(timeout time.Duration) {
+	if l == nil || l.out == nil {
+		return
+	}
+	l.out.flush(timeout)
 }
 
 // SetLevel changes the threshold on a running logger.

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
@@ -160,6 +161,7 @@ func TestReloadAccessLogToggleAffectsBuiltChain(t *testing.T) {
 		t.Fatalf("reload: %v", err)
 	}
 	serve("/after-reload")
+	s.logger.Flush(time.Second) // logger writes asynchronously
 
 	os.Stdout = orig
 	_ = w.Close()

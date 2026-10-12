@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
@@ -44,6 +45,7 @@ func startupLogs(t *testing.T, domains []config.Domain) string {
 	}
 	s := New(cfg, log)
 	s.cancel()
+	log.Flush(time.Second) // logger writes asynchronously
 
 	os.Stdout = orig
 	_ = w.Close()

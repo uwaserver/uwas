@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/uwaserver/uwas/internal/logger"
@@ -33,6 +34,7 @@ func captureLogOutput(t *testing.T, fn func(log *logger.Logger)) string {
 	done := make(chan string, 1)
 	go func() { b, _ := io.ReadAll(r); done <- string(b) }()
 	fn(log)
+	log.Flush(time.Second) // logger writes asynchronously
 	os.Stdout = orig
 	_ = w.Close()
 	return <-done

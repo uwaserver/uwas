@@ -970,7 +970,7 @@ func (s *Server) buildMiddlewareChain() http.Handler {
 
 	// Global rate limiting (fallback for unknown domains and admin API). It is
 	// swappable so a reload applies a changed or newly enabled limit (F1991).
-	s.globalRL = &globalRateLimit{ctx: s.ctx}
+	s.globalRL = &globalRateLimit{ctx: s.ctx, stats: s.securityStats}
 	s.globalRL.set(s.config.Global.RateLimit.Requests, s.config.Global.RateLimit.Window.Duration)
 	mws = append(mws, s.globalRL.middleware)
 

@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
@@ -41,6 +42,7 @@ func captureStdout(t *testing.T, kur func(log *logger.Logger)) string {
 	}()
 
 	kur(log)
+	log.Flush(time.Second) // logger writes asynchronously
 
 	os.Stdout = orig
 	_ = w.Close()

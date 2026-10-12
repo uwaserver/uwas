@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
@@ -172,6 +173,7 @@ func (s *ServeCommand) Run(args []string) error {
 	}
 
 	log := logger.New(cfg.Global.LogLevel, cfg.Global.LogFormat)
+	defer log.Flush(2 * time.Second)
 
 	// Print startup banner
 	if !*noBanner {

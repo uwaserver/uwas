@@ -16,7 +16,9 @@ import (
 // goroutine of a replaced one stops instead of accumulating per reload.
 type globalRateLimit struct {
 	ctx context.Context
-	cur atomic.Pointer[http.Handler]
+	// stats receives each rejection, which is what feeds the autoblocker.
+	stats *middleware.SecurityStats
+	cur   atomic.Pointer[http.Handler]
 
 	mu       sync.Mutex
 	next     http.Handler
@@ -41,7 +43,7 @@ func (g *globalRateLimit) rebuildLocked() {
 		parent = context.Background()
 	}
 	ctx, cancel := context.WithCancel(parent)
-	h := middleware.RateLimit(ctx, g.requests, g.window)(g.next)
+	h := middleware.RateLimitWithStats(ctx, g.requests, g.window, g.stats)(g.next)
 	g.cur.Store(&h)
 	if g.cancel != nil {
 		g.cancel()

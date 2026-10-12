@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/logger"
 )
@@ -44,6 +45,7 @@ func captureAt(t *testing.T, level string, enabled bool, status int) string {
 	req := httptest.NewRequest(http.MethodGet, "/probe", nil)
 	req.RemoteAddr = "203.0.113.1:5000"
 	h.ServeHTTP(httptest.NewRecorder(), req)
+	log.Flush(time.Second) // logger writes asynchronously
 
 	os.Stdout = orig
 	_ = w.Close()
@@ -131,7 +133,8 @@ func TestAccessLogReadsFlagPerRequest(t *testing.T) {
 		done <- string(b)
 	}()
 
-	h := AccessLog(logger.New("info", "text"), live.Load)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	log := logger.New("info", "text")
+	h := AccessLog(log, live.Load)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	serve := func(path string) {
@@ -143,6 +146,7 @@ func TestAccessLogReadsFlagPerRequest(t *testing.T) {
 	serve("/while-off")
 	live.Store(true)
 	serve("/back-on")
+	log.Flush(time.Second)
 
 	os.Stdout = orig
 	_ = w.Close()
@@ -175,10 +179,12 @@ func TestAccessLogNilEnabledLogs(t *testing.T) {
 		done <- string(b)
 	}()
 
-	h := AccessLog(logger.New("info", "text"), nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	log := logger.New("info", "text")
+	h := AccessLog(log, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/probe", nil))
+	log.Flush(time.Second)
 
 	os.Stdout = orig
 	_ = w.Close()

@@ -24,6 +24,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
@@ -78,6 +79,7 @@ func captureCloudflareReject(t *testing.T, target string) (string, []middleware.
 	if s.securityStats != nil {
 		blocked = s.securityStats.RecentBlocked()
 	}
+	log.Flush(time.Second) // logger writes asynchronously
 
 	os.Stdout = orig
 	_ = w.Close()

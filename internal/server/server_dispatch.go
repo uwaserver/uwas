@@ -88,6 +88,33 @@ func (s *Server) recordSecurityBlock(ctx *router.RequestContext, r *http.Request
 	s.securityStats.Record(ip, r.URL.Path, reason, r.UserAgent())
 }
 
+// enforceDomainRateLimit applies the domain's rate limit. It reports false,
+// having answered 429 and fed the autoblocker, when the request is over it.
+func (s *Server) enforceDomainRateLimit(ctx *router.RequestContext, r *http.Request, guards domainGuards) bool {
+	if guards.rateLimit == nil || guards.rateLimit.Allow(guards.rateLimit.Key(r)) {
+		return true
+	}
+	// Report the configured window, not a fixed minute. The global and
+	// per-location limiters already do; this one did not, so a domain
+	// limiting per 10s told well-behaved clients — crawlers included —
+	// to back off six times longer than the limit actually lasts.
+	// Add ±25% jitter to spread retry bursts and prevent thundering herd.
+	window := int(guards.rateLimit.Window().Seconds())
+	jitter := window / 4
+	if jitter < 1 {
+		jitter = 1
+	}
+	retry := window - jitter + int(time.Now().UnixNano()%int64(2*jitter+1))
+	if retry < 1 {
+		retry = 1
+	}
+	s.recordSecurityBlock(ctx, r, "rate")
+	ctx.Response.Header().Set("Retry-After", strconv.Itoa(retry))
+	ctx.Response.WriteHeader(http.StatusTooManyRequests)
+	ctx.Response.Write([]byte("429 Too Many Requests"))
+	return false
+}
+
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// An ESI sub-request runs inside its parent's request: it takes no
 	// connection slot of its own and is not counted as a second request.
@@ -254,6 +281,13 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// before serving, so a request on the non-canonical host (e.g. the apex
 	// when www is primary) 301s to the canonical one instead of answering 200.
 	if loc := canonicalRedirectLocation(domain, r); loc != "" {
+		// The redirect returns before the domain's guards run, so without this
+		// a flood aimed at the non-canonical host (the apex, when www is
+		// primary) never met the rate limit: every request got its 301, none
+		// was counted, and the autoblocker never saw the flooding IPs.
+		if !s.enforceDomainRateLimit(ctx, r, s.guardsFor(domain.Host)) {
+			return
+		}
 		ctx.Response.Header().Set("Location", loc)
 		ctx.Response.WriteHeader(http.StatusMovedPermanently)
 		return
@@ -342,28 +376,8 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Per-domain rate limiting
-	if guards.rateLimit != nil {
-		if !guards.rateLimit.Allow(guards.rateLimit.Key(r)) {
-			// Report the configured window, not a fixed minute. The global and
-			// per-location limiters already do; this one did not, so a domain
-			// limiting per 10s told well-behaved clients — crawlers included —
-			// to back off six times longer than the limit actually lasts.
-			// Add ±25% jitter to spread retry bursts and prevent thundering herd.
-			window := int(guards.rateLimit.Window().Seconds())
-			jitter := window / 4
-			if jitter < 1 {
-				jitter = 1
-			}
-			retry := window - jitter + int(time.Now().UnixNano()%int64(2*jitter+1))
-			if retry < 1 {
-				retry = 1
-			}
-			s.recordSecurityBlock(ctx, r, "rate")
-			ctx.Response.Header().Set("Retry-After", strconv.Itoa(retry))
-			ctx.Response.WriteHeader(http.StatusTooManyRequests)
-			ctx.Response.Write([]byte("429 Too Many Requests"))
-			return
-		}
+	if !s.enforceDomainRateLimit(ctx, r, guards) {
+		return
 	}
 
 	basicAuthChecked := false

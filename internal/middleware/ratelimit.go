@@ -113,6 +113,14 @@ func (rl *RateLimiter) isTrustedProxy(ip net.IP) bool {
 // RateLimit returns middleware that enforces per-IP rate limiting.
 // The ctx parameter controls the lifetime of the background cleanup goroutine.
 func RateLimit(ctx context.Context, limit int, window time.Duration) Middleware {
+	return RateLimitWithStats(ctx, limit, window, nil)
+}
+
+// RateLimitWithStats is RateLimit that also records each rejection in stats.
+// The stats observer feeds the autoblocker; without it the global limiter
+// answered 429 forever and never escalated to a block, however hard an IP
+// pushed against it.
+func RateLimitWithStats(ctx context.Context, limit int, window time.Duration, stats *SecurityStats) Middleware {
 	if limit <= 0 {
 		return func(next http.Handler) http.Handler { return next }
 	}
@@ -122,6 +130,9 @@ func RateLimit(ctx context.Context, limit int, window time.Duration) Middleware 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !rl.Allow(rl.Key(r)) {
+				if stats != nil {
+					stats.Record(clientIP(nil, r), r.URL.Path, "rate", r.UserAgent())
+				}
 				w.Header().Set("Retry-After", fmt.Sprintf("%d", int(rl.window.Seconds())))
 				http.Error(w, "429 Too Many Requests", http.StatusTooManyRequests)
 				return

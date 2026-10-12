@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/logger"
 )
@@ -37,6 +38,7 @@ func accessLinesForPanic(t *testing.T, inner http.HandlerFunc) []string {
 		}()
 		Chain(Recovery(log), AccessLog(log, nil))(inner).ServeHTTP(httptest.NewRecorder(), req)
 	}()
+	log.Flush(time.Second) // logger writes asynchronously
 
 	os.Stdout = orig
 	_ = w.Close()
