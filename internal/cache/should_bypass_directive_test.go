@@ -6,9 +6,10 @@ import (
 	"testing"
 )
 
-// Request Cache-Control / Pragma directive names are case-insensitive and
-// the list may span several header lines (F1391).
-func TestShouldBypassDirectiveTokens(t *testing.T) {
+// A client's Cache-Control / Pragma no-cache must never bypass the cache, in
+// any spelling: honouring it let a flood that set the header skip the cache
+// and land every request on the origin.
+func TestShouldBypassIgnoresClientNoCache(t *testing.T) {
 	mk := func(hdr ...string) *http.Request {
 		r := httptest.NewRequest("GET", "/a", nil)
 		for i := 0; i+1 < len(hdr); i += 2 {
@@ -21,13 +22,13 @@ func TestShouldBypassDirectiveTokens(t *testing.T) {
 		r    *http.Request
 		want bool
 	}{
-		{"lower", mk("Cache-Control", "no-cache"), true},
-		{"mixed case", mk("Cache-Control", "No-Cache"), true},
-		{"in list upper", mk("Cache-Control", "max-age=0, NO-CACHE"), true},
-		{"split lines", mk("Cache-Control", "max-age=0", "Cache-Control", "no-cache"), true},
-		{"with argument", mk("Cache-Control", `no-cache="Set-Cookie"`), true},
-		{"pragma lower", mk("Pragma", "no-cache"), true},
-		{"pragma mixed", mk("Pragma", "No-Cache"), true},
+		{"lower", mk("Cache-Control", "no-cache"), false},
+		{"mixed case", mk("Cache-Control", "No-Cache"), false},
+		{"in list upper", mk("Cache-Control", "max-age=0, NO-CACHE"), false},
+		{"split lines", mk("Cache-Control", "max-age=0", "Cache-Control", "no-cache"), false},
+		{"with argument", mk("Cache-Control", `no-cache="Set-Cookie"`), false},
+		{"pragma lower", mk("Pragma", "no-cache"), false},
+		{"pragma mixed", mk("Pragma", "No-Cache"), false},
 		{"max-age only", mk("Cache-Control", "max-age=60"), false},
 		{"longer token", mk("Cache-Control", "no-cache-ext"), false},
 		{"no headers", mk(), false},

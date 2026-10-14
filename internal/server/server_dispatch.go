@@ -59,12 +59,21 @@ func (s *Server) graceTTL() time.Duration {
 // cache untouched. Writing it here — through cache.SiteTag, the same
 // normalization the cache key uses — is what closes that gap.
 //
+// The entry also carries the site: tag of the domain's configured host. It
+// was tagged only with the host the request named, so purging a domain by its
+// own name missed every entry cached under an alias or the canonical www host
+// (example.com redirecting to www.example.com purged 0 entries).
+//
 // The result is always a fresh slice: appending to domain.Cache.Tags would
 // write into the shared config slice.
 func cacheTagsFor(domain *config.Domain, host string) []string {
-	tags := make([]string, 0, len(domain.Cache.Tags)+1)
+	tags := make([]string, 0, len(domain.Cache.Tags)+2)
 	tags = append(tags, domain.Cache.Tags...)
-	return append(tags, cache.SiteTag(host))
+	reqTag := cache.SiteTag(host)
+	if own := cache.SiteTag(domain.Host); own != reqTag {
+		tags = append(tags, own)
+	}
+	return append(tags, reqTag)
 }
 
 // recordSecurityBlock feeds the security-stats counters (and, through the
@@ -765,6 +774,8 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// one and the domain/global value applies. Rules are evaluated in order and
 	// the last match wins, matching how Cache-Control is applied just below.
 	ruleTTL := 0
+	// Cache-Control of the last matching rule; it must win over the handler's.
+	ruleCacheControl := ""
 	if cacheEnabled {
 		// Check per-domain cache bypass rules + set Cache-Control and TTL from rules
 		for _, rule := range domain.Cache.Rules {
@@ -775,6 +786,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				}
 				if rule.CacheControl != "" {
 					stampCacheControl(ctx, rule.CacheControl)
+					ruleCacheControl = rule.CacheControl
 				}
 				if rule.TTL > 0 {
 					ruleTTL = rule.TTL
@@ -838,6 +850,11 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				}
 				ctx.Response.Header()[ck] = append([]string(nil), vals...)
 			}
+			// An entry stored before the rule existed carries the upstream's
+			// Cache-Control; the rule still applies to what the client sees.
+			if ruleCacheControl != "" && cached.StatusCode < 400 {
+				ctx.Response.Header().Set("Cache-Control", ruleCacheControl)
+			}
 
 			// Handle conditional requests against cached ETag
 			if etag := ctx.Response.Header().Get("Etag"); etag != "" {
@@ -869,6 +886,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	var capture *responseCapture
 	if cacheEnabled {
 		capture = newResponseCapture(ctx.Response.ResponseWriter)
+		capture.cacheControl = ruleCacheControl
 	}
 
 	// Record handler type for per-handler metrics
@@ -908,7 +926,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		// hit brotli-compresses the already-brotli body while advertising one
 		// Content-Encoding layer.
 		if !capture.overflow && !capture.upstreamEncoded && cache.IsCacheable(r, ctx.Response.StatusCode(), hdrs) {
-			ttl := cacheTTLFor(ruleTTL, domain.Cache.TTL, s.config.Global.Cache.DefaultTTL)
+			ttl := cache.CapTTL(cacheTTLFor(ruleTTL, domain.Cache.TTL, s.config.Global.Cache.DefaultTTL), hdrs)
 			capturedBody := capture.body.Bytes()
 			isESI := domain.Cache.ESI && s.esiProcessor != nil &&
 				strings.Contains(hdrs.Get("Content-Type"), "text/html") &&

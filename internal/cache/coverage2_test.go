@@ -614,8 +614,8 @@ func TestDiskPurgeByTagUnreadableFile(t *testing.T) {
 func TestShouldBypassNoCacheHeader(t *testing.T) {
 	req := httptest.NewRequest("GET", "http://example.com/page", nil)
 	req.Header.Set("Cache-Control", "no-cache")
-	if !ShouldBypass(req) {
-		t.Fatal("expected bypass for Cache-Control: no-cache")
+	if ShouldBypass(req) {
+		t.Fatal("a client's Cache-Control: no-cache must not bypass the cache")
 	}
 }
 

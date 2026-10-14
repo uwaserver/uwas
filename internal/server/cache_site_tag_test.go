@@ -118,3 +118,28 @@ func TestCacheTagsForDoesNotMutateConfig(t *testing.T) {
 		t.Fatalf("both calls produced the same site tag: %v / %v", first, second)
 	}
 }
+
+// TestPurgeByDomainHostCoversCanonicalWWW: entries cached under the canonical
+// www host (example.com redirecting to www.example.com) were tagged only with
+// that host, so purging the domain by its own name removed nothing.
+func TestPurgeByDomainHostCoversCanonicalWWW(t *testing.T) {
+	s := siteTagServer(t, "apex.test", nil)
+	s.config.Domains[0].Aliases = []string{"www.apex.test"}
+	s.vhosts.Update(s.config.Domains)
+	primeCache(t, s, "www.apex.test")
+
+	if count := s.cache.PurgeByTag(cache.SiteTag("apex.test")); count == 0 {
+		t.Fatal("purge by the domain's own host removed 0 entries cached under its www alias")
+	}
+}
+
+func TestCacheTagsForTagsDomainHostOnce(t *testing.T) {
+	domain := &config.Domain{Host: "apex.test"}
+	if got := cacheTagsFor(domain, "apex.test"); len(got) != 1 {
+		t.Errorf("request on the domain's own host: tags = %v, want just its site tag", got)
+	}
+	got := cacheTagsFor(domain, "www.apex.test")
+	if len(got) != 2 || got[0] != cache.SiteTag("apex.test") || got[1] != cache.SiteTag("www.apex.test") {
+		t.Errorf("request on an alias: tags = %v, want the domain's and the alias's site tags", got)
+	}
+}

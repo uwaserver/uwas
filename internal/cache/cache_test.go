@@ -398,11 +398,11 @@ func TestShouldBypass(t *testing.T) {
 		t.Error("POST should bypass")
 	}
 
-	// GET with no-cache should bypass
+	// A client's no-cache must not bypass: it let a flood skip the cache
 	r2 := httptest.NewRequest("GET", "/", nil)
 	r2.Header.Set("Cache-Control", "no-cache")
-	if !ShouldBypass(r2) {
-		t.Error("no-cache should bypass")
+	if ShouldBypass(r2) {
+		t.Error("client Cache-Control: no-cache must not bypass the cache")
 	}
 
 	// Normal GET should not bypass
@@ -1308,13 +1308,13 @@ func TestIsCacheablePrivate(t *testing.T) {
 	}
 }
 
-// --- ShouldBypass: Pragma: no-cache ---
+// --- ShouldBypass: Pragma: no-cache is ignored too ---
 
 func TestShouldBypassPragmaNoCache(t *testing.T) {
 	r := httptest.NewRequest("GET", "/", nil)
 	r.Header.Set("Pragma", "no-cache")
-	if !ShouldBypass(r) {
-		t.Error("Pragma: no-cache should bypass")
+	if ShouldBypass(r) {
+		t.Error("client Pragma: no-cache must not bypass the cache")
 	}
 }
 
@@ -1566,5 +1566,32 @@ func TestEngineSetDiskWriteError(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected non-nil response from memory")
+	}
+}
+
+func TestCapTTLHonoursOriginFreshness(t *testing.T) {
+	hour := time.Hour
+	cases := []struct {
+		cc   string
+		want time.Duration
+	}{
+		{"public, max-age=300", 300 * time.Second},
+		{"public, max-age=300, s-maxage=60", 60 * time.Second},
+		{"s-maxage=600, max-age=30", 600 * time.Second},
+		{"max-age=7200", hour}, // never extends the domain TTL
+		{"public, max-age=0", hour},
+		{"no-cache", hour},
+		{"", hour},
+		{"max-age=abc", hour},
+		{`max-age="120"`, 120 * time.Second},
+	}
+	for _, c := range cases {
+		h := http.Header{}
+		if c.cc != "" {
+			h.Set("Cache-Control", c.cc)
+		}
+		if got := CapTTL(hour, h); got != c.want {
+			t.Errorf("CapTTL(1h, %q) = %v, want %v", c.cc, got, c.want)
+		}
 	}
 }

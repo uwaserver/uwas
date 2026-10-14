@@ -26,6 +26,12 @@ type responseCapture struct {
 	// storing an upstream-encoded body as though it were plaintext makes a
 	// later cache hit compress those bytes again.
 	upstreamEncoded bool
+	// cacheControl, when set, replaces whatever Cache-Control the handler
+	// wrote. A cache rule's cache_control was set on the response before the
+	// handler ran, and a proxy copies the upstream's headers over it, so for
+	// proxied domains the rule never reached the client. Error responses keep
+	// the handler's header, as stampCacheControl does.
+	cacheControl string
 }
 
 func newResponseCapture(w http.ResponseWriter) *responseCapture {
@@ -46,6 +52,9 @@ func (rc *responseCapture) WriteHeader(code int) {
 	}
 	rc.statusCode = code
 	rc.written = true
+	if rc.cacheControl != "" && code < 400 {
+		rc.Header().Set("Cache-Control", rc.cacheControl)
+	}
 	rc.upstreamEncoded = rc.Header().Get("Content-Encoding") != ""
 	// A body that declares itself larger than the cache takes is never stored,
 	// so it is not copied for it either. Without this every request for a large

@@ -175,7 +175,7 @@ func (s *Server) runRevalidate(domain *config.Domain, job staleJob) {
 		Headers:    hdrs,
 		Body:       body,
 		Created:    time.Now(),
-		TTL:        job.ttl,
+		TTL:        cache.CapTTL(job.ttl, hdrs),
 		GraceTTL:   job.grace,
 		Tags:       job.tags,
 	})
