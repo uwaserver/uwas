@@ -24,7 +24,7 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.11.30)
+## Current Snapshot (v0.11.31)
 
 - **Dashboard pages:** 42 (`web/dashboard/src/pages`; `settingsSections.tsx` lives there too but is section definitions, not a page)
 - **Admin API routes:** 254+ explicit route registrations in `internal/admin/routes.go` under `/api/v1` plus dashboard/static handlers
@@ -34,7 +34,7 @@ One binary. Zero hassle.
 - **Security/stability fixes:** v0.11.29 hardens against request floods (async logging, rate-limited redirects, cache bypass fix) and moves to Go 1.26.9 for HTTP/2 DoS fixes
 - **Security posture:** risk score 2.1/10 (Low) per July 2026 reassessment
 
-**v0.11.30 highlights:**
+**v0.11.31 highlights:**
 - PHP php2shell RCE (CVE-2026-109618/109619): Docker images on PHP 8.3.36; dashboard flags vulnerable and EOL PHP; PHP 8.2+ only
 
 **v0.11.29 highlights:**
