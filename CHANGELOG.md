@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.30] - 2026-10-21
+
+### Security
+
+- **PHP php2shell RCE (CVE-2026-109618, CVE-2026-109619, CVSS 9.2).** Docker
+  images now pin PHP 8.3.36 (`docker/php.Dockerfile`) and refreshed WordPress
+  FPM/CLI bases (8.3.36); the previous pins shipped 8.3.32. Fixed upstream
+  releases are 8.2.35, 8.3.36, 8.4.27 and 8.5.12.
+- **PHP 8.2+ is the supported floor.** 8.1 and older are end-of-life.
+  Detected installs now carry `eol` and `advisory` fields flagging EOL
+  branches and releases older than the patched ones; the dashboard shows a
+  warning, and installing PHP below 8.2 is refused.
+
+### Fixed
+
+- **PHP install from the dashboard passed the distro name instead of the
+  version** to the installer, so choosing a version did not install that
+  version.
+
 ## [0.11.29] - 2026-10-20
 
 ### Security

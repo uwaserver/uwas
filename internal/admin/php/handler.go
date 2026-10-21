@@ -41,7 +41,7 @@ type Deps interface {
 	// PHP manager (read at call time so direct s.phpMgr assignments work)
 	PHPManager() *phpmanager.Manager
 	// PHP install (test seam)
-	PhpRunInstall(distro string) (string, error)
+	PhpRunInstall(version string) (string, error)
 }
 
 // TaskInfo is a minimal description of a background task.
@@ -138,6 +138,10 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid PHP version (expected N.N, e.g. 8.3)", http.StatusBadRequest)
 		return
 	}
+	if !phpmanager.SupportedBranch(req.Version) {
+		jsonError(w, "PHP "+req.Version+" is end-of-life; only 8.2 and newer can be installed", http.StatusBadRequest)
+		return
+	}
 	// Serialize the Active() check and Submit() with the other installers
 	// (package installs, setup wizard, database install) when the deps offer it.
 	if l, ok := h.deps.(interface{ InstallLock() (unlock func()) }); ok {
@@ -150,7 +154,7 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 	info := phpmanager.GetInstallInfo(req.Version)
 	h.deps.LogInfo("starting PHP install", "version", req.Version, "distro", info.Distro)
 	task := h.deps.TaskSubmit("php", req.Version, "install", func(appendOutput func(string)) error {
-		output, err := h.deps.PhpRunInstall(info.Distro)
+		output, err := h.deps.PhpRunInstall(req.Version)
 		appendOutput(output)
 		if err != nil {
 			h.deps.LogError("PHP install failed", "version", req.Version, "error", err)

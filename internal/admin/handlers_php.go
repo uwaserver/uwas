@@ -105,8 +105,8 @@ func (d *phpDeps) PersistDomainPHPOverrides(domain string) {
 }
 
 func (d *phpDeps) PHPManager() *phpmanager.Manager { return d.s.phpMgr }
-func (d *phpDeps) PhpRunInstall(distro string) (string, error) {
-	return callPHPRunInstall(distro)
+func (d *phpDeps) PhpRunInstall(version string) (string, error) {
+	return callPHPRunInstall(version)
 }
 
 // SetPHPManager sets the PHP manager and initializes the PHP handler.

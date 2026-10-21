@@ -561,6 +561,8 @@ export interface PHPInstall {
   socket_path?: string;
   system_managed?: boolean;
   disabled?: boolean;
+  eol?: boolean;
+  advisory?: string;
   domain_count: number;
   domains?: string[];
 }

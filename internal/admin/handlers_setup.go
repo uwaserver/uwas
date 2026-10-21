@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/uwaserver/uwas/internal/install"
+	"github.com/uwaserver/uwas/internal/phpmanager"
 )
 
 // ── Setup wizard ────────────────────────────────────────────
@@ -203,6 +204,8 @@ func (s *Server) handleSetupInstall(w http.ResponseWriter, r *http.Request) {
 			res := setupInstallResult{Type: "php", ID: item.ID, Name: "PHP " + item.ID}
 			if !validPHPVersion(item.ID) {
 				res.Skipped, res.Reason = true, "invalid PHP version"
+			} else if !phpmanager.SupportedBranch(item.ID) {
+				res.Skipped, res.Reason = true, "PHP branch is end-of-life (8.2+ required)"
 			} else if s.phpMgr == nil {
 				res.Skipped, res.Reason = true, "PHP manager not enabled"
 			} else if s.phpVersionInstalled(item.ID) {

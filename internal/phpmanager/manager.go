@@ -34,12 +34,15 @@ var (
 
 // PHPInstall describes a single detected PHP installation.
 type PHPInstall struct {
-	Version    string   `json:"version"`     // e.g. "8.4.19"
-	Binary     string   `json:"binary"`      // path to php-cgi or php-fpm
-	ConfigFile string   `json:"config_file"` // php.ini path
-	Extensions []string `json:"extensions"`  // enabled extensions
-	SAPI       string   `json:"sapi"`        // "cgi-fcgi" or "fpm-fcgi"
-	Disabled   bool     `json:"disabled"`    // user disabled this version
+	Version    string   `json:"version"`       // e.g. "8.4.19"
+	Binary     string   `json:"binary"`        // path to php-cgi or php-fpm
+	ConfigFile string   `json:"config_file"`   // php.ini path
+	Extensions []string `json:"extensions"`    // enabled extensions
+	SAPI       string   `json:"sapi"`          // "cgi-fcgi" or "fpm-fcgi"
+	Disabled   bool     `json:"disabled"`      // user disabled this version
+	EOL        bool     `json:"eol,omitempty"` // end-of-life branch (< 8.2), no security fixes
+	// Advisory is a security warning, empty when the version is patched.
+	Advisory string `json:"advisory,omitempty"`
 }
 
 // PHPConfig holds commonly tuned php.ini directives.

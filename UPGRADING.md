@@ -5,6 +5,16 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.30
+
+Drop-in binary; no config or data migration. **Security release:** also update
+PHP on every host to 8.2.35, 8.3.36, 8.4.27 or 8.5.12 or newer
+(CVE-2026-109618 / CVE-2026-109619, unauthenticated RCE). UWAS does not patch
+the host PHP; the dashboard now flags vulnerable and end-of-life (< 8.2)
+installs. Docker users: rebuild `uwas-php` and the WordPress images.
+
+---
+
 ## Upgrading to v0.11.29
 
 Drop-in binary; no config or data migration. Built with Go 1.26.9. Behavior

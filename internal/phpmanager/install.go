@@ -155,11 +155,18 @@ func GetInstallInfo(phpVersion string) InstallInfo {
 		info.Notes = "UWAS needs php-cgi (FastCGI) or php-fpm to serve PHP sites."
 	}
 
+	if supported, warn := Advisory(short + ".0"); !supported {
+		info.Notes = strings.TrimSpace(warn + ". " + info.Notes)
+	}
+
 	return info
 }
 
 // RunInstall executes the install commands. Returns combined output and error.
 func RunInstall(phpVersion string) (string, error) {
+	if !SupportedBranch(phpVersion) {
+		return "", fmt.Errorf("PHP %s is end-of-life or invalid; only 8.2 and newer can be installed", phpVersion)
+	}
 	info := GetInstallInfo(phpVersion)
 	var output strings.Builder
 

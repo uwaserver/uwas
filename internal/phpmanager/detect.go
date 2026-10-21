@@ -149,6 +149,9 @@ func (m *Manager) probe(binary string) (PHPInstall, error) {
 		return install, fmt.Errorf("could not parse version from: %s", version)
 	}
 
+	supported, advisory := Advisory(install.Version)
+	install.EOL, install.Advisory = !supported, advisory
+
 	// Get SAPI
 	install.SAPI = parseSAPI(version)
 

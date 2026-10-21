@@ -409,8 +409,10 @@ export default function PHP() {
     setStatus(null);
     try {
       const targetDomain = availableDomains[0].host;
-      const bestVersion = installs.find(i => i.version.startsWith('8.4'))?.version
-        ?? installs.find(i => i.version.startsWith('8.'))?.version
+      const patched = installs.filter(i => !i.eol && !i.advisory);
+      const bestVersion = patched.find(i => i.version.startsWith('8.4'))?.version
+        ?? patched.find(i => i.version.startsWith('8.'))?.version
+        ?? installs.find(i => !i.eol)?.version
         ?? installs[0].version;
 
       await assignDomainPHP(targetDomain, bestVersion);
@@ -508,6 +510,8 @@ export default function PHP() {
               const cgiVariant = variants.find(v => v.sapi === 'cgi-fcgi');
               const bestVariant = fpmVariant || cgiVariant || variants[0];
               const fullVer = variants[0].version;
+              const isEol = variants.some(v => v.eol);
+              const advisory = variants.find(v => v.advisory)?.advisory;
 
               return (
                 <div key={shortVer}
@@ -525,6 +529,13 @@ export default function PHP() {
                       </span>
                     </span>
                   </div>
+
+                  {advisory && (
+                    <div role="alert" className="mb-3 rounded bg-red-500/10 px-3 py-2">
+                      <p className="text-xs font-medium text-red-400">{isEol ? 'End-of-life' : 'Security update required'}</p>
+                      <p className="text-[10px] text-red-300/70">{advisory}</p>
+                    </div>
+                  )}
 
                   {/* Binaries */}
                   <div className="space-y-1 mb-3">

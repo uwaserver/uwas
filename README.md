@@ -24,7 +24,7 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.11.29)
+## Current Snapshot (v0.11.30)
 
 - **Dashboard pages:** 42 (`web/dashboard/src/pages`; `settingsSections.tsx` lives there too but is section definitions, not a page)
 - **Admin API routes:** 254+ explicit route registrations in `internal/admin/routes.go` under `/api/v1` plus dashboard/static handlers
@@ -33,6 +33,9 @@ One binary. Zero hassle.
 - **Test status:** all gates pass — `go build`, `go vet`, `staticcheck`, `go test`, `go test -race`, dashboard npm build; CI runs additional `govulncheck`, shellcheck, installer tests, Docker Compose validation, and docs/site builds
 - **Security/stability fixes:** v0.11.29 hardens against request floods (async logging, rate-limited redirects, cache bypass fix) and moves to Go 1.26.9 for HTTP/2 DoS fixes
 - **Security posture:** risk score 2.1/10 (Low) per July 2026 reassessment
+
+**v0.11.30 highlights:**
+- PHP php2shell RCE (CVE-2026-109618/109619): Docker images on PHP 8.3.36; dashboard flags vulnerable and EOL PHP; PHP 8.2+ only
 
 **v0.11.29 highlights:**
 - Go 1.26.9 + x/net v0.60.0: HTTP/2 DoS vulnerabilities fixed
@@ -374,7 +377,7 @@ domains:
 | Component | Minimum | Recommended | Notes |
 |-----------|---------|-------------|-------|
 | Go | 1.26.5+ | 1.26.5+ | For building from source (1.26.5 carries the `crypto/tls` GO-2026-5856 fix) |
-| PHP | 7.4+ | 8.3+ / 8.4+ | Only needed for PHP sites |
+| PHP | 8.2+ (8.2.35 / 8.3.36 / 8.4.27 / 8.5.12 or newer) | 8.4+ / 8.5+ | Only needed for PHP sites. 8.1 and older are end-of-life and unsupported; older patch releases are vulnerable to CVE-2026-109618/109619 |
 | Docker | 20.10+ | 24+ | Only for Docker apps and database containers |
 
 **No PHP needed** for static sites, reverse proxy, or redirect domains.

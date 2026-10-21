@@ -1,4 +1,4 @@
-FROM wordpress:cli-php8.3@sha256:f8aeb68164c6a04f5dcc91da30d8ffa096b0f7fafb7a65f144c2dd62587caca0
+FROM wordpress:cli-php8.3@sha256:94017f46151918dc886c2d6b3a072ce7912f9a935eb162566af184722a173a04
 
 # The pinned upstream image ships vulnerable packages:
 #   c-ares 1.34.6-r0              CVE-2026-33630
