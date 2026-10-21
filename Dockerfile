@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS builder
+FROM golang:1.27.3-alpine3.24@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS builder
 
 RUN apk add --no-cache "git>=2.54.0-r0"
 
@@ -27,10 +27,12 @@ FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec4
 # libcap: grants CAP_NET_BIND_SERVICE to the binary so the non-root user can
 #         bind privileged ports (80/443). CGO_ENABLED=0 produces a static
 #         binary that ignores setuid, so the capability must live on the file.
-RUN apk add --no-cache \
+RUN apk add --no-cache --upgrade \
     "ca-certificates>=20260909-r0" \
     "libcap>=2.78-r0" \
-    "tzdata>=2026e-r0"
+    "tzdata>=2026e-r0" \
+    "libcrypto3>=3.5.8-r0" \
+    "libssl3>=3.5.8-r0"
 
 COPY --from=builder /uwas /usr/local/bin/uwas
 

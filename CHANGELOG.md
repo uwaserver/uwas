@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.33] - 2026-10-22
+
+_v0.11.32 and v0.11.31 were tagged but never published (CI failed); this
+release supersedes them and carries their changes._
+
+### Security
+
+- Docker builder moves to Go 1.27.3 and the runtime image upgrades OpenSSL to
+  3.5.8 (CVE-2026-111943 `crypto/x509`, CVE-2026-14456 QUIC memory growth).
+- `npm audit fix` for new vitest/@vitest/mocker advisories (dashboard).
+
 ## [0.11.32] - 2026-10-22
 
 ### Changed
