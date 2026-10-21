@@ -376,7 +376,7 @@ domains:
 
 | Component | Minimum | Recommended | Notes |
 |-----------|---------|-------------|-------|
-| Go | 1.26.5+ | 1.26.5+ | For building from source (1.26.5 carries the `crypto/tls` GO-2026-5856 fix) |
+| Go | 1.26.10+ | 1.26.10+ | For building from source (1.26.10 carries the `crypto/x509` GO-2026-6809 fix) |
 | PHP | 8.2+ (8.2.35 / 8.3.36 / 8.4.27 / 8.5.12 or newer) | 8.4+ / 8.5+ | Only needed for PHP sites. 8.1 and older are end-of-life and unsupported; older patch releases are vulnerable to CVE-2026-109618/109619 |
 | Docker | 20.10+ | 24+ | Only for Docker apps and database containers |
 

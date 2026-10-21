@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   branches and releases older than the patched ones; the dashboard shows a
   warning, and installing PHP below 8.2 is refused.
 
+- **Go 1.26.10** (GO-2026-6809, distrust of compromised intermediate
+  certificates in `crypto/x509`, reachable via the WebSocket proxy TLS
+  handshake) and `npm audit fix` for a high-severity vite advisory in the
+  dashboard and docs site.
+
 ### Fixed
 
 - **PHP install from the dashboard passed the distro name instead of the

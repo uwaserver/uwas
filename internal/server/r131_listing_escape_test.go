@@ -18,7 +18,7 @@ func TestDirectoryListingEscapesHostileNames(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	names := []string{`<script>alert(1)<`, `a"b`, `a'b`, "a‮b", "a&b", "a%20b", "new\nline", "x\"><img src=x onerror=alert(1)>", strings.Repeat("n", 200), "ok.txt"}
+	names := []string{`<script>alert(1)<`, `a"b`, `a'b`, "a\u202eb", "a&b", "a%20b", "new\nline", "x\"><img src=x onerror=alert(1)>", strings.Repeat("n", 200), "ok.txt"}
 	for _, n := range names {
 		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
