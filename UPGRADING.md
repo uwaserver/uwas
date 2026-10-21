@@ -5,7 +5,7 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
-## Upgrading to v0.11.31
+## Upgrading to v0.11.32
 
 Drop-in binary; no config or data migration. **Security release:** also update
 PHP on every host to 8.2.35, 8.3.36, 8.4.27 or 8.5.12 or newer

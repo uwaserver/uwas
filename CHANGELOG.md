@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.32] - 2026-10-22
+
 ### Changed
 
 - **PHP install on Debian/Ubuntu no longer uses the ondrej PPA.** UWAS now
