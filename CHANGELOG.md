@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **PHP install on Debian/Ubuntu no longer uses the ondrej PPA.** UWAS now
+  installs from the distribution's own archive when it ships the requested
+  version, and otherwise adds `packages.sury.org/php` (signed keyring package,
+  supports bullseye, bookworm, trixie, jammy, noble, resolute). Unsupported
+  releases get a comment-only plan instead of a broken command.
+- **Distro-patched PHP is no longer flagged as vulnerable.** Debian/Ubuntu
+  backport fixes without bumping the version, so the advisory is cleared when
+  the package changelog lists CVE-2026-109618 and CVE-2026-109619.
+
+### Fixed
+
+- Docker image `apk` pins in the main Dockerfile are version floors, not exact
+  revisions, so Alpine rotating a revision no longer breaks the build.
+
 ## [0.11.31] - 2026-10-21
 
 _v0.11.30 was tagged but never published (CI failed); this release supersedes it._

@@ -151,6 +151,9 @@ func (m *Manager) probe(binary string) (PHPInstall, error) {
 
 	supported, advisory := Advisory(install.Version)
 	install.EOL, install.Advisory = !supported, advisory
+	if advisory != "" && supported && distroBackportsFix(shortVersion(install.Version)) {
+		install.Advisory = ""
+	}
 
 	// Get SAPI
 	install.SAPI = parseSAPI(version)

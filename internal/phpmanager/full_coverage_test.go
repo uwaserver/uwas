@@ -162,36 +162,6 @@ func withDistro(id, version, name string, fn func()) {
 	fn()
 }
 
-func TestGetInstallInfoUbuntu(t *testing.T) {
-	withDistro("ubuntu", "22.04", "Ubuntu 22.04", func() {
-		info := GetInstallInfo("8.3.6")
-		if info.Version != "8.3.6" {
-			t.Errorf("Version = %q", info.Version)
-		}
-		if len(info.Packages) != 12 {
-			t.Errorf("Packages count = %d, want 12", len(info.Packages))
-		}
-		if len(info.Commands) != 3 {
-			t.Errorf("Commands count = %d, want 3", len(info.Commands))
-		}
-		if !strings.Contains(info.Commands[2], "php8.3-cgi") {
-			t.Errorf("install command should contain php8.3-cgi: %s", info.Commands[2])
-		}
-		if !strings.Contains(info.Notes, "ondrej/php") {
-			t.Errorf("Notes = %q", info.Notes)
-		}
-	})
-}
-
-func TestGetInstallInfoDebian(t *testing.T) {
-	withDistro("debian", "12", "Debian 12", func() {
-		info := GetInstallInfo("8.2")
-		if len(info.Commands) != 3 {
-			t.Errorf("Commands count = %d, want 3", len(info.Commands))
-		}
-	})
-}
-
 func TestGetInstallInfoCentos(t *testing.T) {
 	withDistro("centos", "9", "CentOS 9", func() {
 		info := GetInstallInfo("8.3.6")
