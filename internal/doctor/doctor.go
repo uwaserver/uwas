@@ -2,6 +2,7 @@
 package doctor
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -116,9 +117,16 @@ func checkOS() Check {
 
 func checkPorts() Check {
 	issues := []string{}
+	denied := []string{}
 	for _, port := range []string{":80", ":443"} {
 		ln, err := netListenFn("tcp", port)
 		if err != nil {
+			// A permission error (non-root binding a privileged port) says
+			// nothing about whether the port is taken.
+			if errors.Is(err, os.ErrPermission) {
+				denied = append(denied, fmt.Sprintf("port %s: cannot probe (permission denied)", port))
+				continue
+			}
 			// Port in use — check if it's UWAS
 			if strings.Contains(err.Error(), "address already in use") || strings.Contains(err.Error(), "bind") {
 				issues = append(issues, fmt.Sprintf("port %s in use", port))
@@ -128,20 +136,25 @@ func checkPorts() Check {
 		}
 	}
 	if len(issues) > 0 {
-		return Check{Name: "Ports 80/443", Status: StatusWarn, Message: strings.Join(issues, "; "), HowTo: "UWAS or another server is already listening (this is normal if UWAS is running)"}
+		return Check{Name: "Ports 80/443", Status: StatusWarn, Message: strings.Join(append(issues, denied...), "; "), HowTo: "UWAS or another server is already listening (this is normal if UWAS is running)"}
+	}
+	if len(denied) > 0 {
+		return Check{Name: "Ports 80/443", Status: StatusWarn, Message: strings.Join(denied, "; "), HowTo: "Run the doctor as root to probe privileged ports"}
 	}
 	return Check{Name: "Ports 80/443", Status: StatusOK, Message: "Available"}
 }
 
+// phpFPMVersions lists the PHP branches probed by checkPHPFPM, newest first.
+// 8.1 is end-of-life but a running 8.1 pool is still reported as running.
+var phpFPMVersions = []string{"8.5", "8.4", "8.3", "8.2", "8.1"}
+
 func checkPHPFPM(autoFix bool) Check {
 	// Check for php-fpm socket
-	sockets := []string{
-		"/run/php/php8.4-fpm.sock",
-		"/run/php/php8.3-fpm.sock",
-		"/run/php/php8.2-fpm.sock",
-		"/run/php/php8.1-fpm.sock",
-		"/run/php/php-fpm.sock",
+	sockets := make([]string, 0, len(phpFPMVersions)+1)
+	for _, v := range phpFPMVersions {
+		sockets = append(sockets, fmt.Sprintf("/run/php/php%s-fpm.sock", v))
 	}
+	sockets = append(sockets, "/run/php/php-fpm.sock")
 	for _, sock := range sockets {
 		if _, err := osStatFn(sock); err == nil {
 			conn, err := netDialTimeoutFn("unix", sock, 2*time.Second)
@@ -166,25 +179,31 @@ func checkPHPFPM(autoFix bool) Check {
 		}
 	}
 
-	// No socket — check if php-fpm is installed
-	if _, err := execLookPathFn("php-fpm8.3"); err == nil {
+	// No socket — check if php-fpm is installed (newest branch first)
+	for _, ver := range phpFPMVersions {
+		if _, err := execLookPathFn("php-fpm" + ver); err != nil {
+			continue
+		}
+		svc := fmt.Sprintf("php%s-fpm", ver)
 		if autoFix {
-			execCommandFn("systemctl", "start", "php8.3-fpm").Run()
+			execCommandFn("systemctl", "start", svc).Run()
 			timeSleepFn(time.Second)
 			for _, sock := range sockets {
 				conn, err := netDialTimeoutFn("unix", sock, 2*time.Second)
 				if err == nil {
 					conn.Close()
-					return Check{Name: "PHP-FPM", Status: StatusFixed, Message: "Started php8.3-fpm", Fix: "systemctl start php8.3-fpm"}
+					return Check{Name: "PHP-FPM", Status: StatusFixed, Message: "Started " + svc, Fix: "systemctl start " + svc}
 				}
 			}
 		}
-		return Check{Name: "PHP-FPM", Status: StatusFail, Message: "php-fpm installed but not running", HowTo: "sudo systemctl start php8.3-fpm && sudo systemctl enable php8.3-fpm"}
+		return Check{Name: "PHP-FPM", Status: StatusFail, Message: "php-fpm installed but not running", HowTo: fmt.Sprintf("sudo systemctl start %s && sudo systemctl enable %s", svc, svc)}
 	}
 
 	// Check php-cgi as fallback
-	if _, err := execLookPathFn("php-cgi8.3"); err == nil {
-		return Check{Name: "PHP-FPM", Status: StatusWarn, Message: "Only php-cgi found (slow, single-threaded)", HowTo: "sudo apt install php8.3-fpm for production performance"}
+	for _, ver := range phpFPMVersions {
+		if _, err := execLookPathFn("php-cgi" + ver); err == nil {
+			return Check{Name: "PHP-FPM", Status: StatusWarn, Message: "Only php-cgi found (slow, single-threaded)", HowTo: fmt.Sprintf("sudo apt install php%s-fpm for production performance", ver)}
+		}
 	}
 
 	return Check{Name: "PHP-FPM", Status: StatusFail, Message: "No PHP-FPM or PHP-CGI found", HowTo: "sudo apt install php8.3-fpm php8.3-mysql php8.3-curl php8.3-gd php8.3-mbstring php8.3-xml php8.3-zip"}
@@ -340,7 +359,11 @@ func checkWebRoot(webRoot string, autoFix bool) Check {
 	if webRoot == "" {
 		webRoot = "/var/www"
 	}
-	if _, err := osStatFn(webRoot); os.IsNotExist(err) {
+	fi, err := osStatFn(webRoot)
+	if err == nil && !fi.IsDir() {
+		return Check{Name: "Web Root", Status: StatusFail, Message: fmt.Sprintf("%s exists but is not a directory", webRoot), HowTo: fmt.Sprintf("Point web_root at a directory, or remove %s and create the directory", webRoot)}
+	}
+	if os.IsNotExist(err) {
 		if autoFix {
 			if err := osMkdirAllFn(webRoot, 0755); err != nil {
 				return Check{Name: "Web Root", Status: StatusFail, Message: fmt.Sprintf("%s does not exist and could not be created: %v", webRoot, err), HowTo: fmt.Sprintf("sudo mkdir -p %s && sudo chown www-data:www-data %s", webRoot, webRoot)}
@@ -357,14 +380,18 @@ func checkConfigFile(configPath string) Check {
 	if configPath == "" {
 		// Try common paths
 		for _, p := range []string{"/etc/uwas/uwas.yaml", "/opt/uwas/uwas.yaml", "./uwas.yaml"} {
-			if _, err := osStatFn(p); err == nil {
+			if fi, err := osStatFn(p); err == nil && !fi.IsDir() {
 				return Check{Name: "Config File", Status: StatusOK, Message: p}
 			}
 		}
 		return Check{Name: "Config File", Status: StatusWarn, Message: "No config file found — run uwas serve to create one"}
 	}
-	if _, err := osStatFn(configPath); err != nil {
+	fi, err := osStatFn(configPath)
+	if err != nil {
 		return Check{Name: "Config File", Status: StatusFail, Message: fmt.Sprintf("%s not found", configPath)}
+	}
+	if fi.IsDir() {
+		return Check{Name: "Config File", Status: StatusFail, Message: fmt.Sprintf("%s is a directory, not a config file", configPath)}
 	}
 	return Check{Name: "Config File", Status: StatusOK, Message: configPath}
 }

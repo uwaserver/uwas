@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -85,6 +86,9 @@ func dockerCancelHarness(t *testing.T, blockOn string) (m *Manager, reached, rel
 		mu.Lock()
 		cmds = append(cmds, cmd)
 		mu.Unlock()
+		if strings.HasPrefix(cmd, "docker inspect") {
+			return "\n", nil // no owner label: a legacy or absent container
+		}
 		if blockOn != "" && strings.HasPrefix(cmd, blockOn) {
 			once.Do(func() { close(reached); <-release })
 		}
@@ -129,8 +133,13 @@ func TestCancelDeployStopsDockerDeploy(t *testing.T) {
 		if ran("docker run") {
 			t.Fatal("docker run executed after cancel")
 		}
+		// F23602: the build precedes the swap, so a cancel during it must leave
+		// the running container untouched.
+		if ran("docker stop") || ran("docker rm") {
+			t.Fatal("running container was stopped for a cancelled deploy")
+		}
 	})
-	t.Run("before build", func(t *testing.T) {
+	t.Run("during container swap", func(t *testing.T) {
 		defer saveAndRestoreHooks()()
 		m, reached, release, done, ran := dockerCancelHarness(t, "docker stop")
 		<-reached
@@ -141,8 +150,11 @@ func TestCancelDeployStopsDockerDeploy(t *testing.T) {
 		if err := <-done; err == nil || !strings.Contains(err.Error(), "cancelled") {
 			t.Fatalf("err = %v, want deployment cancelled", err)
 		}
-		if ran("docker build") || ran("docker run") {
-			t.Fatal("docker build/run executed after cancel")
+		if !ran("docker build") {
+			t.Fatal("the build must precede the container swap (F23602)")
+		}
+		if ran("docker run") {
+			t.Fatal("docker run executed after cancel")
 		}
 	})
 	t.Run("no cancel", func(t *testing.T) {
@@ -159,3 +171,75 @@ func TestCancelDeployStopsDockerDeploy(t *testing.T) {
 		}
 	})
 }
+
+// F23602: the running container is replaced only after the image built, so a
+// failing build leaves the live site up.
+func TestDeployDockerFailedBuildKeepsRunningContainer(t *testing.T) {
+	defer saveAndRestoreHooks()()
+	var cmds []string
+	runCmdFn = func(dir string, env map[string]string, name string, args ...string) (string, error) {
+		c := name + " " + strings.Join(args, " ")
+		cmds = append(cmds, c)
+		if strings.HasPrefix(c, "docker inspect") {
+			return "\n", nil
+		}
+		if strings.HasPrefix(c, "docker build") {
+			return "", errBuildFailed
+		}
+		return "cid\n", nil
+	}
+	m := New(nil)
+	done := make(chan error, 1)
+	m.Deploy(DeployRequest{Domain: "d.com", DockerFile: "Dockerfile", DockerPort: 3000}, t.TempDir(), func(err error) { done <- err })
+	if err := <-done; err == nil {
+		t.Fatal("expected the build failure")
+	}
+	for _, c := range cmds {
+		if strings.HasPrefix(c, "docker stop") || strings.HasPrefix(c, "docker rm") {
+			t.Fatalf("failed build touched the running container: %v", cmds)
+		}
+	}
+}
+
+// F23603: a cancel accepted while a git-mode build step runs stops the
+// remaining steps instead of being dropped.
+func TestCancelDeployStopsGitBuildBetweenSteps(t *testing.T) {
+	defer saveAndRestoreHooks()()
+	var mu sync.Mutex
+	var steps []string
+	reached, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	runCmdFn = func(dir string, env map[string]string, name string, args ...string) (string, error) {
+		return "abc1234\n", nil
+	}
+	runShellFn = func(dir string, env map[string]string, command string) (string, error) {
+		mu.Lock()
+		steps = append(steps, command)
+		mu.Unlock()
+		if command == "step one" {
+			once.Do(func() { close(reached); <-release })
+		}
+		return "", nil
+	}
+	waitForAppFn = func(string, time.Duration) error { return nil }
+	m := New(nil)
+	done := make(chan error, 1)
+	m.Deploy(DeployRequest{Domain: "g.com", GitURL: "https://example.invalid/r.git", BuildCmd: "step one && step two"},
+		t.TempDir()+"/app", func(err error) { done <- err })
+	<-reached
+	if !m.CancelDeploy("g.com") {
+		t.Fatal("CancelDeploy rejected an in-progress deploy")
+	}
+	close(release)
+	if err := <-done; err == nil || !strings.Contains(err.Error(), "cancelled") {
+		t.Fatalf("err = %v, want deployment cancelled", err)
+	}
+	if len(steps) != 1 {
+		t.Fatalf("steps after cancel = %v, want only [step one]", steps)
+	}
+	if st := m.Status("g.com"); st.Status != "failed" {
+		t.Fatalf("status = %q, want failed", st.Status)
+	}
+}
+
+var errBuildFailed = errors.New("exit status 1")

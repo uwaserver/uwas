@@ -18,12 +18,23 @@ var secretWords = map[string]bool{
 	"PASS": true, "CREDENTIAL": true, "CREDENTIALS": true, "APIKEY": true,
 }
 
+// secretSuffixes catch names that run the word into a prefix without a
+// separator (PGPASSWORD, MYSQLPASSWORD), which the '_' split above cannot see.
+// "_PWD" is the mysql client's password variable; a bare PWD (the working
+// directory) and MYSQL_PWD_FILE (a path) are not secrets.
+var secretSuffixes = []string{"PASSWORD", "PASSWD", "SECRET", "TOKEN", "APIKEY", "_PWD"}
+
 // IsSecretName reports whether an environment variable name belongs to UWAS
 // itself (UWAS_ prefix) or looks like it carries a secret.
 func IsSecretName(name string) bool {
 	up := strings.ToUpper(name)
 	if strings.HasPrefix(up, "UWAS_") {
 		return true
+	}
+	for _, suf := range secretSuffixes {
+		if strings.HasSuffix(up, suf) {
+			return true
+		}
 	}
 	for _, part := range strings.Split(up, "_") {
 		if secretWords[part] {

@@ -145,7 +145,7 @@ func ruleExists(rules []Rule, action, port, proto, from string) bool {
 
 // isDefaultDeny reports a blanket DENY any→any (the numbered default-deny row).
 func isDefaultDeny(r Rule) bool {
-	return strings.ToUpper(r.Action) == "DENY" && normalizePort(r.Port) == "" && normalizeFrom(r.From) == "" && r.scope == ""
+	return strings.ToUpper(r.Action) == "DENY" && normalizePort(r.Port) == "" && r.Proto == "" && normalizeFrom(r.From) == "" && r.scope == ""
 }
 
 // hasDefaultDeny reports whether a blanket IPv4 deny any/any is present.
@@ -241,10 +241,18 @@ func ruleToUFWArgs(r Rule) ([]string, error) {
 
 	var args []string
 	if r.Port == "" {
-		if from == "" {
+		if from == "" && r.Proto == "" {
 			return nil, fmt.Errorf("cannot reorder a blanket any/any rule — delete and recreate it")
 		}
 		args = []string{action, "from", from}
+		if from == "" {
+			args = []string{action, "from", "any", "to", "any"}
+		}
+		// A portless rule that ufw lists with a protocol ("X/tcp") only matches
+		// that protocol; dropping it here would recreate a broader rule.
+		if r.Proto != "" {
+			args = append(args, "proto", strings.ToLower(r.Proto))
+		}
 	} else {
 		var err error
 		if args, err = buildPortRuleArgs(action, r.Port, r.Proto, from, 0); err != nil {

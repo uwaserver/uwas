@@ -98,6 +98,11 @@ func New(domains []config.Domain, log *logger.Logger) *Monitor {
 	// too: re-apply the SSRF policy on every hop and at connect time, not
 	// only to the first URL.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// The clone inherits ProxyFromEnvironment. Behind HTTP_PROXY the dial below
+	// would only ever see the proxy's address, so the SSRF policy would not be
+	// applied to the probed host (and a private proxy would fail every probe).
+	// Probes go straight to the host.
+	transport.Proxy = nil
 	transport.DialContext = (&net.Dialer{
 		Timeout:   checkTimeout,
 		KeepAlive: 30 * time.Second,

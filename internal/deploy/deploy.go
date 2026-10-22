@@ -22,6 +22,9 @@ import (
 	"github.com/uwaserver/uwas/internal/logger"
 )
 
+// containerOwnerLabel records which domain a deploy container belongs to.
+const containerOwnerLabel = "uwas.domain"
+
 // Testable hooks — can be overridden in tests to mock command execution.
 var (
 	runCmdFn     = runCmdImpl
@@ -345,12 +348,23 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, cancelCh 
 		status.Status = "building"
 		m.mu.Unlock()
 		for _, bc := range buildCmds {
+			// Honour a cancel between steps, not only before the first one.
+			select {
+			case <-cancelCh:
+				return fmt.Errorf("deployment cancelled")
+			default:
+			}
 			log.WriteString("$ " + bc + "\n")
 			if out, err := runShell(appRoot, req.Env, bc); err != nil {
 				return fmt.Errorf("build failed: %w\n%s", err, out)
 			}
 		}
 		log.WriteString("Build complete\n")
+	}
+	select {
+	case <-cancelCh:
+		return fmt.Errorf("deployment cancelled")
+	default:
 	}
 
 	// Health check: wait for app to respond on its port (if port is known)
@@ -410,12 +424,17 @@ func (m *Manager) deployDockerCancellable(req DeployRequest, appRoot string, can
 	status.AppPort = port
 	m.mu.Unlock()
 
-	// Stop existing container
-	log.WriteString("$ docker stop " + containerName + "\n")
-	runCmd(appRoot, nil, "docker", "stop", containerName)
-	runCmd(appRoot, nil, "docker", "rm", containerName)
+	// sanitizeName is not injective ("a.b.com" and "a-b.com" share a name), so
+	// refuse to touch a container another domain owns. Containers created
+	// before the owner label existed carry none and are treated as ours.
+	if owner, err := runCmd(appRoot, nil, "docker", "inspect", "--format", `{{ index .Config.Labels "`+containerOwnerLabel+`" }}`, containerName); err == nil {
+		if o := strings.TrimSpace(owner); o != "" && o != req.Domain {
+			return fmt.Errorf("container %s belongs to domain %s: container names collide after sanitizing; refusing to replace it", containerName, o)
+		}
+	}
 
-	// Build image
+	// Build the new image first: the running container is only replaced once
+	// the build succeeded, so a failing build leaves the live site up.
 	select {
 	case <-cancelCh:
 		return fmt.Errorf("deployment cancelled")
@@ -430,6 +449,18 @@ func (m *Manager) deployDockerCancellable(req DeployRequest, appRoot string, can
 		return fmt.Errorf("docker build: %w\n%s", err, out)
 	}
 
+	// Cancelled after the build but before the swap: keep the old container.
+	select {
+	case <-cancelCh:
+		return fmt.Errorf("deployment cancelled")
+	default:
+	}
+
+	// Stop existing container
+	log.WriteString("$ docker stop " + containerName + "\n")
+	runCmd(appRoot, nil, "docker", "stop", containerName)
+	runCmd(appRoot, nil, "docker", "rm", containerName)
+
 	// Run container
 	select {
 	case <-cancelCh:
@@ -437,6 +468,7 @@ func (m *Manager) deployDockerCancellable(req DeployRequest, appRoot string, can
 	default:
 	}
 	args := []string{"run", "-d", "--name", containerName, "--restart=unless-stopped",
+		"--label", containerOwnerLabel + "=" + req.Domain,
 		"-p", fmt.Sprintf("127.0.0.1:%d:%d", port, port)} // host port → container port
 	// Apply network mode if specified
 	if req.DockerNetwork != "" {

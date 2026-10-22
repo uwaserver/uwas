@@ -141,7 +141,7 @@ func parseUFWRule(line string) Rule {
 
 	firstPart := parts[0]
 
-	if strings.Contains(firstPart, "/") {
+	if strings.Contains(firstPart, "/") && isPortToken(firstPart) {
 		pp := strings.SplitN(firstPart, "/", 2)
 		if len(pp) == 2 {
 			r.Port = pp[0]
@@ -177,6 +177,15 @@ func parseUFWRule(line string) Rule {
 	}
 	if r.From == "" {
 		r.From = "Anywhere"
+	}
+	// With no port column ufw appends the protocol to the source instead
+	// ("203.0.113.7/tcp", "Anywhere/udp"); keep it out of From.
+	if r.Port == "" {
+		if i := strings.LastIndex(r.From, "/"); i >= 0 {
+			if p := r.From[i+1:]; p == "tcp" || p == "udp" {
+				r.From, r.Proto = r.From[:i], p
+			}
+		}
 	}
 	r.scope = ufwRuleScope(parts)
 

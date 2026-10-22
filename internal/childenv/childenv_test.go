@@ -12,6 +12,9 @@ func TestIsSecretName(t *testing.T) {
 		"AWS_SECRET_ACCESS_KEY": true, "APIKEY": true, "NPM_TOKEN": true,
 		"PATH": false, "HOME": false, "HTTP_PROXY": false, "NODE_OPTIONS": false,
 		"KEYBOARD_LAYOUT": false, "MONKEY": false, "LC_ALL": false,
+		// F24200: separator-less and _PWD forms of the client password variables.
+		"MYSQL_PWD": true, "PGPASSWORD": true, "mysqlpassword": true, "GITHUBTOKEN": true,
+		"PWD": false, "OLDPWD": false, "PGPASSFILE": false,
 	} {
 		if got := IsSecretName(name); got != want {
 			t.Errorf("IsSecretName(%q) = %v, want %v", name, got, want)

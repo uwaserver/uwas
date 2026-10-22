@@ -145,6 +145,30 @@ func jsonResponse(w http.ResponseWriter, data any) {
 	json.NewEncoder(w).Encode(data)
 }
 
+// jsonResponseStatus writes data as JSON with an explicit status. Content-Type
+// must be set before WriteHeader: headers set afterwards are ignored and the
+// body is served as sniffed text/plain.
+func jsonResponseStatus(w http.ResponseWriter, code int, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(data)
+}
+
+// nonPushEvent names the webhook event when the delivery is not a push. GitHub
+// and GitLab announce the event type in a header; only a push may deploy, a
+// `ping` (sent when the hook is created) or a star/issue/pull-request delivery
+// must not restart a production app. Deliveries without either header (other
+// providers, hand-made requests) are not classified and keep deploying.
+func nonPushEvent(r *http.Request) string {
+	if ev := r.Header.Get("X-GitHub-Event"); ev != "" && ev != "push" {
+		return ev
+	}
+	if ev := r.Header.Get("X-Gitlab-Event"); ev != "" && ev != "Push Hook" {
+		return ev
+	}
+	return ""
+}
+
 func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
@@ -461,6 +485,14 @@ func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "signature mismatch", http.StatusUnauthorized)
 		return
 	}
+	if ev := nonPushEvent(r); ev != "" {
+		h.deps.RecordAudit(r, "app.webhook.skip", fmt.Sprintf("%s event=%s", name, ev), true)
+		jsonResponseStatus(w, http.StatusAccepted, map[string]any{
+			"status": "skipped",
+			"reason": fmt.Sprintf("%q events do not deploy; only pushes do", ev),
+		})
+		return
+	}
 	ref := extractPushRef(webhookPayloadJSON(r, body))
 	// Only a branch push names a branch, and the whole remainder of the ref
 	// is its name: "refs/heads/release/1.x" is branch "release/1.x". Taking
@@ -483,8 +515,7 @@ func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
 	if wantBranch != "" && branch != wantBranch {
 		h.deps.RecordAudit(r, "app.webhook.skip",
 			fmt.Sprintf("%s ref=%s want=%s", name, ref, wantBranch), true)
-		w.WriteHeader(http.StatusAccepted)
-		jsonResponse(w, map[string]any{
+		jsonResponseStatus(w, http.StatusAccepted, map[string]any{
 			"status": "skipped",
 			"reason": fmt.Sprintf("push was on %q, app tracks %q", branch, wantBranch),
 		})
@@ -493,8 +524,7 @@ func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
 	h.deps.RecordAudit(r, "app.webhook.accept",
 		fmt.Sprintf("%s ref=%s", name, ref), true)
 	go h.runWebhookDeploy(name, ref)
-	w.WriteHeader(http.StatusAccepted)
-	jsonResponse(w, map[string]any{
+	jsonResponseStatus(w, http.StatusAccepted, map[string]any{
 		"status": "accepted",
 		"name":   name,
 		"ref":    ref,

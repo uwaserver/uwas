@@ -145,10 +145,11 @@ func fakeLookPath(found map[string]bool) func(string) (string, error) {
 }
 
 // fakeStat returns a function that succeeds for paths in existing, not-exist for others.
+// Paths with an extension (".yaml", ".sock") are reported as regular files, the rest as directories.
 func fakeStat(existing map[string]bool) func(string) (os.FileInfo, error) {
 	return func(name string) (os.FileInfo, error) {
 		if existing[name] {
-			return fakeFileInfo{name: filepath.Base(name), isDir: true}, nil
+			return fakeFileInfo{name: filepath.Base(name), isDir: filepath.Ext(name) == ""}, nil
 		}
 		return nil, &os.PathError{Op: "stat", Path: name, Err: os.ErrNotExist}
 	}

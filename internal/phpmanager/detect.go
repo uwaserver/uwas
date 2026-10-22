@@ -151,7 +151,7 @@ func (m *Manager) probe(binary string) (PHPInstall, error) {
 
 	supported, advisory := Advisory(install.Version)
 	install.EOL, install.Advisory = !supported, advisory
-	if advisory != "" && supported && distroBackportsFix(shortVersion(install.Version)) {
+	if advisory != "" && supported && distroManagedBinary(binary) && distroBackportsFix(shortVersion(install.Version)) {
 		install.Advisory = ""
 	}
 
@@ -175,6 +175,18 @@ func (m *Manager) probe(binary string) (PHPInstall, error) {
 	}
 
 	return install, nil
+}
+
+// distroManagedBinary reports whether binary resolves into a package-manager
+// owned tree (/usr, but not /usr/local). The distro changelog only vouches for
+// the distro's own build, not for a PHP compiled by hand elsewhere (F23401).
+func distroManagedBinary(binary string) bool {
+	p, err := filepath.EvalSymlinks(binary)
+	if err != nil {
+		p = filepath.Clean(binary)
+	}
+	p = filepath.ToSlash(p)
+	return strings.HasPrefix(p, "/usr/") && !strings.HasPrefix(p, "/usr/local/")
 }
 
 // runPHP executes a PHP binary with given arguments and returns stdout.

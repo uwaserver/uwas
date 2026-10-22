@@ -98,14 +98,24 @@ func DetectAll() []IPInfo {
 	return ips
 }
 
-// PrimaryIPv4 returns the server's primary public IPv4.
+// PrimaryIPv4 returns the server's primary public IPv4. A globally routable
+// address wins over a private one, so a Docker bridge or VPN interface that
+// enumerates first does not stand in for the real address; behind NAT, where no
+// interface has a public address, the first IPv4 is returned.
 func PrimaryIPv4() string {
+	first := ""
 	for _, ip := range DetectAll() {
-		if ip.Version == 4 {
+		if ip.Version != 4 {
+			continue
+		}
+		if isPublicAddr(net.ParseIP(ip.IP)) {
 			return ip.IP
 		}
+		if first == "" {
+			first = ip.IP
+		}
 	}
-	return ""
+	return first
 }
 
 // PublicIP tries to detect the public IP via an external service.

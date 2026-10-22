@@ -64,6 +64,15 @@ var fpmPoolUser = func() (string, bool) {
 // StartFPM starts a php-cgi process listening on the given address (e.g. "127.0.0.1:9000").
 // It uses `php-cgi -b <addr>` as a lightweight FastCGI server.
 func (m *Manager) StartFPM(version, listenAddr string) error {
+	// Key the process table by the installation's full version, not the caller's
+	// string: callers may pass "8.4" (findInstall prefix-matches) while Status
+	// and StopFPM look the process up as "8.4.19" (F23400).
+	inst, ok := m.findInstall(version)
+	if !ok {
+		return fmt.Errorf("PHP %s not found", version)
+	}
+	version = inst.Version
+
 	// Atomically reserve the version slot up-front. Load-then-Store had a TOCTOU:
 	// two concurrent StartFPM calls for the same version both passed the Load
 	// check and both spawned, leaking one untracked process. The placeholder is
@@ -73,11 +82,6 @@ func (m *Manager) StartFPM(version, listenAddr string) error {
 	}
 	release := func() { m.processes.Delete(version) }
 
-	inst, ok := m.findInstall(version)
-	if !ok {
-		release()
-		return fmt.Errorf("PHP %s not found", version)
-	}
 	if inst.SAPI != "cgi-fcgi" && inst.SAPI != "fpm-fcgi" {
 		release()
 		return fmt.Errorf("PHP %s binary %s is %s, not cgi-fcgi — install php-cgi or php-fpm", version, inst.Binary, inst.SAPI)
@@ -241,8 +245,22 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
+// processKey maps a caller-supplied version ("8.4" or "8.4.19") to the key
+// StartFPM stored the process under. An exact entry wins; otherwise the
+// version is resolved through findInstall.
+func (m *Manager) processKey(version string) string {
+	if _, ok := m.processes.Load(version); ok {
+		return version
+	}
+	if inst, ok := m.findInstall(version); ok {
+		return inst.Version
+	}
+	return version
+}
+
 // StopFPM stops the PHP-CGI process for the given version.
 func (m *Manager) StopFPM(version string) error {
+	version = m.processKey(version)
 	val, ok := m.processes.Load(version)
 	if !ok {
 		return fmt.Errorf("PHP %s is not running", version)
@@ -267,6 +285,7 @@ func (m *Manager) StopFPM(version string) error {
 // It stops the running process and starts a new one with the same listen address,
 // ensuring that updated php.ini settings take effect.
 func (m *Manager) RestartFPM(version string) error {
+	version = m.processKey(version)
 	val, ok := m.processes.Load(version)
 	if !ok {
 		return fmt.Errorf("PHP %s is not running", version)

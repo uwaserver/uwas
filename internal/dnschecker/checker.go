@@ -75,7 +75,10 @@ func Check(domain string) Result {
 
 	// CNAME
 	cname, err := lookupCNAME(domain)
-	if err == nil && cname != domain+"." {
+	// Compare ignoring case and a trailing dot on either side: the resolver
+	// returns the canonical FQDN, so "example.com." (or mixed case) would
+	// otherwise report the domain as its own CNAME.
+	if err == nil && !strings.EqualFold(strings.TrimSuffix(cname, "."), strings.TrimSuffix(domain, ".")) {
 		r.CNAME = strings.TrimSuffix(cname, ".")
 	}
 

@@ -71,9 +71,15 @@ func (m *Manager) AssignDomain(domain, version string) (*DomainPHP, error) {
 		return nil, fmt.Errorf("version is required")
 	}
 
-	// Verify the version is installed.
-	if _, ok := m.findInstall(version); !ok {
+	// Verify the version is installed. A version the operator disabled stays
+	// listed, and DisableVersion only refuses while domains are attached, so
+	// without this check a later assignment lands on it anyway (F23700).
+	phpInst, ok := m.findInstall(version)
+	if !ok {
 		return nil, fmt.Errorf("PHP %s not found", version)
+	}
+	if phpInst.Disabled {
+		return nil, fmt.Errorf("PHP %s is disabled", version)
 	}
 
 	m.domainMu.Lock()
@@ -165,6 +171,18 @@ func (m *Manager) UnassignDomain(domain string) {
 		return
 	}
 	delete(m.domainMap, domain)
+	// A worker that is already dead (crash backoff, or the monitor gave up)
+	// leaves nobody to remove its cgroup: the monitor passed its
+	// still-assigned check before this delete and returns without touching it.
+	// A live worker is handled by the monitor once it has exited (F23701).
+	// The cgroup is keyed by domain name, so it is removed before the lock is
+	// released, like the monitor does: afterwards a re-assigned and restarted
+	// domain would own the same directory and lose it (F24000).
+	if inst.proc == nil && inst.cgroupPath != "" {
+		if err := rlimitRemove(domain); err != nil {
+			m.logger.Debug("cgroup not removed", "domain", domain, "error", err)
+		}
+	}
 	m.domainMu.Unlock()
 
 	// Stop the process if running.

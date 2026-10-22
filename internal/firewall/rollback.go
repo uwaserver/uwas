@@ -81,6 +81,10 @@ func EnableWithRollback(within time.Duration, allowPorts []string) error {
 		})
 		rbTimer = t
 		rbMu.Unlock()
+	} else {
+		// "No rollback" must also retire one scheduled by an earlier,
+		// unconfirmed call, or it would later disable this firewall.
+		cancelRollback()
 	}
 	return nil
 }
