@@ -229,10 +229,16 @@ func RunInstall(phpVersion string) (string, error) {
 	if !SupportedBranch(phpVersion) {
 		return "", fmt.Errorf("PHP %s is end-of-life or invalid; only 8.2 and newer can be installed", phpVersion)
 	}
-	info := GetInstallInfo(phpVersion)
+	return runCommands(GetInstallInfo(phpVersion).Commands)
+}
+
+// runCommands executes a command plan without a shell. Lines starting with
+// "#" are printed only; a leading "-" lets that one command fail (systemd
+// style) and "sh -c " hands the rest to a shell for redirections.
+func runCommands(cmds []string) (string, error) {
 	var output strings.Builder
 
-	for _, cmdStr := range info.Commands {
+	for _, cmdStr := range cmds {
 		if strings.HasPrefix(cmdStr, "#") {
 			output.WriteString(cmdStr + "\n")
 			continue
@@ -240,6 +246,10 @@ func RunInstall(phpVersion string) (string, error) {
 
 		// Strip sudo — UWAS runs as root, sudo without TTY blocks for password
 		cmdStr = strings.TrimPrefix(cmdStr, "sudo ")
+		allowFail := false
+		if rest, ok := strings.CutPrefix(cmdStr, "-"); ok {
+			allowFail, cmdStr = true, rest
+		}
 
 		output.WriteString(fmt.Sprintf("$ %s\n", cmdStr))
 
@@ -268,6 +278,10 @@ func RunInstall(phpVersion string) (string, error) {
 		output.Write(out)
 		output.WriteString("\n")
 		if err != nil {
+			if allowFail {
+				output.WriteString(fmt.Sprintf("(ignored: %v)\n", err))
+				continue
+			}
 			return output.String(), fmt.Errorf("command failed: %s: %w", cmdStr, err)
 		}
 	}

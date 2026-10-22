@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.34] - 2026-10-22
+
+### Added
+
+- **PHP update and uninstall, from the panel, API and CLI.** Vulnerable PHP
+  versions now get an "Update now" button plus an "Update all" banner in the
+  PHP page; every version card has Update and Uninstall. Updates upgrade only
+  the installed `phpX.Y-*` packages and restart php-fpm; uninstall is refused
+  while domains use the version and can optionally delete its configuration.
+  End-of-life branches (< 8.2) cannot be updated, only removed.
+  - API: `POST /api/v1/php/update` (`{"version":"8.3"}` or `"all"`) and
+    `POST /api/v1/php/uninstall` (`{"version":"8.1","purge":false}`), both
+    admin-only background tasks polled via `GET /api/v1/php/install/status`.
+  - CLI: `uwas php update [version|all]`, `uwas php uninstall <version> [--purge]`;
+    `uwas php list` prints the security advisory and the fix command.
+  - Supported on Debian/Ubuntu, RHEL family and Alpine; other distributions get
+    an explanatory message instead of a guess.
+  - A finished PHP install now re-detects PHP automatically.
+
+### Security
+
+- **Child-process environment filter** (`childenv`) now hides compound names
+  such as `PGPASSWORD`, `MYSQL_PWD`, `*TOKEN` and `*PASSWORD`. Build scripts,
+  deploy hooks, wp-cli and app processes could previously read them.
+- **Uptime monitor ignores proxy environment variables.** With `HTTP_PROXY`
+  set, probes of tenant-controlled hosts went through the proxy and the SSRF
+  dial guard only saw the proxy address.
+- **A commented-out CIDR in the Cloudflare IP list** (`# 198.51.100.0/24`)
+  no longer stays a trusted range.
+- A disabled PHP version can no longer be assigned to a new domain, so
+  disabling an EOL or vulnerable version actually keeps tenants off it.
+
+### Fixed
+
+- **php-fpm:** the FPM process is stored under its full version (no duplicate
+  daemons or orphaned processes); the cgroup of a crashed worker is removed
+  when its domain is unassigned, without deleting the cgroup of a worker
+  re-assigned under the same name.
+- **Doctor:** recognises PHP 8.5 FPM, no longer reports `permission denied` as
+  "port in use", and tells files from directories.
+- **Firewall:** a portless rule with a protocol source survives `MoveRule`;
+  `EnableWithRollback(0)` cancels a pending rollback. **Autoblock:** the
+  firewall rule of an IP that expired and was blocked again is no longer
+  removed by the stale removal.
+- **Deploy:** a failed docker build no longer takes down the live container,
+  cancel works between git build steps, and `a.b.com` / `a-b.com` no longer
+  collide on the same container name. Webhooks only trigger a deploy on
+  `push` events and answer with a JSON `Content-Type`.
+- **SFTP:** attributes carry a POSIX `st_mode`, so clients see directories as
+  directories. **siteuser:** long or `--` domains resolve correctly in the
+  user list.
+- **Cloudflare:** zone import treats the apex and its `www.` twin as one
+  domain; an empty cache purge request returns 400. **MCP:** `domain_get`
+  matches hosts the way the panel does. **dnschecker:** trailing-dot and
+  mixed-case domain names.
+- **serverip:** the primary IPv4 prefers a public address over docker or
+  tailscale ones. **config:** negative `cache.memory_limit` / `disk_limit` are
+  rejected.
+
 ## [0.11.33] - 2026-10-22
 
 _v0.11.32 and v0.11.31 were tagged but never published (CI failed); this

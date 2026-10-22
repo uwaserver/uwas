@@ -99,7 +99,7 @@ func (d *phpDeps) SetDomainFPMAddress(domain, addr string) {
 }
 
 func (d *phpDeps) PersistConfig() error { return d.s.persistConfig() }
-func (d *phpDeps) NotifyDomainChange() { d.s.notifyDomainChange() }
+func (d *phpDeps) NotifyDomainChange()  { d.s.notifyDomainChange() }
 func (d *phpDeps) PersistDomainPHPOverrides(domain string) {
 	d.s.persistDomainPHPOverrides(domain)
 }
@@ -107,6 +107,12 @@ func (d *phpDeps) PersistDomainPHPOverrides(domain string) {
 func (d *phpDeps) PHPManager() *phpmanager.Manager { return d.s.phpMgr }
 func (d *phpDeps) PhpRunInstall(version string) (string, error) {
 	return callPHPRunInstall(version)
+}
+func (d *phpDeps) PhpRunUpdate(version string) (string, error) {
+	return phpRunUpdate(version)
+}
+func (d *phpDeps) PhpRunUninstall(version string, purge bool) (string, error) {
+	return phpRunUninstall(version, purge)
 }
 
 // SetPHPManager sets the PHP manager and initializes the PHP handler.
@@ -146,6 +152,20 @@ func (s *Server) handlePHPInstallInfo(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) handlePHPInstall(w http.ResponseWriter, r *http.Request) {
 	s.phpHandler.Install(w, r)
+}
+func (s *Server) handlePHPUpdate(w http.ResponseWriter, r *http.Request) {
+	if s.phpHandler == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	s.phpHandler.Update(w, r)
+}
+func (s *Server) handlePHPUninstall(w http.ResponseWriter, r *http.Request) {
+	if s.phpHandler == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	s.phpHandler.Uninstall(w, r)
 }
 func (s *Server) handlePHPInstallStatus(w http.ResponseWriter, r *http.Request) {
 	if s.phpHandler == nil {
@@ -282,6 +302,12 @@ var phpRunInstall = phpmanager.RunInstall
 // against test swaps, so a worker left over from an earlier test does not
 // race a later test's write (F1540).
 var phpRunInstallMu sync.RWMutex
+
+// phpRunUpdate / phpRunUninstall are test seams like phpRunInstall.
+var (
+	phpRunUpdate    = phpmanager.RunUpdate
+	phpRunUninstall = phpmanager.RunUninstall
+)
 
 func callPHPRunInstall(version string) (string, error) {
 	phpRunInstallMu.RLock()

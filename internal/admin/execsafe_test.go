@@ -62,6 +62,8 @@ func TestMain(m *testing.M) {
 	servicesRestartService = func(name string) error { return nil }
 
 	phpRunInstall = func(version string) (string, error) { return "", nil }
+	phpRunUpdate = func(version string) (string, error) { return "", nil }
+	phpRunUninstall = func(version string, purge bool) (string, error) { return "", nil }
 
 	cfHTTPClient = &http.Client{Transport: noNetworkTransport{}}
 	installTestNetworkGuard()

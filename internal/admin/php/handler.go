@@ -42,6 +42,9 @@ type Deps interface {
 	PHPManager() *phpmanager.Manager
 	// PHP install (test seam)
 	PhpRunInstall(version string) (string, error)
+	// PHP update / uninstall (test seams)
+	PhpRunUpdate(version string) (string, error)
+	PhpRunUninstall(version string, purge bool) (string, error)
 }
 
 // TaskInfo is a minimal description of a background task.
@@ -159,6 +162,9 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			h.deps.LogError("PHP install failed", "version", req.Version, "error", err)
 			return err
+		}
+		if mgr := h.deps.PHPManager(); mgr != nil {
+			_ = mgr.Detect() // pick up the new binaries without a manual rescan
 		}
 		h.deps.LogInfo("PHP install complete", "version", req.Version)
 		return nil

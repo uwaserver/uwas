@@ -13,11 +13,14 @@ import {
   X,
   RotateCcw,
   Power,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   fetchPHP,
   fetchPHPInstallInfo,
   installPHP,
+  updatePHP,
+  uninstallPHP,
   fetchPHPInstallStatus,
   fetchDomains,
   fetchDomainPHPInstances,
@@ -137,6 +140,7 @@ export default function PHP() {
   const [showInstall, setShowInstall] = useState(false);
   const [installVer, setInstallVer] = useState('8.4');
   const [installJob, setInstallJob] = useState<PHPInstallStatus | null>(null);
+  const [jobAction, setJobAction] = useState<'install' | 'update' | 'uninstall'>('install');
   const installPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Clear the install poll on unmount so it can't keep firing setState on an
@@ -241,6 +245,73 @@ export default function PHP() {
     } finally {
       patchRow(domain, { stopping: false });
     }
+  };
+
+  // runPHPTask starts a server-side update/uninstall task and polls it the same
+  // way the installer does, so the page shows live progress for all three.
+  const runPHPTask = async (action: 'update' | 'uninstall', label: string, start: () => Promise<unknown>) => {
+    setStatus(null);
+    setJobAction(action);
+    try {
+      await start();
+      if (!aliveRef.current) return; // unmounted mid-request — cleanup already ran
+      setInstallJob({ status: 'running', version: label });
+      if (installPollRef.current) clearInterval(installPollRef.current);
+      installPollRef.current = setInterval(async () => {
+        try {
+          const st = await fetchPHPInstallStatus();
+          setInstallJob(st);
+          if (st.status !== 'running' && st.status !== 'queued') {
+            if (installPollRef.current) clearInterval(installPollRef.current);
+            void loadAll();
+          }
+        } catch {
+          if (installPollRef.current) clearInterval(installPollRef.current);
+        }
+      }, 2000);
+    } catch (e) {
+      setInstallJob({ status: 'error', version: label, error: (e as Error).message });
+    }
+  };
+
+  const handleUpdate = async (version: string) => {
+    const ok = await confirmAction({
+      title: `Update PHP ${version}?`,
+      message: 'Installs the newest patch release from your OS package repository and restarts php-fpm. PHP requests may fail for a few seconds.',
+      confirmLabel: 'Update',
+      variant: 'warning',
+    });
+    if (!ok) return;
+    await runPHPTask('update', version, () => updatePHP(version));
+  };
+
+  const handleUpdateAll = async () => {
+    const ok = await confirmAction({
+      title: 'Update all PHP versions?',
+      message: 'Upgrades every supported PHP version to its newest patch release and restarts php-fpm. PHP requests may fail for a few seconds.',
+      confirmLabel: 'Update all',
+      variant: 'warning',
+    });
+    if (!ok) return;
+    await runPHPTask('update', 'all', () => updatePHP('all'));
+  };
+
+  const handleUninstall = async (version: string) => {
+    const ok = await confirmAction({
+      title: `Uninstall PHP ${version}?`,
+      message: 'Removes the PHP packages from this server. This cannot be undone from here.',
+      confirmLabel: 'Uninstall',
+      variant: 'danger',
+    });
+    if (!ok) return;
+    const purge = await confirmAction({
+      title: 'Also delete its configuration?',
+      message: `Deletes php.ini and pool files for PHP ${version}. Choose Keep to leave them in place for a later reinstall.`,
+      confirmLabel: 'Delete config',
+      cancelLabel: 'Keep config',
+      variant: 'warning',
+    });
+    await runPHPTask('uninstall', version, () => uninstallPHP(version, purge));
   };
 
   const handleRemoveDomain = async (domain: string) => {
@@ -476,6 +547,48 @@ export default function PHP() {
         </div>
       )}
 
+      {/* ============ Security banner ============ */}
+      {installs.some(i => i.advisory && !i.eol) && (
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3">
+          <div className="flex items-center gap-2 text-sm text-red-400">
+            <ShieldAlert size={16} />
+            <span>One or more PHP versions have known security vulnerabilities. Update them now.</span>
+          </div>
+          <button
+            onClick={() => void handleUpdateAll()}
+            disabled={installJob?.status === 'running'}
+            className="flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+          >
+            <RefreshCw size={12} /> Update all
+          </button>
+        </div>
+      )}
+
+      {/* ============ Update / uninstall progress ============ */}
+      {installJob && jobAction !== 'install' && !showInstall && (
+        <div className="rounded-lg border border-border bg-card p-4 text-xs">
+          {(installJob.status === 'running' || installJob.status === 'queued') && (
+            <>
+              <p className="mb-1 text-blue-400">{jobAction === 'update' ? 'Updating' : 'Uninstalling'} PHP {installJob.version}... This may take a minute.</p>
+              <div className="h-1 w-full overflow-hidden rounded-full bg-accent">
+                <div className="h-full animate-pulse rounded-full bg-blue-500" style={{ width: '60%' }} />
+              </div>
+            </>
+          )}
+          {installJob.status === 'done' && (
+            <p className="text-emerald-400">PHP {installJob.version} {jobAction === 'update' ? 'updated' : 'uninstalled'}. The list has been refreshed.</p>
+          )}
+          {installJob.status === 'error' && (
+            <>
+              <p className="mb-1 text-red-400">{jobAction === 'update' ? 'Update' : 'Uninstall'} failed: {installJob.error}</p>
+              {installJob.output && (
+                <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-[10px] text-muted-foreground">{installJob.output}</pre>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       {/* ============ Section 1: Detected PHP Versions ============ */}
       <div>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Detected PHP Versions</h2>
@@ -534,6 +647,15 @@ export default function PHP() {
                     <div role="alert" className="mb-3 rounded bg-red-500/10 px-3 py-2">
                       <p className="text-xs font-medium text-red-400">{isEol ? 'End-of-life' : 'Security update required'}</p>
                       <p className="text-[10px] text-red-300/70">{advisory}</p>
+                      {!isEol && (
+                        <button
+                          onClick={() => void handleUpdate(shortVer)}
+                          disabled={installJob?.status === 'running'}
+                          className="mt-2 flex items-center gap-1 rounded bg-red-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                        >
+                          <RefreshCw size={11} /> Update now
+                        </button>
+                      )}
                     </div>
                   )}
 
@@ -578,6 +700,27 @@ export default function PHP() {
                       ? (isDisabled ? 'Enabling...' : 'Disabling...')
                       : (isDisabled ? 'Enable' : (domainCount > 0 ? `${domainCount} domains — can't disable` : 'Disable'))}
                   </button>
+
+                  {/* Update / Uninstall */}
+                  <div className="mt-2 flex gap-2">
+                    {!isEol && (
+                      <button
+                        onClick={() => void handleUpdate(shortVer)}
+                        disabled={installJob?.status === 'running'}
+                        className="flex flex-1 items-center justify-center gap-1.5 rounded-md bg-blue-500/10 px-3 py-2 text-xs font-medium text-blue-400 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <RefreshCw size={12} /> Update
+                      </button>
+                    )}
+                    <button
+                      onClick={() => void handleUninstall(shortVer)}
+                      disabled={domainCount > 0 || installJob?.status === 'running'}
+                      title={domainCount > 0 ? `Cannot uninstall — ${domainCount} domain(s) attached` : ''}
+                      className="flex flex-1 items-center justify-center gap-1.5 rounded-md bg-red-500/10 px-3 py-2 text-xs font-medium text-red-400 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Trash2 size={12} /> Uninstall
+                    </button>
+                  </div>
                 </div>
               );
             })}

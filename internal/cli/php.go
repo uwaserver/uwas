@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/phpmanager"
 )
@@ -29,6 +31,8 @@ func (p *PHPCommand) Help() string {
   list                    List detected PHP versions
   install <version>       Install PHP (auto-detects OS, needs root)
   install-info <version>  Show install commands without running them
+  update [version|all]    Upgrade installed PHP to the newest patch release
+  uninstall <version>     Remove a PHP version (refused while domains use it)
   start <version>         Start PHP-CGI on a port (default 9000)
   stop <version>          Stop PHP-CGI for a version
   config <version>        Show PHP configuration
@@ -38,10 +42,13 @@ Flags:
   --api-url string   Admin API URL (default auto-detected from config)
   --api-key string   Admin API key (env: UWAS_ADMIN_KEY)
   --port string      Listen port for 'start' (default "9000")
+  --purge            With 'uninstall': also delete the version's configuration
 
 Examples:
   uwas php list
   uwas php install 8.4
+  uwas php update all
+  uwas php uninstall 8.1 --purge
   uwas php install-info 8.3
   uwas php start 8.4 --port 9001
   uwas php config 8.4`
@@ -61,6 +68,10 @@ func (p *PHPCommand) Run(args []string) error {
 		return p.list(subArgs)
 	case "install":
 		return p.install(subArgs)
+	case "update":
+		return p.update(subArgs)
+	case "uninstall":
+		return p.uninstall(subArgs)
 	case "install-info":
 		return p.installInfo(subArgs)
 	case "start":
@@ -72,7 +83,7 @@ func (p *PHPCommand) Run(args []string) error {
 	case "extensions", "ext":
 		return p.extensions(subArgs)
 	default:
-		return fmt.Errorf("unknown subcommand %q (use: list, install, start, stop, config, extensions)", sub)
+		return fmt.Errorf("unknown subcommand %q (use: list, install, update, uninstall, start, stop, config, extensions)", sub)
 	}
 }
 
@@ -101,6 +112,8 @@ func (p *PHPCommand) list(args []string) error {
 		Running    bool     `json:"running"`
 		ListenAddr string   `json:"listen_addr"`
 		PID        int      `json:"pid"`
+		EOL        bool     `json:"eol"`
+		Advisory   string   `json:"advisory"`
 	}
 	installs := make([]phpInstall, 0, len(raw))
 	for _, item := range raw {
@@ -128,6 +141,14 @@ func (p *PHPCommand) list(args []string) error {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", inst.Version, inst.SAPI, status, listen, inst.Binary)
 	}
 	w.Flush()
+	for _, inst := range installs {
+		if inst.Advisory != "" {
+			fmt.Printf("\n  ! %s\n", inst.Advisory)
+			if !inst.EOL {
+				fmt.Println("    Fix: uwas php update", shortPHPVersion(inst.Version))
+			}
+		}
+	}
 	return nil
 }
 
@@ -312,4 +333,102 @@ func (p *PHPCommand) install(args []string) error {
 	}
 	fmt.Println("\n  \033[32m✓\033[0m PHP installed. Run 'uwas php list' to verify.")
 	return nil
+}
+
+// phpPollInterval is how often update/uninstall poll the task; tests shorten it.
+var phpPollInterval = 2 * time.Second
+
+func shortPHPVersion(v string) string {
+	if parts := strings.SplitN(v, ".", 3); len(parts) >= 2 {
+		return parts[0] + "." + parts[1]
+	}
+	return v
+}
+
+// update upgrades one version, or all supported ones, through the admin API so
+// the server re-detects PHP and restarts php-fpm afterwards.
+func (p *PHPCommand) update(args []string) error {
+	fs := flag.NewFlagSet("php update", flag.ContinueOnError)
+	apiURL := fs.String("api-url", "", "admin API URL")
+	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
+	rest, err := parseInterspersed(fs, args)
+	if err != nil {
+		return err
+	}
+	version := "all"
+	if len(rest) > 0 {
+		version = rest[0]
+	}
+	return phpTask(fs, *apiURL, *apiKey, "/api/v1/php/update", map[string]any{"version": version}, "update")
+}
+
+// uninstall removes a version through the admin API, which refuses while any
+// domain still uses it.
+func (p *PHPCommand) uninstall(args []string) error {
+	fs := flag.NewFlagSet("php uninstall", flag.ContinueOnError)
+	apiURL := fs.String("api-url", "", "admin API URL")
+	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
+	purge := fs.Bool("purge", false, "also delete the version's configuration")
+	rest, err := parseInterspersed(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(rest) == 0 {
+		return fmt.Errorf("usage: uwas php uninstall <version> [--purge]")
+	}
+	return phpTask(fs, *apiURL, *apiKey, "/api/v1/php/uninstall", map[string]any{"version": rest[0], "purge": *purge}, "uninstall")
+}
+
+// parseInterspersed lets flags appear before or after the positional version.
+func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
+	var pos []string
+	for len(args) > 0 {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		args = fs.Args()
+		if len(args) > 0 {
+			pos = append(pos, args[0])
+			args = args[1:]
+		}
+	}
+	return pos, nil
+}
+
+func phpTask(_ *flag.FlagSet, apiURL, apiKey, path string, body map[string]any, what string) error {
+	if apiURL == "" {
+		apiURL = adminURLFromConfig()
+	}
+	payload, _ := json.Marshal(body)
+	if _, err := apiRequest("POST", apiURL+path, apiKey, bytes.NewReader(payload)); err != nil {
+		return fmt.Errorf("php %s: %w", what, err)
+	}
+	fmt.Printf("  PHP %s started, waiting...\n", what)
+	for i := 0; i < 900; i++ { // up to ~30 min at 2s
+		time.Sleep(phpPollInterval)
+		data, err := apiRequest("GET", apiURL+"/api/v1/php/install/status", apiKey, nil)
+		if err != nil {
+			return fmt.Errorf("php %s status: %w", what, err)
+		}
+		var st struct {
+			Status string `json:"status"`
+			Output string `json:"output"`
+			Error  string `json:"error"`
+		}
+		if err := json.Unmarshal(data, &st); err != nil {
+			return fmt.Errorf("parse status: %w", err)
+		}
+		if st.Status == "running" || st.Status == "queued" || st.Status == "pending" {
+			continue
+		}
+		if st.Output != "" {
+			fmt.Print(st.Output)
+		}
+		if st.Status == "done" || st.Status == "completed" {
+			fmt.Printf("\n  \033[32m✓\033[0m PHP %s finished. Run 'uwas php list' to verify.\n", what)
+			return nil
+		}
+		return fmt.Errorf("php %s failed: %s", what, st.Error)
+	}
+	return fmt.Errorf("php %s timed out waiting for the task", what)
 }

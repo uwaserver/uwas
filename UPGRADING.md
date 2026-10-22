@@ -5,6 +5,24 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.34
+
+Drop-in binary; no config or data migration. New: PHP update and uninstall
+from the dashboard, API (`/api/v1/php/update`, `/api/v1/php/uninstall`) and CLI
+(`uwas php update`, `uwas php uninstall`). Behavior changes worth knowing:
+
+- **Negative `cache.memory_limit` / `disk_limit` are now rejected** at config
+  load instead of silently meaning "unbounded" / "cache off".
+- **Child processes lose more variables.** Names ending in `PASSWORD`,
+  `PASSWD`, `SECRET`, `TOKEN`, `APIKEY`, `_PWD` (and `MYSQL_PWD`, `PGPASSWORD`)
+  are no longer passed to build scripts, deploy hooks and apps.
+- **Uptime probes ignore `HTTP_PROXY`/`HTTPS_PROXY`.**
+- **A PHP version that is disabled can no longer be assigned to a domain.**
+- Docker deploys label containers `uwas.domain=<host>`; an existing container
+  with a different label under the same name is no longer replaced.
+
+---
+
 ## Upgrading to v0.11.33
 
 Drop-in binary; no config or data migration. **Security release:** also update

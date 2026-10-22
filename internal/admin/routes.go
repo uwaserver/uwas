@@ -129,6 +129,8 @@ func (s *Server) registerPHPRoutes() {
 	s.mux.HandleFunc("GET /api/v1/php/install-info", s.handlePHPInstallInfo)
 	s.mux.HandleFunc("POST /api/v1/php/install", s.handlePHPInstall)
 	s.mux.HandleFunc("GET /api/v1/php/install/status", s.handlePHPInstallStatus)
+	s.mux.HandleFunc("POST /api/v1/php/update", s.handlePHPUpdate)
+	s.mux.HandleFunc("POST /api/v1/php/uninstall", s.handlePHPUninstall)
 	s.mux.HandleFunc("GET /api/v1/php/{version}/config", s.handlePHPConfig)
 	s.mux.HandleFunc("PUT /api/v1/php/{version}/config", s.handlePHPConfigUpdate)
 	s.mux.HandleFunc("GET /api/v1/php/{version}/config/raw", s.handlePHPConfigRawGet)

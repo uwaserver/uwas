@@ -10,6 +10,8 @@ const apiMocks = vi.hoisted(() => ({
   fetchPHP: vi.fn(),
   fetchPHPInstallInfo: vi.fn(),
   installPHP: vi.fn(),
+  updatePHP: vi.fn(),
+  uninstallPHP: vi.fn(),
   fetchPHPInstallStatus: vi.fn(),
   fetchDomains: vi.fn(),
   fetchDomainPHPInstances: vi.fn(),
@@ -154,5 +156,59 @@ describe('PHP page install polling lifecycle', () => {
       await vi.advanceTimersByTimeAsync(10_000);
     });
     expect(apiMocks.fetchPHPInstallStatus.mock.calls.length).toBe(before);
+  });
+
+  describe('update and uninstall', () => {
+    const inst = (version: string, extra: Record<string, unknown> = {}) => ({
+      version, binary: `/usr/bin/php-fpm${version.slice(0, 3)}`, config_file: '', extensions: [],
+      sapi: 'fpm-fcgi', running: false, listen_addr: '', domain_count: 0, ...extra,
+    });
+
+    it('shows a security banner and updates all vulnerable versions from it', async () => {
+      apiMocks.fetchPHP.mockResolvedValue([
+        inst('8.3.6', { advisory: 'PHP 8.3.6 is vulnerable to CVE-2026-109618/CVE-2026-109619 (RCE); update to 8.3.36 or newer' }),
+      ]);
+      apiMocks.updatePHP.mockResolvedValue({ status: 'started', versions: ['8.3'] });
+      renderPage();
+      await flush();
+
+      expect(screen.getByText(/known security vulnerabilities/i)).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: /update all/i }));
+      await flush();
+      expect(apiMocks.updatePHP).toHaveBeenCalledWith('all');
+    });
+
+    it('updates one branch from its card', async () => {
+      apiMocks.fetchPHP.mockResolvedValue([inst('8.4.27')]);
+      apiMocks.updatePHP.mockResolvedValue({ status: 'started', versions: ['8.4'] });
+      renderPage();
+      await flush();
+
+      fireEvent.click(screen.getByRole('button', { name: /^update$/i }));
+      await flush();
+      expect(apiMocks.updatePHP).toHaveBeenCalledWith('8.4');
+    });
+
+    it('hides Update for end-of-life branches but still allows uninstall', async () => {
+      apiMocks.fetchPHP.mockResolvedValue([inst('8.1.30', { eol: true, advisory: 'PHP 8.1 is end-of-life' })]);
+      apiMocks.uninstallPHP.mockResolvedValue({ status: 'started', version: '8.1' });
+      confirmValue.confirmAction.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      renderPage();
+      await flush();
+
+      expect(screen.queryByRole('button', { name: /^update$/i })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: /uninstall/i }));
+      await flush();
+      expect(apiMocks.uninstallPHP).toHaveBeenCalledWith('8.1', true);
+    });
+
+    it('disables uninstall while domains use the version', async () => {
+      apiMocks.fetchPHP.mockResolvedValue([inst('8.3.36', { domain_count: 2, domains: ['a.test', 'b.test'] })]);
+      renderPage();
+      await flush();
+
+      const btn = screen.getByRole('button', { name: /uninstall/i }) as HTMLButtonElement;
+      expect(btn.disabled).toBe(true);
+    });
   });
 });

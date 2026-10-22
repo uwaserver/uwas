@@ -601,6 +601,12 @@ export interface PHPInstallStatus {
 export const installPHP = (version: string) =>
   api<{ status: string; version: string }>('/api/v1/php/install', { method: 'POST', body: JSON.stringify({ version }) });
 
+export const updatePHP = (version: string) =>
+  api<{ status: string; versions: string[] }>('/api/v1/php/update', { method: 'POST', body: JSON.stringify({ version }) });
+
+export const uninstallPHP = (version: string, purge = false) =>
+  api<{ status: string; version: string }>('/api/v1/php/uninstall', { method: 'POST', body: JSON.stringify({ version, purge }) });
+
 export const fetchPHPInstallStatus = () => api<PHPInstallStatus>('/api/v1/php/install/status');
 
 export interface DomainPHP {

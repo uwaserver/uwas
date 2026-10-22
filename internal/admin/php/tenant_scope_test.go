@@ -52,6 +52,10 @@ func (d *fakeDeps) NotifyDomainChange()                  {}
 func (d *fakeDeps) PersistDomainPHPOverrides(string)     {}
 func (d *fakeDeps) PHPManager() *phpmanager.Manager      { return d.mgr }
 func (d *fakeDeps) PhpRunInstall(string) (string, error) { return "", nil }
+func (d *fakeDeps) PhpRunUpdate(string) (string, error)  { return "", nil }
+func (d *fakeDeps) PhpRunUninstall(string, bool) (string, error) {
+	return "", nil
+}
 
 func twoTenantMgr() *phpmanager.Manager {
 	m := phpmanager.New(logger.New("error", "text"))
