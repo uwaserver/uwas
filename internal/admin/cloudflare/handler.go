@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/domainutil"
 	"github.com/uwaserver/uwas/internal/respond"
 )
 
@@ -376,6 +377,11 @@ func (h *Handler) CachePurge(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
+	// Neither field set purges nothing; answering "purged" for it would be a lie.
+	if req.URL == "" && !req.Everything {
+		jsonError(w, "url or everything is required", http.StatusBadRequest)
+		return
+	}
 	if err := h.deps.PurgeCache(st.Token, req.URL, req.Everything); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -676,7 +682,9 @@ func (h *Handler) ZoneImport(w http.ResponseWriter, r *http.Request) {
 			whitelist[strings.ToLower(strings.TrimSuffix(h, "."))] = true
 		}
 	}
-	seen := map[string]bool{}
+	// Keyed like config validation, the domain API and the migration import: an
+	// apex and its www twin (or an IDN and its punycode form) are one site.
+	seen := map[string]int{}
 	var hostnames []string
 	for _, rec := range records {
 		switch rec.Type {
@@ -699,12 +707,21 @@ func (h *Handler) ZoneImport(w http.ResponseWriter, r *http.Request) {
 		if whitelist != nil && !whitelist[host] {
 			continue
 		}
-		if !seen[host] {
-			seen[host] = true
-			hostnames = append(hostnames, host)
+		key := importHostKey(host)
+		if i, dup := seen[key]; dup {
+			// Prefer the apex: the domain itself serves its www twin.
+			if strings.HasPrefix(hostnames[i], "www.") && !strings.HasPrefix(host, "www.") {
+				hostnames[i] = host
+			}
+			continue
 		}
+		seen[key] = len(hostnames)
+		hostnames = append(hostnames, host)
 	}
-	existing := h.deps.ExistingDomains()
+	existing := map[string]bool{}
+	for host := range h.deps.ExistingDomains() {
+		existing[importHostKey(host)] = true
+	}
 	webRoot := h.deps.WebRoot()
 	if webRoot == "" {
 		webRoot = "/var/www"
@@ -712,7 +729,7 @@ func (h *Handler) ZoneImport(w http.ResponseWriter, r *http.Request) {
 	added := []string{}
 	skipped := []string{}
 	for _, host := range hostnames {
-		if existing[host] {
+		if existing[importHostKey(host)] {
 			skipped = append(skipped, host)
 			continue
 		}
@@ -758,7 +775,7 @@ func (h *Handler) ZoneImport(w http.ResponseWriter, r *http.Request) {
 		} else {
 			h.deps.AddDomain(d)
 		}
-		existing[host] = true
+		existing[importHostKey(host)] = true
 		added = append(added, host)
 	}
 	if len(added) > 0 && !req.DryRun {
@@ -965,6 +982,9 @@ func PurgeCache(token, url string, everything bool) error {
 }
 
 func PurgeCacheWithClient(client *http.Client, token, url string, everything bool) error {
+	if url == "" && !everything {
+		return fmt.Errorf("cache purge needs a url or everything")
+	}
 	zones, err := FetchZonesWithClient(client, token)
 	if err != nil {
 		return err
@@ -995,6 +1015,12 @@ func PurgeCacheWithClient(client *http.Client, token, url string, everything boo
 		}
 	}
 	return nil
+}
+
+// importHostKey is the form under which two spellings of one site compare
+// equal (case, trailing dot, www prefix, punycode).
+func importHostKey(host string) string {
+	return config.CanonicalHost(domainutil.CanonicalDomainHostname(host))
 }
 
 // isValidHostname checks if a hostname is valid.

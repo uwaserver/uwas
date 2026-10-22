@@ -153,6 +153,15 @@ func Validate(cfg *Config) error {
 	if cfg.Global.Cache.GraceTTL < 0 {
 		errs = append(errs, fmt.Sprintf("global.cache.grace_ttl: must be >= 0, got %d", cfg.Global.Cache.GraceTTL))
 	}
+	// Defaults only replace 0, so a negative size would reach the cache: the
+	// disk cache treats a limit <= 0 as "no limit" (unbounded growth) and the
+	// memory cache rejects every entry (F24800).
+	if cfg.Global.Cache.MemoryLimit < 0 {
+		errs = append(errs, fmt.Sprintf("global.cache.memory_limit: must be >= 0, got %d", int64(cfg.Global.Cache.MemoryLimit)))
+	}
+	if cfg.Global.Cache.DiskLimit < 0 {
+		errs = append(errs, fmt.Sprintf("global.cache.disk_limit: must be >= 0, got %d", int64(cfg.Global.Cache.DiskLimit)))
+	}
 
 	// Backup validation
 	if cfg.Global.Backup.Enabled {

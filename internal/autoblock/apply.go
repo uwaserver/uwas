@@ -315,6 +315,14 @@ func (b *Blocker) runFirewallOp(op fwOp) {
 		if b.fwUnlock == nil {
 			return
 		}
+		if b.ruleWanted(op.ip) {
+			// The IP was blocked again after this removal was queued (expire,
+			// Unblock and liftSafeBlocks queue it after dropping the lock). The
+			// re-block queued its own add before us, so removing now would
+			// leave a live block with no kernel rule. A block imposed after
+			// this check queues its add behind this op, so it is safe.
+			return
+		}
 		if err := b.fwUnlock(op.ip); err != nil {
 			b.log.Debug("autoblock firewall unblock failed", "ip", op.ip, "error", err)
 		}
@@ -335,6 +343,19 @@ func (b *Blocker) runFirewallOp(op fwOp) {
 		}
 	}
 	b.mu.Unlock()
+}
+
+// ruleWanted reports whether ip has an enforced block right now, i.e. whether
+// its firewall rule must stay.
+func (b *Blocker) ruleWanted(ip string) bool {
+	a, ok := ParseAddr(ip)
+	if !ok {
+		return false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e := b.blocked[a]
+	return e != nil && !e.DryRun
 }
 
 // requestSave coalesces save requests: a flood produces thousands of blocks a

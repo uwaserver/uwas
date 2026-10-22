@@ -275,8 +275,8 @@ func TestEncodeAttrs(t *testing.T) {
 
 	// Check permissions
 	perm := binary.BigEndian.Uint32(attrs[20:24])
-	if perm != uint32(info.Mode()) {
-		t.Errorf("expected mode %o, got %o", info.Mode(), perm)
+	if want := uint32(0o100000) | uint32(info.Mode().Perm()); perm != want {
+		t.Errorf("expected mode %o, got %o", want, perm)
 	}
 
 	// Check mtime

@@ -72,10 +72,7 @@ func (s *IPSet) netsFor(cidrs []string) []*net.IPNet {
 	// entry only loses itself (still fail-closed for that entry).
 	nets := make(IPNetSlice, 0, len(cidrs))
 	for _, raw := range cidrs {
-		for _, part := range strings.FieldsFunc(raw, isCIDRListSep) {
-			if strings.HasPrefix(part, "#") {
-				continue
-			}
+		for _, part := range cidrTokens(raw) {
 			cidr, err := normalizeCIDR(part)
 			if err != nil {
 				continue
@@ -97,11 +94,7 @@ func NormalizeCIDRs(values []string) ([]string, error) {
 	seen := make(map[string]struct{}, len(values))
 	out := make([]string, 0, len(values))
 	for _, raw := range values {
-		for _, part := range strings.FieldsFunc(raw, isCIDRListSep) {
-			part = strings.TrimSpace(part)
-			if part == "" || strings.HasPrefix(part, "#") {
-				continue
-			}
+		for _, part := range cidrTokens(raw) {
 			cidr, err := normalizeCIDR(part)
 			if err != nil {
 				return nil, err
@@ -117,6 +110,25 @@ func NormalizeCIDRs(values []string) ([]string, error) {
 		return out[i] < out[j]
 	})
 	return out, nil
+}
+
+// cidrTokens splits one ip_ranges entry into candidate IP/CIDR tokens. A '#'
+// that starts a token begins a comment that runs to the end of the line, so
+// "# 198.51.100.0/24" and "203.0.113.0/24 # old office" never contribute the
+// commented text. Splitting on spaces first dropped only the "#" token and left
+// the CIDR after it active (trusted as a Cloudflare origin range).
+func cidrTokens(raw string) []string {
+	var out []string
+	for _, line := range strings.FieldsFunc(raw, func(r rune) bool { return r == '\n' || r == '\r' }) {
+		for i := 0; i < len(line); i++ {
+			if line[i] == '#' && (i == 0 || isCIDRListSep(rune(line[i-1]))) {
+				line = line[:i]
+				break
+			}
+		}
+		out = append(out, strings.FieldsFunc(line, isCIDRListSep)...)
+	}
+	return out
 }
 
 func isCIDRListSep(r rune) bool {

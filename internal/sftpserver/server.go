@@ -685,6 +685,39 @@ func readString(b []byte) (string, []byte) {
 	return string(b[4:end]), b[end:]
 }
 
+// posixMode converts a Go os.FileMode to the POSIX st_mode SFTP v3 puts in the
+// permissions field: os.FileMode keeps the file type in high bits of its own
+// (ModeDir is 1<<31), which no client reads as S_IFDIR.
+func posixMode(m os.FileMode) uint32 {
+	mode := uint32(m.Perm())
+	switch {
+	case m&os.ModeDir != 0:
+		mode |= 0o040000
+	case m&os.ModeSymlink != 0:
+		mode |= 0o120000
+	case m&os.ModeNamedPipe != 0:
+		mode |= 0o010000
+	case m&os.ModeSocket != 0:
+		mode |= 0o140000
+	case m&os.ModeDevice != 0 && m&os.ModeCharDevice != 0:
+		mode |= 0o020000
+	case m&os.ModeDevice != 0:
+		mode |= 0o060000
+	default:
+		mode |= 0o100000
+	}
+	if m&os.ModeSetuid != 0 {
+		mode |= 0o4000
+	}
+	if m&os.ModeSetgid != 0 {
+		mode |= 0o2000
+	}
+	if m&os.ModeSticky != 0 {
+		mode |= 0o1000
+	}
+	return mode
+}
+
 func encodeAttrs(info os.FileInfo) []byte {
 	var buf [32]byte
 	flags := uint32(0x0000000F) // size + uid/gid + permissions + atime/mtime
@@ -694,7 +727,7 @@ func encodeAttrs(info os.FileInfo) []byte {
 	binary.BigEndian.PutUint32(buf[12:16], 0)
 	binary.BigEndian.PutUint32(buf[16:20], 0)
 	// permissions
-	binary.BigEndian.PutUint32(buf[20:24], uint32(info.Mode()))
+	binary.BigEndian.PutUint32(buf[20:24], posixMode(info.Mode()))
 	// atime/mtime
 	t := uint32(info.ModTime().Unix())
 	binary.BigEndian.PutUint32(buf[24:28], t)

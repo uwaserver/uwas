@@ -10,6 +10,7 @@ import (
 
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/domainutil"
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/metrics"
 )
@@ -148,8 +149,11 @@ func (s *Server) registerTools() {
 			if err := json.Unmarshal(input, &params); err != nil {
 				return nil, fmt.Errorf("invalid input: %w", err)
 			}
+			// Same lookup as the admin API's domain detail: case, a trailing
+			// dot and the www. spelling all name the configured domain.
+			want := domainutil.CanonicalDomainHostname(params.Host)
 			for _, d := range s.config.Domains {
-				if d.Host == params.Host {
+				if domainutil.CanonicalDomainHostname(d.Host) == want {
 					return sanitizeDomainForMCP(d), nil
 				}
 			}

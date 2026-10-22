@@ -202,8 +202,7 @@ func ListUsers() []User {
 			continue
 		}
 		homeDir := fields[5]
-		domain := strings.TrimPrefix(username, "uwas-")
-		domain = strings.ReplaceAll(domain, "--", ".")
+		domain := domainForAccount(username, homeDir)
 
 		users = append(users, User{
 			Username: username,
@@ -213,6 +212,18 @@ func ListUsers() []User {
 		})
 	}
 	return users
+}
+
+// domainForAccount names the domain an account belongs to. The home directory
+// is named after the host, and that is checked against the account name, so
+// hashed names (host too long, or containing "--") resolve to the real host.
+// Otherwise the name is unpacked as "." -> "--" was packed.
+func domainForAccount(username, homeDir string) string {
+	if host := filepath.Base(homeDir); validateSiteHostname(host) == nil &&
+		(domainToUsername(host) == username || legacyUsername(host) == username) {
+		return host
+	}
+	return strings.ReplaceAll(strings.TrimPrefix(username, "uwas-"), "--", ".")
 }
 
 // userHomeDir returns the home directory /etc/passwd records for username,
