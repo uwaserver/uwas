@@ -11,6 +11,7 @@ import (
 	cfadmin "github.com/uwaserver/uwas/internal/admin/cloudflare"
 	cfintegration "github.com/uwaserver/uwas/internal/cloudflare"
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/domainutil"
 )
 
 // cfDeps adapts admin.Server to the cloudflare.Deps interface.
@@ -119,10 +120,8 @@ func (d *cfDeps) AddDomain(dom config.Domain) {
 func (d *cfDeps) AddDomainIfAbsent(dom config.Domain) bool {
 	d.s.configMu.Lock()
 	defer d.s.configMu.Unlock()
-	for _, existing := range d.s.config.Domains {
-		if strings.EqualFold(existing.Host, dom.Host) {
-			return false
-		}
+	if domainutil.FindDomainHostnameConflict(d.s.config.Domains, -1, dom.Host) != "" {
+		return false
 	}
 	d.s.config.Domains = append(d.s.config.Domains, dom)
 	return true
@@ -134,6 +133,9 @@ func (d *cfDeps) ExistingDomains() map[string]bool {
 	existing := make(map[string]bool, len(d.s.config.Domains))
 	for _, d := range d.s.config.Domains {
 		existing[strings.ToLower(d.Host)] = true
+		for _, a := range d.Aliases {
+			existing[strings.ToLower(a)] = true
+		}
 	}
 	return existing
 }

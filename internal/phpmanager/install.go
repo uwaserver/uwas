@@ -148,8 +148,8 @@ func GetInstallInfo(phpVersion string) InstallInfo {
 			info.Commands = []string{
 				"apt-get update",
 				"apt-get install -y ca-certificates curl",
-				"curl -sSfLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb",
-				"dpkg -i /tmp/debsuryorg-archive-keyring.deb",
+				"curl -sSfLo /run/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb",
+				"dpkg -i /run/debsuryorg-archive-keyring.deb",
 				fmt.Sprintf(`sh -c echo "deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ %s main" > /etc/apt/sources.list.d/php.list`, d.Codename),
 				"apt-get update",
 				install,

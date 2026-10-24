@@ -129,3 +129,38 @@ func TestUninstallRunsAndPassesPurge(t *testing.T) {
 		t.Fatalf("invalid code=%d", rec.Code)
 	}
 }
+
+// laterDeps queues submitted tasks instead of running them inline, like the
+// real serial install queue: the closure runs after the handler returned.
+type laterDeps struct {
+	*lifecycleDeps
+	queued func(func(string)) error
+}
+
+func (d *laterDeps) TaskSubmit(_, _, _ string, fn func(func(string)) error) *TaskInfo {
+	d.queued = fn
+	return &TaskInfo{ID: "t1"}
+}
+
+// A domain attached to the branch while the uninstall waits in the queue must
+// stop the uninstall; the handler's 409 check alone ran minutes earlier.
+func TestUninstallRechecksDomainsWhenTaskRuns(t *testing.T) {
+	d := &laterDeps{lifecycleDeps: newLifecycle(false)}
+	if rec := post(New(d).Uninstall, `{"version":"8.3"}`); rec.Code != 200 || d.queued == nil {
+		t.Fatalf("code=%d queued=%v", rec.Code, d.queued != nil)
+	}
+	// Control: nothing changed → the queued task would uninstall.
+	d.fakeDeps.mgr.RegisterExistingDomain("late.test", "8.3", "unix:/run/php/b.sock", "/var/www/b", nil)
+	err := d.queued(func(string) {})
+	if len(d.removed) != 0 || err == nil {
+		t.Fatalf("uninstall ran although late.test now uses 8.3: removed=%v err=%v", d.removed, err)
+	}
+}
+
+func TestUninstallQueuedTaskRunsWhenStillUnused(t *testing.T) {
+	d := &laterDeps{lifecycleDeps: newLifecycle(false)}
+	post(New(d).Uninstall, `{"version":"8.3"}`)
+	if err := d.queued(func(string) {}); err != nil || len(d.removed) != 1 {
+		t.Fatalf("err=%v removed=%v", err, d.removed)
+	}
+}

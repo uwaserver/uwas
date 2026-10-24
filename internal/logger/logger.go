@@ -24,11 +24,12 @@ func New(level, format string) *Logger {
 
 	// Never write to stdout from the caller's goroutine: a backed-up journald
 	// would stall every request that logs (see asyncWriter).
-	out := newAsyncWriter(os.Stdout)
+	isJSON := strings.ToLower(format) == "json"
+	out := newAsyncWriterFormat(os.Stdout, isJSON)
 
 	var handler slog.Handler
-	switch strings.ToLower(format) {
-	case "json":
+	switch {
+	case isJSON:
 		handler = slog.NewJSONHandler(out, opts)
 	default:
 		handler = slog.NewTextHandler(out, opts)

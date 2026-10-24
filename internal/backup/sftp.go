@@ -73,6 +73,9 @@ func (p *SFTPProvider) Upload(ctx context.Context, filename string, data io.Read
 		return fmt.Errorf("sftp connect: %w", err)
 	}
 	defer client.Close()
+	// dial only honours ctx until the handshake ends; closing the client on
+	// cancel (e.g. the idle timeout) unblocks a transfer stalled mid-session.
+	defer context.AfterFunc(ctx, func() { client.Close() })()
 
 	// Ensure remote directory exists.
 	session, err := client.NewSession()
@@ -187,7 +190,8 @@ func (p *SFTPProvider) Download(ctx context.Context, filename string) (io.ReadCl
 		return nil, err
 	}
 
-	return &sshReadCloser{Reader: stdout, session: session, client: client}, nil
+	stop := context.AfterFunc(ctx, func() { client.Close() })
+	return &sshReadCloser{Reader: stdout, session: session, client: client, stop: stop}, nil
 }
 
 func (p *SFTPProvider) List(ctx context.Context) ([]BackupInfo, error) {
@@ -196,6 +200,7 @@ func (p *SFTPProvider) List(ctx context.Context) ([]BackupInfo, error) {
 		return nil, fmt.Errorf("sftp connect: %w", err)
 	}
 	defer client.Close()
+	defer context.AfterFunc(ctx, func() { client.Close() })()
 
 	session, err := client.NewSession()
 	if err != nil {
@@ -267,6 +272,9 @@ func (p *SFTPProvider) Delete(ctx context.Context, filename string) error {
 		return fmt.Errorf("sftp connect: %w", err)
 	}
 	defer client.Close()
+	// dial only honours ctx until the handshake ends; closing the client on
+	// cancel (e.g. the idle timeout) unblocks a transfer stalled mid-session.
+	defer context.AfterFunc(ctx, func() { client.Close() })()
 
 	session, err := client.NewSession()
 	if err != nil {
@@ -393,9 +401,13 @@ type sshReadCloser struct {
 	io.Reader
 	session *ssh.Session
 	client  *ssh.Client
+	stop    func() bool // detaches the context watcher
 }
 
 func (r *sshReadCloser) Close() error {
+	if r.stop != nil {
+		r.stop()
+	}
 	r.session.Close()
 	return r.client.Close()
 }

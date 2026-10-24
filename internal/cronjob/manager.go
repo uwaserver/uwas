@@ -147,6 +147,15 @@ func readCrontab() (string, error) {
 	return "", fmt.Errorf("read crontab: %w: %s", err, strings.TrimSpace(stderr))
 }
 
+// isJobLine reports whether line can be the job line that follows a marker.
+// Add always writes the job directly under its marker; a comment or blank line
+// there means the marker is orphaned (the operator removed the job by hand),
+// and that line belongs to something else — often the next job's marker.
+func isJobLine(line string) bool {
+	line = strings.TrimSpace(line)
+	return line != "" && !strings.HasPrefix(line, "#")
+}
+
 // List returns all UWAS-managed cron jobs.
 func List() ([]Job, error) {
 	if runtimeGOOS == "windows" {
@@ -174,7 +183,7 @@ func List() ([]Job, error) {
 			continue
 		}
 		// Next line is the actual job
-		if i+1 < len(lines) {
+		if i+1 < len(lines) && isJobLine(lines[i+1]) {
 			job := parseCronLine(lines[i+1])
 			// The marker line is "# UWAS managed [domain] comment", as Add
 			// writes it. Split the bracketed domain from the comment.
@@ -311,7 +320,9 @@ func RemoveByDomain(domain string) error {
 	for _, line := range lines {
 		if skipNext {
 			skipNext = false
-			continue
+			if isJobLine(line) {
+				continue
+			}
 		}
 		// Match the marker only at the start of the line, as List does: a
 		// comment on another domain's job may quote this marker text.

@@ -361,7 +361,11 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 		// and laundering after the Set calls would delete the authoritative
 		// values UWAS just wrote (the location proxy in internal/server
 		// already uses this order).
+		teTrailers := acceptsTrailers(proxyReq.Header)
 		removeHopByHop(proxyReq.Header)
+		if teTrailers {
+			proxyReq.Header.Set("Te", "trailers")
+		}
 		stripClientForwarded(proxyReq.Header)
 
 		// Add proxy headers
@@ -625,10 +629,27 @@ var hopByHopHeaders = []string{
 	"Transfer-Encoding", "Upgrade",
 }
 
+// acceptsTrailers reports whether the client's TE field lists "trailers", the
+// one value passed on to the backend even though TE is hop-by-hop (F25500).
+func acceptsTrailers(h http.Header) bool {
+	for _, v := range h.Values("Te") {
+		for _, tok := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(tok), "trailers") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // RemoveHopByHop strips hop-by-hop headers (RFC 9110 §7.6.1) from h,
 // including fields NAMED by Connection. Exported for the location proxy in
 // internal/server, which must apply the same laundering as the domain proxy.
 func RemoveHopByHop(h http.Header) { removeHopByHop(h) }
+
+// AcceptsTrailers reports whether h's TE field lists "trailers"; callers that
+// launder hop-by-hop headers re-add `TE: trailers` afterwards (F25500, F25800).
+func AcceptsTrailers(h http.Header) bool { return acceptsTrailers(h) }
 
 func removeHopByHop(h http.Header) {
 	// RFC 7230 §6.1: "Connection" may name *additional* headers that are

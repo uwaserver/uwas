@@ -692,3 +692,23 @@ func TestCallToolDomainListMultiple(t *testing.T) {
 		t.Errorf("domains = %d, want 3", len(domains))
 	}
 }
+
+// F24901: {"tag":null} is garbled input, not "purge all": the cached entry
+// must survive and the call must fail.
+func TestCachePurgeNullTagRejected(t *testing.T) {
+	s := testMCPServer()
+	eng := cache.NewEngine(context.Background(), 1<<20, "", 0, logger.New("error", "text"))
+	s.SetCache(eng)
+	req := httptest.NewRequest("GET", "/keep", nil)
+	eng.Set(req, &cache.CachedResponse{StatusCode: 200, Body: []byte("k"), Created: time.Now(), TTL: time.Minute})
+	_, err := s.CallTool("cache_purge", json.RawMessage(`{"tag":null}`))
+	if err == nil {
+		t.Error("{\"tag\":null} accepted")
+	}
+	if _, st := eng.Get(req); st == cache.StatusMiss {
+		t.Error("cache wiped by {\"tag\":null}")
+	}
+	if _, err := s.CallTool("cache_purge", json.RawMessage(`{"tag":""}`)); err != nil {
+		t.Errorf("control {\"tag\":\"\"} rejected: %v", err)
+	}
+}

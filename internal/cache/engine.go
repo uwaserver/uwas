@@ -338,7 +338,7 @@ func ShouldBypass(r *http.Request) bool {
 // default on static assets, and the operator's domain TTL is the explicit
 // decision for those.
 func CapTTL(ttl time.Duration, headers http.Header) time.Duration {
-	if origin, ok := originMaxAge(headers.Get("Cache-Control")); ok && origin > 0 && origin < ttl {
+	if origin, ok := originMaxAge(strings.Join(headers.Values("Cache-Control"), ",")); ok && origin > 0 && origin < ttl {
 		return origin
 	}
 	return ttl

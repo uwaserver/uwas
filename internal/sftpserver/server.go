@@ -1303,7 +1303,16 @@ func (sess *sftpSession) handleRename(id uint32, payload []byte) {
 	newPath, _ := readString(rest)
 	safeOld := sess.safePath(oldPath)
 	safeNew := sess.safePath(newPath)
-	if safeOld == "" || safeNew == "" {
+	// Like REMOVE, renaming moves only the link, so a symlink pointing
+	// outside the root (one a PHP script planted) may be the source or be
+	// replaced; paths through it stay denied.
+	if safeOld == "" {
+		safeOld = sess.symlinkEntry(oldPath)
+	}
+	if safeNew == "" {
+		safeNew = sess.symlinkEntry(newPath)
+	}
+	if safeOld == "" || safeNew == "" || safeOld == sess.root || safeNew == sess.root {
 		sess.sendStatus(id, sshFXPermissionDenied, "access denied")
 		return
 	}

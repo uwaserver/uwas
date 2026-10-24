@@ -494,7 +494,12 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				entry.mu.Unlock()
 				if exceeded {
 					s.recordSecurityBlock(ctx, r, "rate")
-					ctx.Response.Header().Set("Retry-After", strconv.Itoa(int(window.Seconds())))
+					// Round up: truncating sent clients back before the window ended (F25801).
+					retrySecs := int((window + time.Second - 1) / time.Second)
+					if retrySecs < 1 {
+						retrySecs = 1
+					}
+					ctx.Response.Header().Set("Retry-After", strconv.Itoa(retrySecs))
 					s.renderDomainErrorFor(ctx.Request, ctx.Response, http.StatusTooManyRequests, domain)
 					return
 				}
@@ -592,7 +597,12 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			// with the same implementation the domain proxy uses (RFC 9110
 			// §7.6.1). The static-list-only filter used here previously let a
 			// client smuggle "Connection: X-Foo" + "X-Foo: v" to the upstream.
+			teTrailers := proxyhandler.AcceptsTrailers(proxyReq.Header)
 			proxyhandler.RemoveHopByHop(proxyReq.Header)
+			if teTrailers {
+				// TE is hop-by-hop except for "trailers", which gRPC needs (F25800).
+				proxyReq.Header.Set("Te", "trailers")
+			}
 			// X-Forwarded-For: overwrite with the peer address (same as domain
 			// proxy). Do not preserve client-supplied prior hops — backends that
 			// trust the leftmost entry would see attacker-chosen identity.

@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.35] - 2026-10-24
+
+### Security
+
+- **PHP repository keyring is no longer downloaded into `/tmp`.** The
+  `debsuryorg-archive-keyring.deb` used for packages.sury.org was fetched into
+  the world-writable `/tmp` and installed with `dpkg -i` as root; it now lives
+  under `/run`.
+- **SFTP rename of a symlink pointing outside the chroot** is handled like
+  remove: it acts on the link itself instead of being refused, while paths
+  *through* such a link stay rejected.
+
+### Fixed
+
+- **PHP uninstall re-checks attached domains when the task runs**, not only
+  when it is queued, and `RunUninstall` rejects an empty/invalid version
+  instead of building a purge of the shared `php-common`/`php-cli` packages.
+- **`${VAR:-fallback}` now falls back when the variable is set but empty**
+  (POSIX / docker-compose semantics). Plain `${VAR}` is unchanged.
+- **MCP `cache_purge` with `{"tag":null}`** (or a non-string tag) is an error
+  instead of silently purging the whole cache.
+- **Cloudflare zone import** no longer adds a domain that is an alias or the
+  `www.` twin of an existing one, which produced an invalid configuration.
+- **Cache TTL cap** reads every `Cache-Control` header line, so `max-age` or
+  `s-maxage` on a second line is honoured.
+- **Reverse proxy keeps `TE: trailers`** (domain and location proxies), so
+  gRPC and trailer-aware backends work; other `TE` values are still dropped.
+- **429 `Retry-After`** is rounded up (never `0`) for the global and
+  per-location limiters.
+- **SFTP backups** abort when the context is cancelled instead of hanging on a
+  stalled stream.
+- **Crontab management** ignores an orphaned `# UWAS managed` marker rather
+  than swallowing the next job's marker.
+- **ACME** rejects an incomplete directory document instead of caching it
+  forever, and bounds error-body reads to 4 KiB.
+- **JSON logging**: the "lines dropped" notice is now a JSON line.
+
 ## [0.11.34] - 2026-10-22
 
 ### Added

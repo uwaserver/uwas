@@ -108,7 +108,7 @@ func (s *Server) registerTools() {
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"tag":{"type":"string","description":"Tag to purge (empty = purge all)"}}}`),
 		Handler: func(input json.RawMessage) (any, error) {
 			var params struct {
-				Tag string `json:"tag"`
+				Tag json.RawMessage `json:"tag"`
 			}
 			// Reject malformed input rather than falling through to PurgeAll:
 			// a JSON error would otherwise leave Tag empty and wipe the whole
@@ -126,12 +126,19 @@ func (s *Server) registerTools() {
 			if _, err := dec.Token(); err != io.EOF {
 				return nil, fmt.Errorf("invalid cache_purge input: trailing data")
 			}
+			// {"tag":null} would silently become "" and purge everything.
+			tag := ""
+			if params.Tag != nil {
+				if err := json.Unmarshal(params.Tag, &tag); err != nil || bytes.Equal(params.Tag, []byte("null")) {
+					return nil, fmt.Errorf("invalid cache_purge input: tag must be a string")
+				}
+			}
 			if s.cache == nil {
 				return map[string]string{"status": "cache not enabled"}, nil
 			}
-			if params.Tag != "" {
-				count := s.cache.PurgeByTag(params.Tag)
-				return map[string]any{"status": "purged", "tag": params.Tag, "count": count}, nil
+			if tag != "" {
+				count := s.cache.PurgeByTag(tag)
+				return map[string]any{"status": "purged", "tag": tag, "count": count}, nil
 			}
 			s.cache.PurgeAll()
 			return map[string]string{"status": "all purged"}, nil

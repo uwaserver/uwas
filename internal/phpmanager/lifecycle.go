@@ -41,6 +41,10 @@ var installedPackages = func(distroID, short string) []string {
 // pkgNameRE bounds package names that reach an install/purge command line.
 var pkgNameRE = regexp.MustCompile(`^php[0-9.]*-[a-z0-9][a-z0-9.+_-]*$`)
 
+// branchRE accepts only a bare "N.N" branch; anything else (including "") would
+// turn the "php<branch>-" package prefix into a glob over other packages.
+var branchRE = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
+
 func branchPackages(distroID, short string) []string {
 	prefix := "php" + short + "-"
 	if distroID == "alpine" {
@@ -163,7 +167,7 @@ func RunUpdate(phpVersion string) (string, error) {
 // RunUninstall removes an installed PHP branch.
 func RunUninstall(phpVersion string, purge bool) (string, error) {
 	short := shortOf(phpVersion)
-	if !pkgNameRE.MatchString("php" + short + "-x") {
+	if !branchRE.MatchString(short) {
 		return "", fmt.Errorf("invalid PHP version %q", phpVersion)
 	}
 	return runPlan(GetUninstallInfo(phpVersion, purge).Commands)

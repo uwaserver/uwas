@@ -133,13 +133,24 @@ func RateLimitWithStats(ctx context.Context, limit int, window time.Duration, st
 				if stats != nil {
 					stats.Record(clientIP(nil, r), r.URL.Path, "rate", r.UserAgent())
 				}
-				w.Header().Set("Retry-After", fmt.Sprintf("%d", int(rl.window.Seconds())))
+				w.Header().Set("Retry-After", retryAfterSeconds(rl.window))
 				http.Error(w, "429 Too Many Requests", http.StatusTooManyRequests)
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// retryAfterSeconds renders a window as a Retry-After value. Retry-After counts
+// whole seconds, so a sub-second window truncated to "0" (retry now) and 1.5s
+// to "1", sending the client back before the window had ended (F25700).
+func retryAfterSeconds(window time.Duration) string {
+	secs := int((window + time.Second - 1) / time.Second)
+	if secs < 1 {
+		secs = 1
+	}
+	return fmt.Sprintf("%d", secs)
 }
 
 // Window reports the limiter's counting period, so callers that reject a

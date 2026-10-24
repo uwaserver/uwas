@@ -5,6 +5,17 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.35
+
+Drop-in binary; no config or data migration. Behavior changes worth knowing:
+
+- `${VAR:-fallback}` in config now uses the fallback when `VAR` is set but
+  empty, not only when it is unset.
+- MCP `cache_purge` rejects a `null` or non-string `tag`; send `{}` or
+  `{"tag":""}` to purge everything.
+
+---
+
 ## Upgrading to v0.11.34
 
 Drop-in binary; no config or data migration. New: PHP update and uninstall

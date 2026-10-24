@@ -32,10 +32,15 @@ type asyncWriter struct {
 	ch      chan []byte
 	dropped atomic.Uint64
 	pending sync.WaitGroup
+	json    bool // the stream is JSON lines, so the drop notice must be too
 }
 
 func newAsyncWriter(out io.Writer) *asyncWriter {
-	a := &asyncWriter{out: out, ch: make(chan []byte, asyncQueueLen)}
+	return newAsyncWriterFormat(out, false)
+}
+
+func newAsyncWriterFormat(out io.Writer, json bool) *asyncWriter {
+	a := &asyncWriter{out: out, ch: make(chan []byte, asyncQueueLen), json: json}
 	go a.run()
 	return a
 }
@@ -70,6 +75,12 @@ func (a *asyncWriter) run() {
 
 func (a *asyncWriter) reportDropped() {
 	if n := a.dropped.Swap(0); n > 0 {
+		// A logfmt line in a JSON stream breaks every parser reading it.
+		if a.json {
+			_, _ = fmt.Fprintf(a.out, "{\"time\":%q,\"level\":\"WARN\",\"msg\":\"log output backlogged, lines dropped\",\"dropped\":%d}\n",
+				time.Now().Format(time.RFC3339Nano), n)
+			return
+		}
 		_, _ = fmt.Fprintf(a.out, "time=%s level=WARN msg=\"log output backlogged, lines dropped\" dropped=%d\n",
 			time.Now().Format(time.RFC3339Nano), n)
 	}

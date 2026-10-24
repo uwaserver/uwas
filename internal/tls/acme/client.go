@@ -262,6 +262,11 @@ func (c *Client) ensureDirectory(ctx context.Context) error {
 	if err := json.NewDecoder(resp.Body).Decode(dir); err != nil {
 		return err
 	}
+	// "{}" or "null" decode cleanly; caching one would fail every later
+	// request against an empty URL and never be re-fetched.
+	if dir.NewNonce == "" || dir.NewAccount == "" || dir.NewOrder == "" {
+		return fmt.Errorf("directory is missing newNonce, newAccount or newOrder")
+	}
 	c.directory = dir
 	return nil
 }
@@ -294,7 +299,7 @@ func (c *Client) ensureAccount(ctx context.Context) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
+		body := readErrorBody(resp.Body)
 		return fmt.Errorf("account creation returned %d: %s", resp.StatusCode, body)
 	}
 
@@ -417,7 +422,7 @@ func (c *Client) newOrder(ctx context.Context, domains []string) (*Order, error)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
+		body := readErrorBody(resp.Body)
 		return nil, fmt.Errorf("new order returned %d: %s", resp.StatusCode, body)
 	}
 
@@ -441,7 +446,7 @@ func (c *Client) getAuthorization(ctx context.Context, url string) (*Authorizati
 	// misreported as "no supported challenge available" instead of the
 	// server's actual cause.
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		body, _ := io.ReadAll(resp.Body)
+		body := readErrorBody(resp.Body)
 		return nil, acmeError(resp.StatusCode, body)
 	}
 
@@ -498,7 +503,7 @@ func (c *Client) solveChallenge(ctx context.Context, authz *Authorization) error
 	// A rejected ready-POST means the CA never started validation; polling
 	// the still-pending challenge would only time out without the cause.
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		body, _ := io.ReadAll(resp.Body)
+		body := readErrorBody(resp.Body)
 		return acmeError(resp.StatusCode, body)
 	}
 
@@ -523,7 +528,7 @@ func (c *Client) solveDNS01(ctx context.Context, domain string, challenge *Chall
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		body, _ := io.ReadAll(resp.Body)
+		body := readErrorBody(resp.Body)
 		c.dnsProvider.CleanupDNSChallenge(dnsName, challenge.Token, keyAuth)
 		return acmeError(resp.StatusCode, body)
 	}
@@ -541,6 +546,16 @@ func (c *Client) solveDNS01(ctx context.Context, domain string, challenge *Chall
 	}
 
 	return nil
+}
+
+// maxErrorBody bounds how much of a failed response is kept for the error
+// text: a proxy or portal page answering for the CA must not end up whole in
+// logs, the failure state and the admin API.
+const maxErrorBody = 4 << 10
+
+func readErrorBody(r io.Reader) []byte {
+	body, _ := io.ReadAll(io.LimitReader(r, maxErrorBody))
+	return body
 }
 
 // acmeError renders an ACME problem document (RFC 7807) into an error that
@@ -592,7 +607,7 @@ func (c *Client) waitForStatus(ctx context.Context, url, target string, maxAttem
 		// server's own diagnostic, as ensureDirectory, ensureAccount and
 		// newOrder already do for their own responses.
 		if resp.StatusCode < 200 || resp.StatusCode > 299 {
-			body, _ := io.ReadAll(resp.Body)
+			body := readErrorBody(resp.Body)
 			resp.Body.Close()
 			return nil, acmeError(resp.StatusCode, body)
 		}
@@ -642,7 +657,7 @@ func (c *Client) finalizeOrder(ctx context.Context, url string, csr []byte) (*Or
 	// pending order and polled for "valid" for its whole 30-attempt budget
 	// before reporting a vague timeout instead of the server's cause.
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		body, _ := io.ReadAll(resp.Body)
+		body := readErrorBody(resp.Body)
 		return nil, acmeError(resp.StatusCode, body)
 	}
 
@@ -661,7 +676,7 @@ func (c *Client) downloadCert(ctx context.Context, url string) ([]byte, error) {
 	// certificate chain; returning it as certPEM only produced a misleading
 	// keypair parse error later.
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		body, _ := io.ReadAll(resp.Body)
+		body := readErrorBody(resp.Body)
 		return nil, acmeError(resp.StatusCode, body)
 	}
 

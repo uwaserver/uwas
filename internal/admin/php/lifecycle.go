@@ -155,6 +155,15 @@ func (h *Handler) Uninstall(w http.ResponseWriter, r *http.Request) {
 	h.deps.RecordAudit(r, "php.uninstall", req.Version, true)
 	h.deps.LogInfo("starting PHP uninstall", "version", req.Version, "purge", req.Purge)
 	task := h.deps.TaskSubmit("php", req.Version, "uninstall", func(appendOutput func(string)) error {
+		// The domain check above ran before this task left the queue; sites may
+		// have moved onto the branch since.
+		for _, b := range mgr.Branches() {
+			if b.Short == req.Version && len(b.Domains) > 0 {
+				err := fmt.Errorf("PHP %s is now used by %d domain(s): %s — not removed", req.Version, len(b.Domains), strings.Join(b.Domains, ", "))
+				appendOutput(err.Error() + "\n")
+				return err
+			}
+		}
 		_ = mgr.StopFPM(branch.Version) // UWAS-managed process, if any
 		output, err := h.deps.PhpRunUninstall(req.Version, req.Purge)
 		appendOutput(output)

@@ -277,7 +277,8 @@ func expandEnvVars(s string) string {
 		varName := match[2 : len(match)-1]
 
 		if name, fallback, ok := strings.Cut(varName, ":-"); ok {
-			if val, found := os.LookupEnv(name); found {
+			// `:-` (POSIX/compose) falls back when the variable is unset or empty.
+			if val, found := os.LookupEnv(name); found && val != "" {
 				return val
 			}
 			return fallback
