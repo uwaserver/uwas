@@ -607,6 +607,10 @@ docker run -d -p 80:80 -p 443:443 -p 127.0.0.1:9443:9443 \
 
 See [`docker-compose.yml`](docker-compose.yml) and [`docker/uwas.yaml`](docker/uwas.yaml) for the full reference.
 
+## One-Click Deploy
+
+[![Deploy on RepoCloud](https://d16t0pc4846x52.cloudfront.net/deploylobe.svg)](https://repocloud.io/details/UWAS/)
+
 ## Migration from Nginx/Apache
 
 ```bash
