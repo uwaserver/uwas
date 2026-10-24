@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.36] - 2026-10-24
+
+### Security
+
+- **Dependency and image advisories:** `undici` and `zod` bumped (dashboard,
+  docs site; `npm audit fix`); PHP images upgrade `brotli-libs` to >= 1.2.1-r0
+  (CVE-2026-111497).
+
+v0.11.35 was tagged but its CI failed on these advisories and it was not
+published; its changes ship in this release.
+
 ## [0.11.35] - 2026-10-24
 
 ### Security

@@ -5,7 +5,7 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
-## Upgrading to v0.11.35
+## Upgrading to v0.11.36 (includes v0.11.35)
 
 Drop-in binary; no config or data migration. Behavior changes worth knowing:
 

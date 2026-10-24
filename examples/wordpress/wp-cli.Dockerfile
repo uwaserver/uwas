@@ -8,6 +8,7 @@ FROM wordpress:cli-php8.3@sha256:94017f46151918dc886c2d6b3a072ce7912f9a935eb1625
 USER root
 RUN apk add --no-cache --upgrade \
     "c-ares>=1.34.8-r0" \
+    "brotli-libs>=1.2.1-r0" \
     "imagemagick-libs>=7.1.2.27-r0" \
     "libexpat>=2.8.5-r0" \
     "util-linux>=2.42.3-r1"

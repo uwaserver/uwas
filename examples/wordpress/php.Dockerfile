@@ -15,6 +15,7 @@ FROM wordpress:php8.3-fpm-alpine@sha256:d0d4f306d3bc343f5429356e085d0bde8fbd048e
 # something older than the fix) and survives the rotation.
 RUN apk add --no-cache --upgrade \
     "c-ares>=1.34.8-r0" \
+    "brotli-libs>=1.2.1-r0" \
     "imagemagick>=7.1.2.27-r0" \
     "imagemagick-jp2>=7.1.2.27-r0" \
     "imagemagick-jpeg>=7.1.2.27-r0" \
