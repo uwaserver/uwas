@@ -275,6 +275,12 @@ func (h *Handler) tryServeFile(ctx *router.RequestContext, domain *config.Domain
 		}
 	}
 
+	// Only a regular file is served, as the static handler does. Checked
+	// before the open because opening a FIFO blocks until a writer appears,
+	// and a tenant's PHP can create one (F26100).
+	if pre, err := os.Stat(cleanPath); err != nil || !pre.Mode().IsRegular() {
+		return false
+	}
 	f, err := os.Open(cleanPath)
 	if err != nil {
 		return false // fall through to normal response
@@ -292,7 +298,7 @@ func (h *Handler) tryServeFile(ctx *router.RequestContext, domain *config.Domain
 	}
 
 	info, err := f.Stat()
-	if err != nil {
+	if err != nil || !info.Mode().IsRegular() {
 		return false
 	}
 

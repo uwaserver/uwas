@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/uwaserver/uwas/internal/auth"
+	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/domainutil"
 	uwastls "github.com/uwaserver/uwas/internal/tls"
 	"github.com/uwaserver/uwas/internal/webhook"
@@ -104,6 +105,25 @@ func (s *Server) handleCertRenew(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "TLS manager not available", http.StatusServiceUnavailable)
 		return
 	}
+	// A forced renewal replaces the certificate in memory and on disk, so it
+	// is only for hosts an ACME-managed domain serves: not a name no domain
+	// serves, and not a certificate the operator supplied (ssl.mode manual)
+	// or turned off.
+	s.configMu.RLock()
+	idx := s.certHostDomain(host)
+	mode := ""
+	if idx >= 0 {
+		mode = s.config.Domains[idx].SSL.Mode
+	}
+	s.configMu.RUnlock()
+	if idx < 0 {
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return
+	}
+	if mode != "auto" {
+		jsonError(w, "certificate is not managed by ACME (ssl.mode is "+mode+")", http.StatusConflict)
+		return
+	}
 	if err := s.tlsMgr.RenewCert(r.Context(), host); err != nil {
 		s.recordAuditR(r, "cert.renew", host, false)
 		jsonError(w, "renewal failed", http.StatusInternalServerError)
@@ -115,4 +135,18 @@ func (s *Server) handleCertRenew(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	jsonResponse(w, map[string]string{"status": "renewed", "host": host})
+}
+
+// certHostDomain returns the index of the configured domain that serves host
+// (its main host or an alias), or -1. Caller holds s.configMu.
+func (s *Server) certHostDomain(host string) int {
+	want := config.CanonicalHost(host)
+	for i, d := range s.config.Domains {
+		for _, name := range domainHostnames(d) {
+			if config.CanonicalHost(name) == want {
+				return i
+			}
+		}
+	}
+	return -1
 }

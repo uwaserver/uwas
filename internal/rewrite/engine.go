@@ -393,7 +393,7 @@ func ConvertConfigRewrites(rewrites []ConfigRewrite) []*Rule {
 
 		// Set redirect flag from config status
 		if rw.Status > 0 {
-			rule.Flags.Redirect = rw.Status
+			rule.Flags.Redirect = redirectStatus(rw.Status)
 		}
 
 		// Default: last flag

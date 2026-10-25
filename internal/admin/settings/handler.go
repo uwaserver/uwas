@@ -510,7 +510,8 @@ func (h *Handler) ConfigRawPut(w http.ResponseWriter, r *http.Request) {
 	// secrets as "********"; without this, a save writes that mask straight over
 	// the real secret. Unmask from the current on-disk file so untouched
 	// secrets survive and only values the operator actually changed take effect.
-	if original, rerr := os.ReadFile(configPath); rerr == nil {
+	original, rerr := os.ReadFile(configPath)
+	if rerr == nil {
 		oldContent := string(original)
 		for _, key := range rawSecretKeys {
 			req.Content = unmaskYAMLValue(req.Content, oldContent, key)
@@ -558,6 +559,25 @@ func (h *Handler) ConfigRawPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.deps.Reload(); err != nil {
+		// The probe above reads only this file; Load also merges domains_dir
+		// and includes, so a file can pass it and still fail here. Reload
+		// refuses before applying anything, so the running server still has
+		// the old configuration: put the old file back instead of leaving one
+		// the next start or reload cannot load.
+		if rerr == nil {
+			h.deps.LockPersist()
+			restoreErr := h.deps.AtomicWriteFile(configPath, original, 0600)
+			h.deps.UnlockPersist()
+			if restoreErr != nil {
+				h.deps.LogError("config raw put: restore after failed reload", "error", restoreErr)
+				h.deps.RecordAudit(r, "config.raw_put", auditDetail+" (reload failed, restore failed)", false)
+				jsonError(w, "config saved but reload failed and the previous file could not be restored: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			h.deps.RecordAudit(r, "config.raw_put", auditDetail+" (reload failed, previous file restored)", false)
+			jsonError(w, "reload failed, previous configuration restored: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 		h.deps.RecordAudit(r, "config.raw_put", auditDetail+" (reload failed after persist)", false)
 		jsonError(w, "config saved but reload failed: "+err.Error(), http.StatusInternalServerError)
 		return

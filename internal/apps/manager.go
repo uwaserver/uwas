@@ -3,6 +3,7 @@ package apps
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -1087,14 +1088,27 @@ func tailLogFile(path string, lastN int) string {
 	if path == "" || lastN <= 0 {
 		return ""
 	}
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return ""
 	}
-	if len(data) > lastN {
-		data = data[len(data)-lastN:]
+	defer f.Close()
+	// The log is append-only and never rotated; read just the tail, not the
+	// whole history, on every failed start.
+	fi, err := f.Stat()
+	if err != nil || !fi.Mode().IsRegular() {
+		return ""
 	}
-	return strings.TrimSpace(string(data))
+	off := fi.Size() - int64(lastN)
+	if off < 0 {
+		off = 0
+	}
+	data := make([]byte, fi.Size()-off)
+	n, err := f.ReadAt(data, off)
+	if err != nil && err != io.EOF {
+		return ""
+	}
+	return strings.TrimSpace(string(data[:n]))
 }
 
 // monitorNative waits on the process and triggers auto-restart on

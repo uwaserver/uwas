@@ -4,12 +4,47 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/uwaserver/uwas/internal/apps"
 	"github.com/uwaserver/uwas/internal/auth"
+	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/cronjob"
+	"github.com/uwaserver/uwas/internal/domainroot"
 )
 
 // SetCronMonitor sets the cron job monitor for execution tracking.
-func (s *Server) SetCronMonitor(m *cronjob.Monitor) { s.cronMonitor = m }
+func (s *Server) SetCronMonitor(m *cronjob.Monitor) {
+	s.cronMonitor = m
+	if m != nil {
+		m.SetRootResolver(s.cronDomainRoot)
+	}
+}
+
+// cronDomainRoot returns the configured root of the domain that serves host
+// (main host or alias, any spelling), so a manual cron run starts where the
+// site's files are.
+func (s *Server) cronDomainRoot(host string) string {
+	s.configMu.RLock()
+	idx := s.certHostDomain(host)
+	var dom config.Domain
+	if idx >= 0 {
+		dom = s.config.Domains[idx]
+	}
+	s.configMu.RUnlock()
+	if idx < 0 {
+		return ""
+	}
+	var store *apps.Store
+	var instances []apps.Instance
+	if mgr := s.appsMgr; mgr != nil {
+		store = mgr.Store()
+		instances = mgr.Instances()
+	}
+	root, err := domainroot.ForDomainWithApps(dom, store, instances)
+	if err != nil {
+		return dom.Root
+	}
+	return root
+}
 
 func (s *Server) handleCronMonitorList(w http.ResponseWriter, r *http.Request) {
 	if s.cronMonitor == nil {

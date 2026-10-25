@@ -213,19 +213,28 @@ remove_action('wp_head', 'rsd_link');
 	// Directory listing in .htaccess
 	if opts.BlockDirListing != nil {
 		htPath := filepath.Join(webRoot, ".htaccess")
-		htData, _ := osReadFileFn(htPath)
+		// Only a missing file starts empty. Any other read failure (symlink,
+		// oversized, not regular) must not turn into rewriting the file from "".
+		htData, err := osReadFileFn(htPath)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return log.String(), fmt.Errorf("read .htaccess: %w", err)
+		}
 		htContent := string(htData)
 
 		if *opts.BlockDirListing {
 			if !strings.Contains(htContent, "-Indexes") {
 				htContent = "Options -Indexes\n\n" + htContent
-				osWriteFileFn(htPath, []byte(htContent), 0644)
+				if err := osWriteFileFn(htPath, []byte(htContent), 0644); err != nil {
+					return log.String(), fmt.Errorf("write .htaccess: %w", err)
+				}
 				log.WriteString("Directory listing blocked (Options -Indexes)\n")
 			}
 		} else {
 			htContent = strings.Replace(htContent, "Options -Indexes\n\n", "", 1)
 			htContent = strings.Replace(htContent, "Options -Indexes\n", "", 1)
-			osWriteFileFn(htPath, []byte(htContent), 0644)
+			if err := osWriteFileFn(htPath, []byte(htContent), 0644); err != nil {
+				return log.String(), fmt.Errorf("write .htaccess: %w", err)
+			}
 			log.WriteString("Directory listing allowed\n")
 		}
 	}

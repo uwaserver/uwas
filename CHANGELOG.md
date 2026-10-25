@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Certificate upload/renew check host ownership.** Unknown hosts get 404;
+  renewing a host whose `ssl.mode` is not `auto` is refused (409) instead of
+  overwriting an uploaded certificate; uploading for an alias applies to its
+  domain.
+- **X-Sendfile / X-Accel-Redirect** only serve regular files (a tenant FIFO no
+  longer hangs the connection); multiple `Cookie` header lines are joined with
+  `; ` for PHP.
+- **Raw config save** restores the previous file when the reload fails.
+- **Manual cron execution** starts in the domain's document root.
+- **WordPress harden** reports `.htaccess` read/write errors instead of
+  claiming success or discarding existing rules.
+- **Docker databases list** only managed `uwas-db-` containers and reports
+  their published port; rewrite `status` values outside 301/302/303/307/308
+  are normalised instead of producing non-redirects or panics; app start
+  failures read only the log tail.
+
 ## [0.11.36] - 2026-10-24
 
 ### Security

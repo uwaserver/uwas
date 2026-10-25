@@ -100,6 +100,8 @@ type Monitor struct {
 	timeout time.Duration
 	// Per-job overlap guard: prevents concurrent execution of the same job.
 	running map[string]bool // key: domain:command, true if job is currently running
+	// rootFn resolves a domain's configured root; nil keeps the legacy guess.
+	rootFn func(domain string) string
 }
 
 // defaultJobTimeout is a ceiling well above any legitimate cron job — its role
@@ -122,6 +124,14 @@ func NewMonitor(dataDir string) *Monitor {
 	}
 	m.loadHistory()
 	return m
+}
+
+// SetRootResolver sets how Execute finds a domain's working directory. The
+// resolver returns "" for a domain it does not know.
+func (m *Monitor) SetRootResolver(fn func(domain string) string) {
+	m.mu.Lock()
+	m.rootFn = fn
+	m.mu.Unlock()
 }
 
 // SetTimeout overrides the per-execution timeout. A non-positive value restores
@@ -208,7 +218,17 @@ func (m *Monitor) Execute(domain, schedule, command string) ExecutionRecord {
 	// Set working directory to domain root if possible.
 	// domain is validated by the HTTP handler's JSON schema; additionally
 	// check here to prevent path traversal even if domain escapes validation.
-	if domain != "" && m.dataDir != "" && validDomainName.MatchString(domain) {
+	m.mu.RLock()
+	rootFn := m.rootFn
+	m.mu.RUnlock()
+	if rootFn != nil && domain != "" {
+		if root := rootFn(domain); root != "" {
+			if info, err := os.Stat(root); err == nil && info.IsDir() {
+				cmd.Dir = root
+			}
+		}
+	}
+	if cmd.Dir == "" && domain != "" && m.dataDir != "" && validDomainName.MatchString(domain) {
 		domainRoot := filepath.Join(m.dataDir, "..", "domains", domain)
 		if info, err := os.Stat(domainRoot); err == nil && info.IsDir() {
 			cmd.Dir = domainRoot

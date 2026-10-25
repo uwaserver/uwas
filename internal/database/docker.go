@@ -194,12 +194,19 @@ func ListDockerDBs() ([]DockerDBContainer, error) {
 		if err := json.Unmarshal([]byte(line), &raw); err != nil {
 			continue
 		}
+		// The name filter above is a substring match; keep only containers
+		// that carry the managed prefix (others cannot be addressed by the
+		// start/stop/remove helpers, which add the prefix themselves).
+		if !strings.HasPrefix(raw.Names, containerPrefix) {
+			continue
+		}
 
 		c := DockerDBContainer{
 			ID:      raw.ID,
 			Name:    raw.Names,
 			Image:   raw.Image,
 			Status:  raw.Status,
+			Port:    publishedHostPort(raw.Ports),
 			Running: raw.State == "running",
 		}
 
@@ -216,6 +223,23 @@ func ListDockerDBs() ([]DockerDBContainer, error) {
 		containers = append(containers, c)
 	}
 	return containers, nil
+}
+
+// publishedHostPort returns the first published host port from docker's
+// `Ports` column ("127.0.0.1:3307->3306/tcp, [::1]:3307->3306/tcp"), or 0.
+func publishedHostPort(ports string) int {
+	for _, m := range strings.Split(ports, ",") {
+		host, _, ok := strings.Cut(strings.TrimSpace(m), "->")
+		if !ok {
+			continue
+		}
+		if i := strings.LastIndex(host, ":"); i >= 0 {
+			if n, err := strconv.Atoi(host[i+1:]); err == nil {
+				return n
+			}
+		}
+	}
+	return 0
 }
 
 // StartDockerDB starts a stopped container.

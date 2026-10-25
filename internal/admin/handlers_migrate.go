@@ -394,6 +394,13 @@ func (s *Server) handleCertUpload(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid hostname", http.StatusBadRequest)
 		return
 	}
+	s.configMu.RLock()
+	known := s.certHostDomain(host) >= 0
+	s.configMu.RUnlock()
+	if !known {
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return
+	}
 	// An upload replaces the working pair on disk and switches the domain to
 	// manual TLS; a pair that does not parse or does not match would leave the
 	// domain without usable TLS until someone notices (F12500).
@@ -444,13 +451,10 @@ func (s *Server) handleCertUpload(w http.ResponseWriter, r *http.Request) {
 	// files are committed to disk so notifyDomainChange's reload always
 	// finds a consistent pair.
 	s.configMu.Lock()
-	for i, d := range s.config.Domains {
-		if d.Host == host {
-			s.config.Domains[i].SSL.Mode = "manual"
-			s.config.Domains[i].SSL.Cert = filepath.Join(certDir, "cert.pem")
-			s.config.Domains[i].SSL.Key = filepath.Join(certDir, "key.pem")
-			break
-		}
+	if i := s.certHostDomain(host); i >= 0 {
+		s.config.Domains[i].SSL.Mode = "manual"
+		s.config.Domains[i].SSL.Cert = filepath.Join(certDir, "cert.pem")
+		s.config.Domains[i].SSL.Key = filepath.Join(certDir, "key.pem")
 	}
 	s.configMu.Unlock()
 	s.persistConfig()

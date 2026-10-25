@@ -84,7 +84,12 @@ func BuildEnv(ctx *router.RequestContext, scriptFilename, scriptName, pathInfo s
 		if upper == "PROXY" {
 			continue
 		}
-		env["HTTP_"+upper] = strings.Join(vals, ", ")
+		sep := ", "
+		if upper == "COOKIE" {
+			// PHP splits cookies at ";" only (F26101).
+			sep = "; "
+		}
+		env["HTTP_"+upper] = strings.Join(vals, sep)
 	}
 
 	// PATH_TRANSLATED: document root + path info

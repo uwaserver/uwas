@@ -218,6 +218,17 @@ func ParseFlags(s string) Flags {
 	return f
 }
 
+// redirectStatus returns code when it is a redirect status, 302 otherwise.
+// http.Redirect writes whatever it is given, so a 200 or 404 became a
+// "redirect" without redirecting and a code below 100 panics the handler.
+func redirectStatus(code int) int {
+	switch code {
+	case 301, 302, 303, 307, 308:
+		return code
+	}
+	return 302
+}
+
 // matchesURI reports whether the rule's pattern applies to uri, without
 // capturing. Match and Engine.MightMatch both decide through it: MightMatch
 // once read only Pattern and Negated, so a negated rule whose pattern also
