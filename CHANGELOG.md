@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **OCSP refresh no longer makes a manual certificate impossible to remove**
+  (the stapled copy replaced the pointer the removal compared against).
+- **Uptime monitor** reports a redirect loop as down (limit 10 hops) instead of
+  "up/302".
+- **Certificate upload and cPanel import** return an error when the
+  configuration cannot be written instead of reporting success.
 - **Certificate upload/renew check host ownership.** Unknown hosts get 404;
   renewing a host whose `ssl.mode` is not `auto` is refused (409) instead of
   overwriting an uploaded certificate; uploading for an alias applies to its

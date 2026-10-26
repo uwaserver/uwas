@@ -428,8 +428,14 @@ func TestCheckDomainProxyType(t *testing.T) {
 func TestCheckDomainRedirectType(t *testing.T) {
 	// Redirect type server that returns 301
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Redirect to itself to test the redirect following
-		http.Redirect(w, r, "/destination", http.StatusMovedPermanently)
+		// Redirect "/" to a page that answers, to test the redirect
+		// following. Redirecting every path made /destination loop on itself,
+		// which now reads as down (F27200).
+		if r.URL.Path == "/" {
+			http.Redirect(w, r, "/destination", http.StatusMovedPermanently)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 

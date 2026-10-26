@@ -342,7 +342,11 @@ func (s *Server) handleMigrateCPanel(w http.ResponseWriter, r *http.Request) {
 
 	added := s.createDomainsFromMigration(result, webRoot)
 	if len(added) > 0 {
-		s.persistConfig()
+		if err := s.persistConfig(); err != nil {
+			s.recordAuditR(r, "migrate.cpanel.domains", err.Error(), false)
+			jsonError(w, "imported but config could not be persisted: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 		s.notifyDomainChange()
 		s.recordAuditR(r, "migrate.cpanel.domains", strings.Join(added, ", "), true)
 	}
@@ -457,7 +461,13 @@ func (s *Server) handleCertUpload(w http.ResponseWriter, r *http.Request) {
 		s.config.Domains[i].SSL.Key = filepath.Join(certDir, "key.pem")
 	}
 	s.configMu.Unlock()
-	s.persistConfig()
+	// A configuration that could not be written is a failed request, not a
+	// silent success that reverts the SSL mode on the next restart.
+	if err := s.persistConfig(); err != nil {
+		s.recordAuditR(r, "cert.upload", host+": "+err.Error(), false)
+		jsonError(w, "certificate saved but config could not be persisted: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	s.notifyDomainChange()
 
 	s.recordAuditR(r, "cert.upload", host, true)

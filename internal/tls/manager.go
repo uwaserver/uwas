@@ -1277,9 +1277,15 @@ func (m *Manager) refreshOCSP(ctx context.Context) {
 		}
 		refreshed := *t.cert
 		refreshed.OCSPStaple = resp
+		// manualMu keeps the pair of swaps atomic against LoadManualCerts: it
+		// removes a manual certificate by the pointer it stored, so a copy
+		// left in certs alone would never be taken out again (F27100).
+		m.manualMu.Lock()
 		if m.certs.CompareAndSwap(t.host, t.cert, &refreshed) {
+			m.manualCerts.CompareAndSwap(t.host, t.cert, &refreshed)
 			m.logger.Info("OCSP staple refreshed", "domain", t.host)
 		}
+		m.manualMu.Unlock()
 	}
 }
 

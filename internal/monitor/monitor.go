@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -17,6 +18,13 @@ const (
 	defaultInterval = 30 * time.Second
 	maxChecks       = 100
 	checkTimeout    = 10 * time.Second
+
+	// maxRedirects is how many hops a probe follows, as many as net/http's
+	// default. Running out of hops is a failed probe: it used to hand back the
+	// last 3xx as the answer, so a site stuck in a redirect loop (a bad
+	// http→https rule is the usual cause) read as up while every browser
+	// showed "too many redirects".
+	maxRedirects = 10
 
 	// checkConcurrency bounds how many domains are probed at once. The sweep
 	// used to be a plain sequential loop, so one domain that sat out its full
@@ -122,9 +130,8 @@ func New(domains []config.Domain, log *logger.Logger) *Monitor {
 			Timeout:   checkTimeout,
 			Transport: transport,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				// Follow up to 3 redirects
-				if len(via) >= 3 {
-					return http.ErrUseLastResponse
+				if len(via) >= maxRedirects {
+					return fmt.Errorf("stopped after %d redirects", maxRedirects)
 				}
 				return monitorURLSafetyCheck(req.URL.String())
 			},
