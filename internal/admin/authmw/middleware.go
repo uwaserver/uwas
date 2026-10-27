@@ -46,9 +46,16 @@ type Deps struct {
 	RecordFailure  func(ip string)
 	RedeemTicket   func(ticket string) (token string, pinOK bool)
 
-	// TOTP validation (nil when TOTP is not configured).
-	// Returns bool so the caller can atomically consume the matched time step
-	// and prevent replay within the validity window.
+	// RedeemTicketEx, when set, is used instead of RedeemTicket and also reports
+	// whether the ticket vouches for the second factor. An EventSource or
+	// WebSocket request cannot carry X-TOTP-Code; the ticket it redeems was
+	// minted by a request that did (F37000).
+	RedeemTicketEx func(ticket string) (token string, pinOK, totpOK bool)
+
+	// TOTP validation (nil when TOTP is not configured). It runs on every
+	// request of an admin, and clients send the same code on each of them for
+	// as long as it is valid, so it must not consume the matched time step;
+	// single-use enforcement belongs to the one-time 2FA operations.
 	ValidateTOTP func(secret, code string) bool
 }
 
@@ -63,6 +70,13 @@ type Deps struct {
 //   - TOTP 2FA gate
 //   - CSRF origin check
 func New(deps Deps, next http.Handler) http.Handler {
+	redeem := func(ticket string) (token string, pinOK, totpOK bool) {
+		if deps.RedeemTicketEx != nil {
+			return deps.RedeemTicketEx(ticket)
+		}
+		token, pinOK = deps.RedeemTicket(ticket)
+		return token, pinOK, false
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		apiKey := deps.GetAPIKey()
 		multiUserEnabled := deps.GetUsersEnabled()
@@ -155,6 +169,10 @@ func New(deps Deps, next http.Handler) http.Handler {
 		var ticketRedeemed bool
 		var ticketToken string
 		var ticketPinOK bool
+		var ticketTOTPOK bool
+		// Set once the request authenticated through a ticket whose mint request
+		// passed the 2FA gate.
+		var ticketTOTPVerified bool
 
 		// Try multi-user auth first if enabled.
 		if multiUserEnabled && deps.AuthByKey != nil {
@@ -182,8 +200,8 @@ func New(deps Deps, next http.Handler) http.Handler {
 			// Check ticket query param for SSE/WebSocket (short-lived, single-use).
 			if !authenticated {
 				if ticket := r.URL.Query().Get("ticket"); ticket != "" {
-					realToken, pinOK := deps.RedeemTicket(ticket)
-					ticketRedeemed, ticketToken, ticketPinOK = true, realToken, pinOK
+					realToken, pinOK, totpOK := redeem(ticket)
+					ticketRedeemed, ticketToken, ticketPinOK, ticketTOTPOK = true, realToken, pinOK, totpOK
 					if realToken != "" {
 						if session, err := deps.ValidateSess(realToken); err == nil {
 							if u, exists := deps.GetUserByID(session.UserID); exists {
@@ -200,6 +218,7 @@ func New(deps Deps, next http.Handler) http.Handler {
 					}
 					if authenticated {
 						ticketPinVerified = pinOK
+						ticketTOTPVerified = totpOK
 						q := r.URL.Query()
 						q.Del("ticket")
 						r.URL.RawQuery = q.Encode()
@@ -214,7 +233,7 @@ func New(deps Deps, next http.Handler) http.Handler {
 			if authHeader == "" {
 				if ticket := r.URL.Query().Get("ticket"); ticket != "" {
 					if !ticketRedeemed {
-						ticketToken, ticketPinOK = deps.RedeemTicket(ticket)
+						ticketToken, ticketPinOK, ticketTOTPOK = redeem(ticket)
 					}
 					if ticketToken != "" {
 						authHeader = "Bearer " + ticketToken
@@ -224,6 +243,7 @@ func New(deps Deps, next http.Handler) http.Handler {
 			}
 			if subtle.ConstantTimeCompare([]byte(authHeader), []byte("Bearer "+apiKey)) == 1 {
 				authenticated = true
+				ticketTOTPVerified = ticketTOTPOK && r.Header.Get("Authorization") == ""
 				user = &auth.User{
 					ID:       "admin",
 					Username: "admin",
@@ -251,16 +271,19 @@ func New(deps Deps, next http.Handler) http.Handler {
 		if totpSecret != "" && user.Role == auth.RoleAdmin &&
 			!strings.HasPrefix(r.URL.Path, "/api/v1/auth/2fa/") {
 			totpCode := r.Header.Get("X-TOTP-Code")
-			if totpCode == "" {
+			switch {
+			case totpCode == "" && ticketTOTPVerified:
+				// The ticket was minted by a request that passed this gate.
+			case totpCode == "":
 				w.Header().Set("X-2FA-Required", "true")
 				respond.Error(w, http.StatusForbidden, "2fa_required")
 				return
-			}
-			valid := deps.ValidateTOTP(totpSecret, totpCode)
-			if !valid {
-				deps.RecordFailure(ip)
-				respond.Error(w, http.StatusForbidden, "invalid 2FA code")
-				return
+			default:
+				if !deps.ValidateTOTP(totpSecret, totpCode) {
+					deps.RecordFailure(ip)
+					respond.Error(w, http.StatusForbidden, "invalid 2FA code")
+					return
+				}
 			}
 		}
 

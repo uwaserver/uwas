@@ -481,6 +481,11 @@ func (s *Server) handlePackageInstall(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, `invalid action: must be "install" or "remove"`, http.StatusBadRequest)
 		return
 	}
+	// Removing a package is as destructive as POST /database/uninstall, which
+	// needs the PIN; installing one is the setup flow and stays open.
+	if req.Action == "remove" && !s.requirePin(w, r) {
+		return
+	}
 
 	pkg := findPkg(req.ID)
 	if pkg == nil {

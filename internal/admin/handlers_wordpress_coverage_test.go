@@ -330,25 +330,22 @@ func TestWPOptimizeDB_DomainNotFound(t *testing.T) {
 	}
 }
 
-func TestWPOptimizeDB_Success(t *testing.T) {
+// F37601: with no usable wp-cli the endpoint used to answer 200 with all-zero
+// counters; it now says that nothing could run.
+func TestWPOptimizeDB_WPCLIUnavailable(t *testing.T) {
 	s, root := testServerWithRoot(t)
 	wpConfig := filepath.Join(root, "wp-config.php")
 	if err := os.WriteFile(wpConfig, []byte("<?php\n"), 0644); err != nil {
 		t.Fatalf("write wp-config.php: %v", err)
 	}
+	t.Setenv("PATH", t.TempDir()) // no wp binary anywhere
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/wordpress/sites/example.com/optimize-db", nil)
 	s.mux.ServeHTTP(rec, req)
-	// OptimizeDatabase gracefully handles wp-cli failures (all calls guarded
-	// by if err == nil), so it always returns (result, nil).
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body: %s", rec.Code, rec.Body.String())
 	}
-	var result map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if result["output"] == nil {
-		t.Error("expected output field in optimize-db response")
+	if !strings.Contains(rec.Body.String(), "wp-cli could not run") {
+		t.Errorf("error does not say wp-cli could not run: %s", rec.Body.String())
 	}
 }

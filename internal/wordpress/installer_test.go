@@ -2944,7 +2944,9 @@ func TestOptimizeDatabase(t *testing.T) {
 
 	execCommandFn = fakeCmd("Database optimized.")
 
-	_, err := OptimizeDatabase("/var/www/wp")
+	// A real directory: against a missing web root every wp-cli call fails to
+	// start, which OptimizeDatabase now reports instead of hiding (F37601).
+	_, err := OptimizeDatabase(t.TempDir())
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}

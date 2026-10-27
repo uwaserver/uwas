@@ -1204,7 +1204,7 @@ func (m *BackupManager) CreateDomainBackup(domain, webRoot, dbName, provider str
 	// Nanosecond precision, like Create: a second-resolution name let two
 	// backups in the same second replace each other (F3500).
 	ts := time.Now().UTC().Format("20060102-150405.000000000")
-	filename := fmt.Sprintf("uwas-domain-%s-%s.tar.gz", domain, ts)
+	filename := fmt.Sprintf("uwas-domain-%s-%s.tar.gz", backupNameLabel(domain), ts)
 
 	m.mu.Lock()
 	domainsDir := m.domainsDir
@@ -1257,6 +1257,18 @@ func (m *BackupManager) CreateDomainBackup(domain, webRoot, dbName, provider str
 
 	m.logger.Info("domain backup created", "domain", domain, "name", filename, "size", size)
 	return &BackupInfo{Name: filename, Size: size, Created: time.Now().UTC(), Provider: provider}, nil
+}
+
+// backupNameLabel makes a host usable inside an archive name. Remote providers
+// only accept [A-Za-z0-9._-] (safeBackupFilename), but a configured host may be
+// a wildcard ("*.example.com") or carry a port; every other byte becomes "_".
+func backupNameLabel(host string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '-' {
+			return r
+		}
+		return '_'
+	}, host)
 }
 
 // dumpDatabaseFunc is the function used to dump a single database.

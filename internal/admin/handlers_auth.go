@@ -22,6 +22,10 @@ type authTicket struct {
 	created     time.Time // when the ticket was issued
 	expiresAt   time.Time // when the ticket expires
 	pinVerified bool      // a valid admin PIN was presented when the ticket was minted
+	// totpSecret is the admin TOTP secret in force when the ticket was minted
+	// ("" when 2FA was off). The mint request passed the 2FA gate, which is what
+	// the browser cannot repeat on an EventSource/WebSocket request (F37000).
+	totpSecret string
 }
 
 // handleAuthTicket issues a short-lived, single-use ticket that can be passed
@@ -57,6 +61,10 @@ func (s *Server) handleAuthTicket(w http.ResponseWriter, r *http.Request) {
 
 	const ticketTTL = 30 * time.Second
 
+	s.configMu.RLock()
+	totpSecret := s.config.Global.Admin.TOTPSecret
+	s.configMu.RUnlock()
+
 	s.ticketMu.Lock()
 	if s.tickets == nil {
 		s.tickets = make(map[string]*authTicket)
@@ -76,6 +84,7 @@ func (s *Server) handleAuthTicket(w http.ResponseWriter, r *http.Request) {
 		created:     now,
 		expiresAt:   now.Add(ticketTTL),
 		pinVerified: s.pinSatisfied(r),
+		totpSecret:  totpSecret,
 	}
 	s.ticketMu.Unlock()
 
@@ -116,19 +125,31 @@ func (s *Server) pinSatisfied(r *http.Request) bool {
 // the token ("" if invalid/expired) and whether the ticket was minted with a
 // valid admin PIN. Uses atomic delete — single-use: once redeemed, deleted.
 func (s *Server) redeemTicket(ticket string) (string, bool) {
+	token, pinOK, _ := s.redeemTicketEx(ticket)
+	return token, pinOK
+}
+
+// redeemTicketEx is redeemTicket plus whether the ticket vouches for the second
+// factor: it was minted by a request that passed the 2FA gate, and the admin
+// TOTP secret has not changed since (F37000).
+func (s *Server) redeemTicketEx(ticket string) (token string, pinOK, totpOK bool) {
+	s.configMu.RLock()
+	currentSecret := s.config.Global.Admin.TOTPSecret
+	s.configMu.RUnlock()
+
 	s.ticketMu.Lock()
 	defer s.ticketMu.Unlock()
 	t, ok := s.tickets[ticket]
 	if !ok {
-		return "", false
+		return "", false, false
 	}
 	if time.Now().After(t.expiresAt) {
 		delete(s.tickets, ticket)
-		return "", false
+		return "", false, false
 	}
 	// Single-use: delete now so it cannot be redeemed again, then return.
 	delete(s.tickets, ticket)
-	return t.token, t.pinVerified
+	return t.token, t.pinVerified, currentSecret != "" && t.totpSecret == currentSecret
 }
 
 func (s *Server) requireDomainAccess(w http.ResponseWriter, r *http.Request, domain, action string) bool {

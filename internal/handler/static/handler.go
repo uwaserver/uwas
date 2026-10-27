@@ -294,6 +294,18 @@ func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, 
 		base := generateETag(origInfo)
 		w.Header().Set("ETag", base[:len(base)-1]+"-"+c.encoding+`"`)
 
+		// http.ServeContent leaves Content-Length unset for a full response
+		// once Content-Encoding is set, so a gzip/br variant went out chunked
+		// and a HEAD carried no length at all (F36300). State the size of the
+		// open variant. Ranges, 304 and the error paths set or clear the
+		// header themselves; a failed If-Match / If-Unmodified-Since answers
+		// 412 with the header left as we set it, which would declare a body
+		// that is never sent, so those requests are left to ServeContent.
+		if r.Header.Get("If-Match") == "" && r.Header.Get("If-Unmodified-Since") == "" {
+			if st, err := f.Stat(); err == nil {
+				w.Header().Set("Content-Length", strconv.FormatInt(st.Size(), 10))
+			}
+		}
 		http.ServeContent(w, r, filepath.Base(path), origInfo.ModTime(), f)
 		_ = f.Close()
 		return true

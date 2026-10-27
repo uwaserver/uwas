@@ -478,13 +478,13 @@ func CreateDatabase(name, user, password, host string) (*CreateResult, error) {
 		return nil, fmt.Errorf("database name required")
 	}
 	if !validDBIdentifier(name) {
-		return nil, fmt.Errorf("invalid database name: only letters, digits, underscore, hyphen allowed (max 64 chars)")
+		return nil, fmt.Errorf("invalid database name: only letters, digits and underscore allowed (max 64 chars)")
 	}
 	if user == "" {
 		user = name
 	}
 	if !validDBIdentifier(user) {
-		return nil, fmt.Errorf("invalid username: only letters, digits, underscore, hyphen allowed (max 64 chars)")
+		return nil, fmt.Errorf("invalid username: only letters, digits and underscore allowed (max 64 chars)")
 	}
 	if password == "" {
 		var err error
@@ -697,7 +697,7 @@ func ConfigureRemoteAccess(user, host, password, databaseName string) (*RemoteAc
 		return nil, fmt.Errorf("user is required")
 	}
 	if !validDBIdentifier(user) {
-		return nil, fmt.Errorf("invalid username: only letters, digits, underscore, hyphen allowed (max 64 chars)")
+		return nil, fmt.Errorf("invalid username: only letters, digits and underscore allowed (max 64 chars)")
 	}
 	if host == "" {
 		host = "%"

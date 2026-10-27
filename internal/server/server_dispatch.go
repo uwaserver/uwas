@@ -809,7 +809,10 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	if cacheEnabled && domain.Type == "php" {
 		// Only cache requests for known static file extensions on PHP domains.
 		ext := strings.ToLower(filepath.Ext(r.URL.Path))
-		if !phpCacheableStaticExts[ext] {
+		if !phpCacheableStaticExts[ext] || !staticFileOnDisk(domain.Root, r.URL.Path) {
+			// The extension alone is not enough: /index.php/app.css and a
+			// front-controller fallback for a missing /invoice/1.pdf end in a
+			// static-looking name but are produced by PHP (F38300).
 			cacheEnabled = false
 		}
 	}
@@ -884,15 +887,33 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				ttl := cacheTTLFor(ruleTTL, domain.Cache.TTL, s.defaultCacheTTL())
 				s.scheduleRevalidate(domain, s.staleJobFor(cacheKey, r, domain, ttl, s.graceTTL()))
 			}
-			ctx.Response.Header().Set("X-Cache", status)
-			ctx.Response.Header().Set("Age", strconv.FormatInt(int64(cached.Age().Seconds()), 10))
+			var storedAge int64
 			for k, vals := range cached.Headers {
 				ck := http.CanonicalHeaderKey(k)
 				if ck == "X-Request-Id" { // this request's own ID stays (F5700)
 					continue
 				}
+				// Age and X-Cache are this cache's to state. A proxied upstream
+				// behind another cache stored its own with the entry, and copying
+				// them over ours made a hit report the upstream's X-Cache and an
+				// Age that ignored the time spent here (F37300).
+				if ck == "X-Cache" {
+					continue
+				}
+				if ck == "Age" {
+					if len(vals) > 0 {
+						if n, err := strconv.ParseInt(strings.TrimSpace(vals[0]), 10, 64); err == nil && n > 0 {
+							storedAge = n
+						}
+					}
+					continue
+				}
 				ctx.Response.Header()[ck] = append([]string(nil), vals...)
 			}
+			// RFC 9111 §4.2.3: the age of the stored response is the age the
+			// upstream reported plus the time it has sat in this cache.
+			ctx.Response.Header().Set("X-Cache", status)
+			ctx.Response.Header().Set("Age", strconv.FormatInt(storedAge+int64(cached.Age().Seconds()), 10))
 			// An entry stored before the rule existed carries the upstream's
 			// Cache-Control; the rule still applies to what the client sees.
 			if ruleCacheControl != "" && cached.StatusCode < 400 {
@@ -916,6 +937,17 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 					body = assembled
 				}
 				ctx.Response.Header().Set("Content-Length", strconv.Itoa(len(body)))
+			}
+			// A stored 200 goes through ServeContent, as the same file does on
+			// a miss: it restores the Content-Length stripped at store time
+			// (the hit went out chunked), answers Range with 206/416 instead of
+			// the whole body under "Accept-Ranges: bytes", and evaluates
+			// If-Modified-Since / If-Range (F36301). HEAD entries hold no body
+			// to measure, and ESI output has its own length above.
+			if cached.StatusCode == http.StatusOK && r.Method == http.MethodGet && !cached.ESITemplate {
+				modTime, _ := http.ParseTime(ctx.Response.Header().Get("Last-Modified"))
+				http.ServeContent(ctx.Response, r, "", modTime, bytes.NewReader(body))
+				return
 			}
 			ctx.Response.WriteHeader(cached.StatusCode)
 			ctx.Response.Write(body)
@@ -1737,4 +1769,14 @@ func cleanProxyPassPath(escaped string) (string, bool) {
 		res += "/"
 	}
 	return res, true
+}
+
+// staticFileOnDisk reports whether urlPath names an existing regular file under
+// root, i.e. a request the static handler answers rather than PHP.
+func staticFileOnDisk(root, urlPath string) bool {
+	if root == "" {
+		return false
+	}
+	fi, err := os.Stat(filepath.Join(root, filepath.FromSlash(pathmatch.Clean(urlPath))))
+	return err == nil && fi.Mode().IsRegular()
 }

@@ -272,7 +272,11 @@ func (s *Server) handleDNSSync(w http.ResponseWriter, r *http.Request) {
 		apex := rec.Name == "@" && strings.EqualFold(strings.TrimSuffix(domain, "."), strings.TrimSuffix(zone.Name, "."))
 		// Providers report names lower-case and dotless; access to {domain} is
 		// decided on the canonical spelling, so compare on it too (F22600).
-		if rec.Type == "A" && (sameConfiguredHost(rec.Name, domain) || apex) {
+		// Hetzner and DigitalOcean report names relative to the zone ("blog"),
+		// so a subdomain record is also matched by its expanded spelling.
+		relative := rec.Name != "@" && rec.Name != "" &&
+			sameConfiguredHost(rec.Name+"."+strings.TrimSuffix(zone.Name, "."), domain)
+		if rec.Type == "A" && (sameConfiguredHost(rec.Name, domain) || apex || relative) {
 			if rec.Content != ip {
 				rec.Content = ip
 				if _, err := cf.UpdateRecord(zone.ID, rec.ID, rec); err != nil {

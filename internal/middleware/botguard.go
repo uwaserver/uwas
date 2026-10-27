@@ -169,8 +169,20 @@ func isBotExemptPath(p string) bool {
 	return false
 }
 
+// relayedByProxy reports whether the request carries headers that only a
+// reverse proxy adds.
+func relayedByProxy(r *http.Request) bool {
+	for _, h := range []string{"X-Forwarded-For", "X-Real-IP", "CF-Connecting-IP", "Forwarded"} {
+		if r.Header.Get(h) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // BotGuard blocks known malicious bots and scanners.
-// Localhost requests are always allowed (internal health checks, API calls).
+// Localhost requests are always allowed (internal health checks, API calls);
+// a request relayed through a proxy on the same host is not one (F37301).
 func BotGuard(log *logger.Logger, stats *SecurityStats) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -183,7 +195,11 @@ func BotGuard(log *logger.Logger, stats *SecurityStats) Middleware {
 					remoteIP = remoteIP[:idx]
 				}
 			}
-			if remoteIP == "127.0.0.1" || remoteIP == "::1" || remoteIP == "localhost" {
+			// A request relayed by a reverse proxy on this host also arrives from
+			// loopback when its client address could not be resolved (the proxy
+			// is not a trusted one, or its headers disagree). Forwarding
+			// headers say it was relayed, so it is not a local request (F37301).
+			if (remoteIP == "127.0.0.1" || remoteIP == "::1" || remoteIP == "localhost") && !relayedByProxy(r) {
 				next.ServeHTTP(w, r)
 				return
 			}

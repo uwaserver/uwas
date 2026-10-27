@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -518,7 +519,27 @@ func lockoutKey(username, clientIP string) string {
 	if clientIP == "" {
 		return username
 	}
-	return username + "|" + clientIP
+	return username + "|" + lockoutClientKey(clientIP)
+}
+
+// lockoutClientKey is the client identity a lockout counts against. An IPv6
+// subscriber owns at least a /64, so keying on the full address would let one
+// client rotate the low 64 bits per attempt and never reach the threshold
+// (F38000); v6 addresses are therefore keyed by /64, matching the HTTP-level
+// failure limiter (F10700). IPv4 and IPv4-mapped spellings share one key, a
+// zone suffix is ignored, and anything that is not an IP is returned unchanged.
+func lockoutClientKey(ip string) string {
+	if i := strings.IndexByte(ip, '%'); i >= 0 {
+		ip = ip[:i]
+	}
+	p := net.ParseIP(ip)
+	if p == nil {
+		return ip
+	}
+	if p4 := p.To4(); p4 != nil {
+		return p4.String()
+	}
+	return p.Mask(net.CIDRMask(64, 128)).String() + "/64"
 }
 
 // Authenticate validates credentials and returns a session. Prefer

@@ -5,6 +5,24 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.39
+
+Drop-in binary; no config or data migration. Behavior changes worth knowing:
+
+- **Bot guard:** requests that carry `X-Forwarded-For`, `X-Real-IP`,
+  `CF-Connecting-IP` or `Forwarded` are no longer treated as local. If UWAS runs
+  behind a same-host nginx or cloudflared without trusted-proxy settings, bot
+  guard rules (for example empty User-Agent) now apply to those requests;
+  configure the proxy as trusted to restore the real client address.
+- **PHP sites:** only files that exist on disk are cached by extension;
+  `/index.php/x.css` and front-controller routes are always dynamic.
+- Package removal, software restore and software backup delete now require the
+  PIN, like their sibling routes.
+- With 2FA enabled the dashboard asks for a new code once the stored one
+  expires; the per-request gate no longer consumes the code.
+
+---
+
 ## Upgrading to v0.11.38
 
 Drop-in binary; no config or data migration. Behavior changes worth knowing:

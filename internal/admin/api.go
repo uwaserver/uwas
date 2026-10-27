@@ -129,13 +129,14 @@ type Server struct {
 	pendingTOTPMu sync.Mutex
 	pendingTOTP   map[string]string
 
-	// lastTOTPStep is the highest TOTP time-step already consumed by a one-time
-	// 2FA operation (enable/disable). It blocks replay of a captured code within
-	// its ±skew validity window. It is NOT applied to the per-request 2FA gate,
-	// where the same code is legitimately presented on every request inside its
-	// 30s window.
-	totpStepMu   sync.Mutex
-	lastTOTPStep int64
+	// usedTOTPSteps maps a TOTP secret to the highest time-step already consumed
+	// by a one-time 2FA operation (enable/disable) for that secret. It blocks
+	// replay of a captured code within its ±skew validity window. It is per
+	// secret: a different secret has never seen the step (F38001). It is NOT
+	// applied to the per-request 2FA gate, where the same code is legitimately
+	// presented on every request inside its 30s window.
+	totpStepMu    sync.Mutex
+	usedTOTPSteps map[string]int64
 
 	// Rate limiting for auth failures
 	rlMu      sync.Mutex
@@ -299,8 +300,13 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		RedeemTicket: func(ticket string) (string, bool) {
 			return s.redeemTicket(ticket)
 		},
+		RedeemTicketEx: s.redeemTicketEx,
+		// The per-request gate must accept the code the client keeps sending for
+		// as long as it is valid; burning the step is for the one-time 2FA
+		// operations only (see usedTOTPSteps).
 		ValidateTOTP: func(secret, code string) bool {
-			return s.validateTOTPNoReplay(secret, code)
+			ok, _ := ValidateTOTP(secret, code)
+			return ok
 		},
 	}, next)
 }

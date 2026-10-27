@@ -94,7 +94,7 @@ func TestTOTPDisablePersistFailureKeepsEnabled(t *testing.T) {
 	// The failed attempt consumed its time step; a real retry would use the
 	// next period's code, so forget the consumed step instead of waiting 30s.
 	s.totpStepMu.Lock()
-	s.lastTOTPStep = 0
+	s.usedTOTPSteps = nil
 	s.totpStepMu.Unlock()
 	if got := totpDisable(t, s, secret, 0); got != http.StatusOK {
 		t.Fatalf("retry disable = %d, want 200", got)

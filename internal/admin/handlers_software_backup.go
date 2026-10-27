@@ -134,7 +134,7 @@ func (s *Server) handleSoftwareBackupList(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleSoftwareBackupDelete(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
 	inst, err := loadSoftwareInstance(r.PathValue("name"))
@@ -160,7 +160,7 @@ func (s *Server) handleSoftwareBackupDelete(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleSoftwareRestore(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
 	inst, err := loadSoftwareInstance(r.PathValue("name"))

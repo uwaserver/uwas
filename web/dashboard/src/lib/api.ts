@@ -51,10 +51,16 @@ export function getAuthMode() {
   return authMode;
 }
 
+// The server's 2FA gate asks every admin request for the code kept from login
+// (X-TOTP-Code), so it travels with the token: the hand-rolled fetches (database
+// import, config export, live deploy, logout, the pages' file/DB downloads)
+// would otherwise always be answered 403 "2fa_required".
 export function getAuthHeaders(): Record<string, string> {
   if (!token) return {};
-  if (authMode === 'session') return { 'X-Session-Token': token };
-  return { Authorization: `Bearer ${token}` };
+  const headers: Record<string, string> =
+    authMode === 'session' ? { 'X-Session-Token': token } : { Authorization: `Bearer ${token}` };
+  if (totpCode) headers['X-TOTP-Code'] = totpCode;
+  return headers;
 }
 
 export function clearToken() {
@@ -81,6 +87,22 @@ export async function logout() {
   } finally {
     clearToken();
   }
+}
+
+// The server answers 403 "2fa_required" when no code was sent and 403
+// "invalid 2FA code" once the code kept from login has expired (about 90 s)
+// or is wrong. Both mean the stored code is no longer usable: drop it so the
+// pollers stop presenting it (each rejection counts as a failed authentication
+// and ten a minute lock the address out), and send the operator back to the
+// 2FA prompt. On the login page itself a wrong code is reported in place.
+function handleTotpChallenge(error: unknown): boolean {
+  if (error !== '2fa_required' && error !== 'invalid 2FA code') return false;
+  sessionStorage.removeItem('uwas_totp_verified');
+  totpCode = '';
+  if (error === '2fa_required' || !window.location.pathname.includes('/login')) {
+    window.location.href = '/_uwas/dashboard/login?2fa=required';
+  }
+  return true;
 }
 
 export function setTOTPCode(code: string) {
@@ -203,11 +225,8 @@ async function api<T>(path: string, options?: RequestInit & { timeoutMs?: number
   if (res.status === 403) {
     const body = await res.json().catch(() => ({ error: '' }));
     logResponse('warn', `${method} ${path} -> 403 ${body.error || 'Forbidden'}`, body);
-    if (body.error === '2fa_required') {
-      sessionStorage.removeItem('uwas_totp_verified');
-      totpCode = '';
-      window.location.href = '/_uwas/dashboard/login?2fa=required';
-      throw new Error('2FA required');
+    if (handleTotpChallenge(body.error)) {
+      throw new Error(body.error === '2fa_required' ? '2FA required' : body.error);
     }
     if ((body.error === 'pin_required' || body.error === 'invalid_pin') && pinPromptCallback) {
       // Show global pin modal, wait for user input, retry the request
@@ -379,11 +398,7 @@ export const fetchMetrics = async () => {
     }
     if (res.status === 403) {
       const err = await res.json().catch(() => ({ error: 'Forbidden' }));
-      if (err.error === '2fa_required') {
-        sessionStorage.removeItem('uwas_totp_verified');
-        totpCode = '';
-        window.location.href = '/_uwas/dashboard/login?2fa=required';
-      }
+      handleTotpChallenge(err.error);
       throw new Error(err.error || 'Forbidden');
     }
     if (!res.ok) throw new Error(res.statusText);
@@ -782,11 +797,8 @@ export async function uploadFile(domain: string, path: string, file: File): Prom
   }
   if (res.status === 403) {
     const body = await res.json().catch(() => ({ error: '' }));
-    if (body.error === '2fa_required') {
-      sessionStorage.removeItem('uwas_totp_verified');
-      totpCode = '';
-      window.location.href = '/_uwas/dashboard/login?2fa=required';
-      throw new Error('2FA required');
+    if (handleTotpChallenge(body.error)) {
+      throw new Error(body.error === '2fa_required' ? '2FA required' : body.error);
     }
     if ((body.error === 'pin_required' || body.error === 'invalid_pin') && pinPromptCallback) {
       const pin = await new Promise<string>((resolve, reject) => { pinPromptCallback!(resolve, reject); });
@@ -1289,11 +1301,8 @@ export async function migrateCPanel(file: File, importDB: boolean): Promise<CPan
   }
   if (res.status === 403) {
     const body = await res.json().catch(() => ({ error: '' }));
-    if (body.error === '2fa_required') {
-      sessionStorage.removeItem('uwas_totp_verified');
-      totpCode = '';
-      window.location.href = '/_uwas/dashboard/login?2fa=required';
-      throw new Error('2FA required');
+    if (handleTotpChallenge(body.error)) {
+      throw new Error(body.error === '2fa_required' ? '2FA required' : body.error);
     }
     if ((body.error === 'pin_required' || body.error === 'invalid_pin') && pinPromptCallback) {
       const pin = await new Promise<string>((resolve, reject) => { pinPromptCallback!(resolve, reject); });

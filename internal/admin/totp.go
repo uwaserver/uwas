@@ -61,8 +61,8 @@ func ValidateTOTP(secret, code string) (bool, int64) {
 }
 
 // validateTOTPNoReplay validates a TOTP code for a one-time operation and, on
-// success, atomically burns the matched time step so the same (or any earlier)
-// step cannot be replayed within its ±skew validity window. Returns false for
+// success, atomically burns the matched time step for this secret so the same
+// (or any earlier) step cannot be replayed within its ±skew validity window. Returns false for
 // an invalid code OR a code whose step was already consumed.
 func (s *Server) validateTOTPNoReplay(secret, code string) bool {
 	valid, step := ValidateTOTP(secret, code)
@@ -71,10 +71,21 @@ func (s *Server) validateTOTPNoReplay(secret, code string) bool {
 	}
 	s.totpStepMu.Lock()
 	defer s.totpStepMu.Unlock()
-	if step <= s.lastTOTPStep {
+	if last, ok := s.usedTOTPSteps[secret]; ok && step <= last {
 		return false // replay of an already-consumed step
 	}
-	s.lastTOTPStep = step
+	if s.usedTOTPSteps == nil {
+		s.usedTOTPSteps = make(map[string]int64)
+	}
+	// A step older than the validity window can never match a code again, so
+	// its record protects nothing; drop it to keep the map bounded.
+	oldest := time.Now().Unix()/totpPeriod - totpWindow
+	for k, v := range s.usedTOTPSteps {
+		if v < oldest {
+			delete(s.usedTOTPSteps, k)
+		}
+	}
+	s.usedTOTPSteps[secret] = step
 	return true
 }
 

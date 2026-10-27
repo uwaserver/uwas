@@ -7,7 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.39] - 2026-10-27
+
 ### Fixed
+
+- **PHP sites no longer cache dynamic output by URL extension.** A request like
+  `/index.php/app.js` (PATH_INFO) or a front-controller route such as
+  `/invoice/123.pdf` was cached as a static asset and served to the next
+  visitor. Only files that exist on disk are cacheable for PHP domains.
+- **Dashboard 2FA:** raw `fetch` calls (database import, config export, live
+  deploy, SQL export download, file preview, logout) now send the stored 2FA
+  code; they used to be rejected with `2fa_required`.
+- **Login lockout** counts IPv6 clients by /64 and normalises IPv4-mapped
+  addresses, so rotating the low bits no longer evades the limit.
+- **2FA step replay protection** is tracked per TOTP secret; re-enabling 2FA
+  right after disabling it no longer rejects the first valid code.
+
+- **2FA and streaming endpoints:** the web terminal (WebSocket) and the SSE
+  stats stream work with 2FA enabled. Their one-time ticket now carries the
+  second factor it was minted with (browsers cannot send `X-TOTP-Code` on
+  `EventSource`/`WebSocket`); it is bound to the user's TOTP secret and still
+  single-use.
+- **Dashboard 2FA:** an expired or rejected stored 2FA code sends the operator
+  back to the 2FA prompt instead of failing every request (and tripping the
+  failed-auth lockout).
+- **Bot guard** no longer treats a request relayed by a same-host reverse proxy
+  as local (requests carrying `X-Forwarded-For`, `X-Real-IP`,
+  `CF-Connecting-IP` or `Forwarded` are checked). Deployments behind a local
+  nginx/cloudflared without trusted-proxy settings will now see bot-guard
+  blocks (for example empty User-Agent).
+- **Cache hits** report this server's `X-Cache` and an RFC 9111 `Age`
+  (upstream age plus time in this cache).
+- **WordPress optimize database** reports wp-cli failures instead of returning
+  success with zero counters.
+
+- **2FA no longer locks the operator out.** The per-request 2FA gate consumed
+  the TOTP step, so a second admin request in the same 30-second window was
+  rejected with `invalid 2FA code` (and counted as a failed attempt). The gate
+  now validates without consuming; one-time operations (enable, disable,
+  recovery-code step) still burn the step once.
+- **PIN required** for package removal (`action=remove`), software restore and
+  software backup delete, matching their sibling routes.
+- **DNS sync** matches provider records that return relative names
+  (Hetzner, DigitalOcean) instead of creating a duplicate A record each run.
+- **Wildcard domain backups** (`*.example.com`) use a safe archive name so they
+  can be downloaded, restored and deleted from S3/SFTP.
+- **Cache hits** serve `Range`, `If-Modified-Since` and `Content-Length` like a
+  fresh response; **pre-compressed** `.gz`/`.br` responses carry
+  `Content-Length`.
+- Database name error messages no longer claim hyphens are allowed.
 
 - **Docker:** PHP, WordPress and WP-CLI images require `curl`/`libcurl`
   `>=8.23.0-r0` (CVE-2026-92392, HTTP/2 upload use-after-free in the pinned
