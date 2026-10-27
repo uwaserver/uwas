@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Docker:** PHP, WordPress and WP-CLI images require `curl`/`libcurl`
+  `>=8.23.0-r0` (CVE-2026-92392, HTTP/2 upload use-after-free in the pinned
+  upstream image's curl 8.22.0-r0). The v0.11.38 tag's CI failed on this
+  newly disclosed CVE in the Trivy image scan; the release binaries are
+  unaffected.
+
 ## [0.11.38] - 2026-10-27
 
 ### Fixed
