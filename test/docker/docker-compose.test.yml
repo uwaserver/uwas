@@ -7,10 +7,13 @@ services:
       - "8080:80"
       - "127.0.0.1:9443:9443"
     volumes:
-      - ./uwas-test.yaml:/etc/uwas/uwas.yaml:ro
+      # Seed config is read-only; the entrypoint below copies it to a writable
+      # path because the domain CRUD tests persist configuration changes.
+      - ./uwas-test.yaml:/seed/uwas.yaml:ro
       - ./www:/var/www:ro
       - uwas-cache:/var/cache/uwas
       - uwas-certs:/var/lib/uwas/certs
+    entrypoint: ["/bin/sh", "-c", "cp /seed/uwas.yaml /tmp/uwas.yaml && chmod 666 /tmp/uwas.yaml && exec docker-entrypoint.sh uwas serve -c /tmp/uwas.yaml"]
     depends_on:
       - php
       - db
