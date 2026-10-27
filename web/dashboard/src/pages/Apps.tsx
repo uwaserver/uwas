@@ -350,19 +350,28 @@ export default function Apps() {
     return body;
   };
 
+  // Sequence numbers so a slow fetchApp for an app opened earlier cannot
+  // overwrite the form of whatever the operator opened (or closed) since.
+  const editorSeq = useRef(0);
+  const deploySeq = useRef(0);
+
   const openCreate = () => {
+    editorSeq.current++;
     setForm(blankForm);
     setEditing({ mode: 'create' });
   };
 
   const closeEditor = () => {
+    editorSeq.current++;
     setEditing(null);
     setForm(blankForm);
   };
 
   const openEdit = async (name: string) => {
+    const seq = ++editorSeq.current;
     try {
       const { app } = await fetchApp(name);
+      if (seq !== editorSeq.current) return;
       setDeployKeyResult(null);
       setForm({
         sourceMode: 'blank',
@@ -389,6 +398,7 @@ export default function Apps() {
       });
       setEditing({ mode: 'edit', name });
     } catch (e) {
+      if (seq !== editorSeq.current) return;
       setStatusErr(e);
     }
   };
@@ -506,17 +516,20 @@ export default function Apps() {
     // deploy doesn't make the operator re-type git URL / branch /
     // build cmd. Webhook secret is also pre-filled so they can see
     // it (and rotate by typing a new value).
+    const seq = ++deploySeq.current;
     setDeployFor(name);
     setDeployResult(null);
     setDeployLiveLog('');
     setDeployPreflight(null);
     setDeployKeyResult(null);
+    setDeployForm({ git_url: '', git_branch: '', build_cmd: '', health_path: '', ssh_key_path: '', git_token: '', webhook_secret: '', branch_filter: '' });
     setDeployMetaLoading(true);
     try {
       const [{ app }, preflight] = await Promise.all([
         fetchApp(name),
         fetchAppDeployPreflight(name).catch(() => null),
       ]);
+      if (seq !== deploySeq.current) return;
       setDeployForm({
         git_url: app.deploy?.git_url ?? '',
         git_branch: app.deploy?.git_branch ?? '',
@@ -530,9 +543,10 @@ export default function Apps() {
       setDeployPreflight(preflight);
     } catch {
       // Fall back to empty form on fetch error.
+      if (seq !== deploySeq.current) return;
       setDeployForm({ git_url: '', git_branch: '', build_cmd: '', health_path: '', ssh_key_path: '', git_token: '', webhook_secret: '', branch_filter: '' });
     } finally {
-      setDeployMetaLoading(false);
+      if (seq === deploySeq.current) setDeployMetaLoading(false);
     }
   };
 
@@ -580,6 +594,11 @@ export default function Apps() {
       message: ok ? 'Deploy public key copied' : 'Copy failed. Select the public key and copy it manually.',
     });
   };
+
+  // Closing the Deploy modal drops any fetchApp still in flight for it.
+  useEffect(() => {
+    if (deployFor === null) deploySeq.current++;
+  }, [deployFor]);
 
   const webhookURL = `${window.location.origin}/api/v1/apps/${encodeURIComponent(deployFor ?? '')}/webhook`;
 

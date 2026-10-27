@@ -2,6 +2,7 @@
 package firewall
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
 	"os/exec"
@@ -15,6 +16,20 @@ var (
 	execCommandFn  = exec.Command
 	execLookPathFn = exec.LookPath
 )
+
+// ErrInvalidRule marks a rejection caused by the values in the request (bad
+// port, protocol, source, action, direction, a protected port) as opposed to a
+// failure of ufw itself, so callers can answer 400 instead of 500.
+var ErrInvalidRule = errors.New("invalid firewall rule")
+
+type invalidRuleError struct{ msg string }
+
+func (e *invalidRuleError) Error() string        { return e.msg }
+func (e *invalidRuleError) Is(target error) bool { return target == ErrInvalidRule }
+
+func invalidRulef(format string, a ...any) error {
+	return &invalidRuleError{msg: fmt.Sprintf(format, a...)}
+}
 
 // Rule represents a firewall rule.
 type Rule struct {
@@ -282,27 +297,27 @@ func validatePort(port string) error {
 // normalizePort and skip parsePortSpec.
 func parsePortSpec(port string) (int, int, error) {
 	if port == "" {
-		return 0, 0, fmt.Errorf("port is required")
+		return 0, 0, invalidRulef("port is required")
 	}
 	p := strings.ToLower(strings.TrimSpace(port))
 	if p == "any" || p == "all" || p == "*" {
-		return 0, 0, fmt.Errorf("cannot use '%s' as port — specify a port number", port)
+		return 0, 0, invalidRulef("cannot use '%s' as port — specify a port number", port)
 	}
 	parts := strings.Split(p, ":")
 	if len(parts) > 2 {
-		return 0, 0, fmt.Errorf("invalid port: %s", port)
+		return 0, 0, invalidRulef("invalid port: %s", port)
 	}
 	nums := make([]int, len(parts))
 	for i, part := range parts {
 		n, err := strconv.Atoi(part)
 		if err != nil || n < 1 || n > 65535 {
-			return 0, 0, fmt.Errorf("invalid port: %s", port)
+			return 0, 0, invalidRulef("invalid port: %s", port)
 		}
 		nums[i] = n
 	}
 	lo, hi := nums[0], nums[len(nums)-1]
 	if lo > hi {
-		return 0, 0, fmt.Errorf("invalid port range: %s", port)
+		return 0, 0, invalidRulef("invalid port range: %s", port)
 	}
 	return lo, hi, nil
 }
@@ -330,7 +345,7 @@ func validateProto(proto string) error {
 	}
 	valid := map[string]bool{"tcp": true, "udp": true}
 	if !valid[strings.ToLower(proto)] {
-		return fmt.Errorf("invalid protocol %q — must be tcp or udp", proto)
+		return invalidRulef("invalid protocol %q — must be tcp or udp", proto)
 	}
 	return nil
 }
@@ -359,7 +374,7 @@ func DenyPortFrom(port, proto, from string) error {
 			return err
 		}
 		if deniesProtectedPort(port) && (normalizeFrom(from) == "" || coversAllSources(from)) {
-			return fmt.Errorf("cannot deny port %s — it covers a port required for server operation (HTTP/HTTPS/SSH/Admin)", port)
+			return invalidRulef("cannot deny port %s — it covers a port required for server operation (HTTP/HTTPS/SSH/Admin)", port)
 		}
 	}
 	return addPortRule("deny", port, proto, from)

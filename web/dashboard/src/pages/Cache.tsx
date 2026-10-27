@@ -30,13 +30,17 @@ export default function Cache() {
   const [confirmAll, setConfirmAll] = useState(false);
   const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(null);
   const [purging, setPurging] = useState(false);
+  // Last stats request failure; cleared by the next success. Without it a
+  // broken admin API looked like a server with the cache switched off.
+  const [loadError, setLoadError] = useState('');
   const [purgeLog, setPurgeLog] = useState<{ time: string; action: string; ok: boolean }[]>([]);
 
   const fetchCacheStats = useCallback(async () => {
     try {
       const data = await fetchCacheStatsAPI();
       setCacheStats(data);
-    } catch { /* ignore */ }
+      setLoadError('');
+    } catch (e) { setLoadError((e as Error).message || 'request failed'); }
   }, []);
 
   usePolling(fetchCacheStats, 5000);
@@ -117,13 +121,22 @@ export default function Cache() {
         <div>
           <h1 className="text-xl font-bold sm:text-2xl text-foreground">Cache</h1>
           <p className="text-sm text-muted-foreground">
-            {cacheStats?.enabled ? `${cacheStats.entries} entries, ${formatBytes(cacheStats.used_bytes)} used` : 'Cache not enabled'}
+            {cacheStats?.enabled
+              ? `${cacheStats.entries} entries, ${formatBytes(cacheStats.used_bytes)} used`
+              : cacheStats || !loadError ? 'Cache not enabled' : 'Cache stats unavailable'}
           </p>
         </div>
         <button onClick={fetchCacheStats} className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569]">
           <RefreshCw size={12} /> Refresh
         </button>
       </div>
+
+      {loadError && (
+        <div className="flex items-center justify-between gap-3 rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">
+          <span>Could not load cache stats: {loadError}</span>
+          <button onClick={fetchCacheStats} className="rounded-md bg-red-500/20 px-2.5 py-1 text-xs hover:bg-red-500/30">Retry</button>
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">

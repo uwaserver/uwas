@@ -80,16 +80,14 @@ domains:
   {
     id: 'migrate',
     label: 'Migrate',
-    code: `$ uwas migrate nginx /etc/nginx/sites-enabled/default
-
-[UWAS] Parsing nginx config...
-[UWAS] Found 3 server blocks
-[UWAS] Converting to UWAS format...
-[UWAS] Output: uwas.yaml
-
-# Pipe directly to config file:
-$ uwas migrate nginx /etc/nginx/sites-enabled/default > uwas.yaml
-$ uwas migrate apache /etc/apache2/sites-enabled/000-default.conf >> uwas.yaml`,
+    code: `# The converted YAML goes to stdout; warnings for anything that
+# could not be converted go to stderr and as # WARNING lines on top.
+# One file per source, merged through domains_dir in uwas.yaml:
+#   domains_dir: ./domains.d
+$ mkdir -p domains.d
+$ uwas migrate nginx /etc/nginx/sites-enabled/default > domains.d/nginx.yaml
+$ uwas migrate apache /etc/apache2/sites-enabled/000-default.conf > domains.d/apache.yaml
+$ uwas config validate -c uwas.yaml`,
   },
 ]
 

@@ -488,7 +488,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	var uploaded []string
+	uploaded := []string{}
 	for _, fHeaders := range r.MultipartForm.File {
 		for _, fh := range fHeaders {
 			relPath := filepath.Join(dir, filepath.Base(fh.Filename))

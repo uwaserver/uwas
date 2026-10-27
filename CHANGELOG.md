@@ -7,7 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.38] - 2026-10-27
+
 ### Fixed
+
+- **HTTP/3** is only advertised (`Alt-Svc`) when the UDP listener actually
+  bound; a bind failure no longer makes browsers retry a dead port for 24 h.
+  The HTTP/3 server handle is set under the config lock.
+- **Empty lists are `[]`, not `null`** in the software monitor/library/backups,
+  database explorer, deploy history and file upload responses (the Software
+  Library monitor panel read `.length` on `null`).
+- **Docs:** the Quick Start "Migrate" tab no longer produces a config with a
+  duplicate `domains:` key.
+
+- **Firewall allow/deny/move** return 400 for an invalid port, protocol,
+  source, action, direction or rule number; backend (`ufw`) failures stay 500.
+- **cPanel import** returns empty lists instead of `null` for a clean import;
+  the Migration page no longer crashes on a successful import.
+- **WebSocket tunnels** count toward a backend's active connections and total
+  requests (least-conn balancing and panel stats).
+- **Blocked-request stats** record bare IPs for WAF/bot blocks too.
+- **Dashboard:** the Dashboard and Cache pages show a load error with Retry;
+  the Apps deploy/edit dialogs ignore a slow response for a previously opened
+  app (it could overwrite the form, including the webhook secret).
 
 - **Cloudflare MX/SRV records** keep a priority of 0 in the request body.
 - **MCP** `domain_list`, `ssl_status` and `security_overview` return `[]`
@@ -17,8 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of "no data / all clean"; DNS record delete asks for confirmation;
   the DB Explorer ignores a query result that finishes after the database was
   switched.
-
-### Fixed
 
 - **Audit log** now records firewall changes, cron add/delete, PHP
   install/config/start/stop/restart/unassign, WordPress install, database
@@ -31,8 +51,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ESI fragments** honour multi-line `Cache-Control`, `s-maxage` and quoted
   `max-age`.
 
-### Fixed
-
 - **Second SIGINT/SIGTERM during graceful shutdown** terminates the process
   immediately instead of being swallowed for the whole drain period.
 - **Service start/stop/restart** is recorded in the audit log; an unknown
@@ -41,8 +59,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   falling through to install; only `install` and `remove` are accepted.
 - **`backup.schedule` / `backup.cron`** are validated when backups are enabled
   (an invalid value used to load silently and never run).
-
-### Fixed
 
 - **WordPress install** never deletes the document root when it is itself named
   `wordpress` (the tarball is extracted into a private temp directory), stops
@@ -57,8 +73,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "0 domains"; Logs pause ignores in-flight polls; Firewall ignores stale
   rollback polls.
 - **Analytics** classifies iOS Chrome/Firefox/Edge and Android Edge correctly.
-
-### Fixed
 
 - **Rewrite rules:** an absolute-URL target (`RewriteRule ^old$ https://new/ [L]`)
   redirects (302) like Apache instead of staying a path; `%{REQUEST_FILENAME}`

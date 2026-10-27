@@ -552,13 +552,13 @@ func (h *Handler) DeployHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.PathValue("name")
 	h.deployHistoryMu.Lock()
-	history := append([]DeployHistoryEntry(nil), h.deployHistory[name]...)
+	history := append([]DeployHistoryEntry{}, h.deployHistory[name]...)
 	h.deployHistoryMu.Unlock()
 	if len(history) == 0 {
 		appsMgr := h.deps.AppsManager()
 		if appsMgr != nil {
-			history = loadDeployHistory(appsMgr.Store().Dir, name)
-			if len(history) > 0 {
+			if loaded := loadDeployHistory(appsMgr.Store().Dir, name); len(loaded) > 0 {
+				history = loaded
 				h.deployHistoryMu.Lock()
 				h.deployHistory[name] = append([]DeployHistoryEntry(nil), history...)
 				h.deployHistoryMu.Unlock()

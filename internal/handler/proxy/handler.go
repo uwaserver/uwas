@@ -825,6 +825,13 @@ func (h *Handler) serveWebSocketWithOptions(ctx *router.RequestContext, backend 
 		return
 	}
 
+	// A tunnel is a connection for as long as the session lasts: count it like
+	// the HTTP path does, or least_conn and the per-backend stats see a backend
+	// that carries thousands of sockets as idle (F34600).
+	backend.ActiveConns.Add(1)
+	backend.TotalReqs.Add(1)
+	defer backend.ActiveConns.Add(-1)
+
 	// Connect to upstream
 	backendAddr := websocketBackendAddress(backend.URL)
 

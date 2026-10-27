@@ -215,7 +215,7 @@ func collectSoftwareContainerStats(inst softwareInstance) ([]softwareContainerSt
 	if err != nil {
 		return nil, err
 	}
-	var out []softwareContainerStat
+	out := []softwareContainerStat{}
 	for _, line := range strings.Split(statsOut, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -249,7 +249,7 @@ func collectSoftwareContainerStats(inst softwareInstance) ([]softwareContainerSt
 }
 
 func collectSoftwareMonitor(inst softwareInstance) softwareMonitorResponse {
-	resp := softwareMonitorResponse{Instance: inst}
+	resp := softwareMonitorResponse{Instance: inst, Containers: []softwareContainerStat{}}
 	containers, err := collectSoftwareContainerStats(inst)
 	if err == nil {
 		resp.Containers = containers
@@ -446,7 +446,7 @@ func listSoftwareBackups(inst softwareInstance) ([]softwareBackupInfo, error) {
 		}
 		return nil, err
 	}
-	var out []softwareBackupInfo
+	out := []softwareBackupInfo{}
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".tar.gz") {
 			continue

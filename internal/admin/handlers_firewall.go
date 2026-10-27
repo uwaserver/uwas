@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"strconv"
@@ -100,6 +101,15 @@ func firewallRuleDetail(port, proto, from string) string {
 	return d
 }
 
+// firewallErrStatus answers 400 for a rule the request itself got wrong and 500
+// for a failure of the firewall backend.
+func firewallErrStatus(err error) int {
+	if errors.Is(err, firewall.ErrInvalidRule) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
+}
+
 func (s *Server) handleFirewallAllow(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
@@ -123,7 +133,7 @@ func (s *Server) handleFirewallAllow(w http.ResponseWriter, r *http.Request) {
 	rule := firewallRuleDetail(req.Port, req.Proto, req.From)
 	if err := firewallAllowPort(req.Port, req.Proto, req.From); err != nil {
 		s.recordAuditR(r, "firewall.allow", rule+": "+err.Error(), false)
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		jsonError(w, err.Error(), firewallErrStatus(err))
 		return
 	}
 	s.recordAuditR(r, "firewall.allow", rule, true)
@@ -152,7 +162,7 @@ func (s *Server) handleFirewallDeny(w http.ResponseWriter, r *http.Request) {
 	rule := firewallRuleDetail(req.Port, req.Proto, req.From)
 	if err := firewallDenyPort(req.Port, req.Proto, req.From); err != nil {
 		s.recordAuditR(r, "firewall.deny", rule+": "+err.Error(), false)
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		jsonError(w, err.Error(), firewallErrStatus(err))
 		return
 	}
 	s.recordAuditR(r, "firewall.deny", rule, true)
@@ -181,7 +191,7 @@ func (s *Server) handleFirewallMove(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := firewallMoveRule(num, req.Direction); err != nil {
 		s.recordAuditR(r, "firewall.move", "rule "+numStr+" "+req.Direction+": "+err.Error(), false)
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		jsonError(w, err.Error(), firewallErrStatus(err))
 		return
 	}
 	s.recordAuditR(r, "firewall.move", "rule "+numStr+" "+req.Direction, true)

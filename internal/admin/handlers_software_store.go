@@ -30,7 +30,7 @@ func listSoftwareInstances() ([]softwareInstance, error) {
 		}
 		return nil, err
 	}
-	var out []softwareInstance
+	out := []softwareInstance{}
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue

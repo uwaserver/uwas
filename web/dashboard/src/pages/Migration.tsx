@@ -159,34 +159,34 @@ export default function Migration() {
             <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-5 space-y-3">
               <h3 className="text-sm font-semibold text-emerald-400">Import Complete</h3>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-center">
-                <div className="rounded-md bg-background p-3"><p className="text-lg font-bold text-foreground">{cpResult.domains.length}</p><p className="text-[10px] text-muted-foreground">Domains</p></div>
-                <div className="rounded-md bg-background p-3"><p className="text-lg font-bold text-foreground">{cpResult.databases.length}</p><p className="text-[10px] text-muted-foreground">Databases</p></div>
+                <div className="rounded-md bg-background p-3"><p className="text-lg font-bold text-foreground">{(cpResult.domains ?? []).length}</p><p className="text-[10px] text-muted-foreground">Domains</p></div>
+                <div className="rounded-md bg-background p-3"><p className="text-lg font-bold text-foreground">{(cpResult.databases ?? []).length}</p><p className="text-[10px] text-muted-foreground">Databases</p></div>
                 <div className="rounded-md bg-background p-3"><p className="text-lg font-bold text-foreground">{cpResult.ssl_certs}</p><p className="text-[10px] text-muted-foreground">SSL Certs</p></div>
-                <div className="rounded-md bg-background p-3"><p className="text-lg font-bold text-foreground">{cpResult.files_count.toLocaleString()}</p><p className="text-[10px] text-muted-foreground">Files</p></div>
+                <div className="rounded-md bg-background p-3"><p className="text-lg font-bold text-foreground">{(cpResult.files_count ?? 0).toLocaleString()}</p><p className="text-[10px] text-muted-foreground">Files</p></div>
               </div>
-              {cpResult.domains_added.length > 0 && (
+              {(cpResult.domains_added ?? []).length > 0 && (
                 <div>
                   <p className="text-xs font-medium text-muted-foreground mb-1">Domains added to UWAS:</p>
-                  <div className="flex flex-wrap gap-1">{cpResult.domains_added.map(d => (
+                  <div className="flex flex-wrap gap-1">{(cpResult.domains_added ?? []).map(d => (
                     <span key={d} className="rounded bg-emerald-500/15 px-2 py-0.5 text-xs text-emerald-400">{d}</span>
                   ))}</div>
                 </div>
               )}
-              {cpResult.databases.length > 0 && (
+              {(cpResult.databases ?? []).length > 0 && (
                 <div>
                   <p className="text-xs font-medium text-muted-foreground mb-1">Databases found:</p>
-                  {cpResult.databases.map(db => (
+                  {(cpResult.databases ?? []).map(db => (
                     <div key={db.name} className="flex items-center gap-2 text-xs text-card-foreground">
                       <Database size={11} /> {db.name} ({db.size_mb.toFixed(1)} MB)
                     </div>
                   ))}
                 </div>
               )}
-              {cpResult.errors.length > 0 && (
+              {(cpResult.errors ?? []).length > 0 && (
                 <div>
-                  <p className="text-xs font-medium text-amber-400 mb-1">Warnings ({cpResult.errors.length}):</p>
+                  <p className="text-xs font-medium text-amber-400 mb-1">Warnings ({(cpResult.errors ?? []).length}):</p>
                   <pre className="max-h-32 overflow-auto rounded bg-background p-2 text-[10px] text-amber-400">
-                    {cpResult.errors.join('\n')}
+                    {(cpResult.errors ?? []).join('\n')}
                   </pre>
                 </div>
               )}

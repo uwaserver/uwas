@@ -5,6 +5,23 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.38
+
+Drop-in binary; no config or data migration. Behavior changes worth knowing:
+
+- `backup.schedule` / `backup.cron` are validated when backups are enabled; an
+  invalid value (for example `daily`) now fails config load instead of silently
+  never running.
+- A second SIGINT/SIGTERM during graceful shutdown terminates the process
+  immediately.
+- Firewall allow/deny/move and cron add return 400 (not 500) for invalid input.
+- Service start/stop/restart and other mutating routes now write audit-log
+  entries; the package install endpoint accepts only `install` and `remove`.
+- Doctor looks for certificates in `global.acme.storage` and for domains in
+  `domains_dir`.
+
+---
+
 ## Upgrading to v0.11.37
 
 Drop-in binary; no config or data migration. Behavior changes worth knowing:

@@ -79,6 +79,12 @@ func NewSecurityStats() *SecurityStats {
 
 // Record adds a blocked request to stats.
 func (s *SecurityStats) Record(ip, path, reason, ua string) {
+	// The WAF and the bot guard pass r.RemoteAddr; every other caller passes
+	// the bare IP. Store one form so the dashboard does not show "ip:port"
+	// for some rejections and "ip" for the rest (F34601).
+	if host, _, err := net.SplitHostPort(ip); err == nil {
+		ip = host
+	}
 	s.TotalBlocked.Add(1)
 	switch reason {
 	case "waf":

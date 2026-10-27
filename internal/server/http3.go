@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 
 	"github.com/quic-go/quic-go/http3"
@@ -12,6 +13,14 @@ import (
 func (s *Server) startHTTP3() error {
 	addr := s.config.Global.HTTPSListen
 	tlsCfg := s.tlsMgr.TLSConfig()
+
+	// Bind the UDP port here, not inside the serve goroutine: a bind failure
+	// must reach the caller and keep Alt-Svc from advertising a listener that
+	// does not exist (F35000).
+	conn, err := net.ListenPacket("udp", addr)
+	if err != nil {
+		return err
+	}
 
 	h3srv := &http3.Server{
 		Addr:      addr,
@@ -25,14 +34,19 @@ func (s *Server) startHTTP3() error {
 		IdleTimeout:    s.config.Global.Timeouts.Idle.Duration,
 	}
 
+	// Request goroutines already read h3srv through altSvcHeader (F35001).
+	s.cfgMu().Lock()
 	s.h3srv = h3srv
+	s.cfgMu().Unlock()
 
 	s.logger.Info("listening", "address", addr, "protocol", "HTTP/3 (QUIC)")
 
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		if err := h3srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		// Serve does not close the connection it is given.
+		defer conn.Close()
+		if err := h3srv.Serve(conn); err != nil && err != http.ErrServerClosed {
 			s.logger.Error("http/3 serve error", "error", err)
 		}
 	}()
@@ -49,9 +63,10 @@ func (s *Server) altSvcHeader() string {
 	s.cfgMu().RLock()
 	enabled := s.config.Global.HTTP3Enabled
 	addr := s.config.Global.HTTPSListen
+	h3 := s.h3srv
 	s.cfgMu().RUnlock()
 
-	if !enabled || s.h3srv == nil {
+	if !enabled || h3 == nil {
 		return ""
 	}
 	// Extract port from HTTPS listen address

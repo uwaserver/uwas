@@ -369,6 +369,21 @@ func (s *Server) handleMigrateCPanel(w http.ResponseWriter, r *http.Request) {
 		s.recordAuditR(r, "migrate.cpanel.domains", strings.Join(added, ", "), true)
 	}
 
+	// The dashboard reads .length on every list; nil slices would serialize
+	// as null and crash it after a perfectly successful import.
+	if result.Domains == nil {
+		result.Domains = []migrate.CPanelDomain{}
+	}
+	if result.Databases == nil {
+		result.Databases = []migrate.CPanelDatabase{}
+	}
+	if result.Errors == nil {
+		result.Errors = []string{}
+	}
+	if added == nil {
+		added = []string{}
+	}
+
 	jsonResponse(w, map[string]any{
 		"status":        "imported",
 		"user":          result.User,

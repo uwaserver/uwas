@@ -743,7 +743,7 @@ func (h *Handler) ExploreTables(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "query failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	var tables []map[string]string
+	tables := []map[string]string{}
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		if line == "" {
 			continue
@@ -775,7 +775,7 @@ func (h *Handler) ExploreColumns(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "query failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	var columns []map[string]string
+	columns := []map[string]string{}
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		if line == "" {
 			continue
@@ -900,8 +900,11 @@ func (h *Handler) ExploreQuery(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]any{"columns": []string{}, "rows": [][]string{}, "affected": out})
 		return
 	}
-	headers := strings.Split(lines[0], "\t")
-	var rows [][]string
+	headers := []string{} // a result set without rows prints nothing at all
+	if strings.TrimSpace(out) != "" {
+		headers = strings.Split(lines[0], "\t")
+	}
+	rows := [][]string{}
 	maxRows := 500
 	for _, line := range lines[1:] {
 		if line != "" {

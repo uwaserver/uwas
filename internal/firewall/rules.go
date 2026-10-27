@@ -32,7 +32,7 @@ func validateFrom(from string) error {
 	if _, err := netip.ParsePrefix(from); err == nil {
 		return nil
 	}
-	return fmt.Errorf("invalid source address %q — use an IP or CIDR (e.g. 203.0.113.10 or 10.0.0.0/8)", from)
+	return invalidRulef("invalid source address %q — use an IP or CIDR (e.g. 203.0.113.10 or 10.0.0.0/8)", from)
 }
 
 // normalizePort returns "" for empty/"any"/"all"/"*" (meaning any port).
@@ -50,7 +50,7 @@ func normalizePort(port string) string {
 func buildPortRuleArgs(action, port, proto, from string, insertAt int) ([]string, error) {
 	action = strings.ToLower(strings.TrimSpace(action))
 	if action != "allow" && action != "deny" && action != "reject" {
-		return nil, fmt.Errorf("invalid action %q", action)
+		return nil, invalidRulef("invalid action %q", action)
 	}
 	port = normalizePort(port)
 	if port != "" {
@@ -305,10 +305,10 @@ func MoveRule(number int, direction string) error {
 	}
 	dir := strings.ToLower(strings.TrimSpace(direction))
 	if dir != "up" && dir != "down" {
-		return fmt.Errorf("direction must be up or down")
+		return invalidRulef("direction must be up or down")
 	}
 	if number <= 0 {
-		return fmt.Errorf("invalid rule number")
+		return invalidRulef("invalid rule number")
 	}
 
 	st := getUFWStatus()

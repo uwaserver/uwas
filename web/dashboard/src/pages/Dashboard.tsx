@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link as RouterLink, useNavigate } from 'react-router';
 import {
   Activity, Zap, HardDrive, Clock, CheckCircle, AlertTriangle,
@@ -33,12 +33,21 @@ export default function Dashboard() {
   // before the API responds — and worse, the wizard would also appear if the
   // API fails entirely, hiding the real error from the user.
   const [domainsLoaded, setDomainsLoaded] = useState(false);
+  // A failed domain list request is not "no domains": keep the wizard hidden
+  // and say what went wrong.
+  const [domainsError, setDomainsError] = useState('');
+  const loadDomains = useCallback(() => {
+    fetchDomains()
+      .then(d => { setDomains(d ?? []); setDomainsError(''); })
+      .catch(e => setDomainsError((e as Error).message || 'request failed'))
+      .finally(() => setDomainsLoaded(true));
+  }, []);
   useEffect(() => {
-    fetchDomains().then(d => setDomains(d ?? [])).catch(() => {}).finally(() => setDomainsLoaded(true));
+    loadDomains();
     fetchCerts().then(c => setCerts(c ?? [])).catch(() => {});
     fetchSecurityStats().then(setSecurity).catch(() => {});
     fetchPHP().then(p => setPhp(p ?? [])).catch(() => {});
-  }, []);
+  }, [loadDomains]);
 
   usePolling(() => {
     fetchSystem().then(setSysInfo).catch(() => {});
@@ -79,7 +88,7 @@ export default function Dashboard() {
 
       {/* Quick stats row */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <Card icon={<Globe size={18} />} label="Domains" value={String(domains.length)} />
+        <Card icon={<Globe size={18} />} label="Domains" value={domainsError && domains.length === 0 ? '--' : String(domains.length)} />
         <Card icon={<Activity size={18} />} label="Requests" value={stats?.requests_total.toLocaleString() ?? '--'} />
         <Card icon={<Zap size={18} />} label="Cache Hit" value={`${hitRate}%`} />
         <Card icon={<HardDrive size={18} />} label="Connections" value={stats?.active_conns.toLocaleString() ?? '--'} />
@@ -90,7 +99,14 @@ export default function Dashboard() {
       {/* First-run setup wizard — shown only after we confirm the server has
           no domains. domainsLoaded gates this so the wizard does NOT flash
           during initial load and does NOT appear if the API call fails. */}
-      {domainsLoaded && domains.length === 0 && (
+      {domainsError && (
+        <div className="flex items-center justify-between gap-3 rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">
+          <span>Could not load domains: {domainsError}</span>
+          <button onClick={loadDomains} className="rounded-md bg-red-500/20 px-2.5 py-1 text-xs hover:bg-red-500/30">Retry</button>
+        </div>
+      )}
+
+      {domainsLoaded && !domainsError && domains.length === 0 && (
         <div className="rounded-xl border-2 border-dashed border-blue-500/30 bg-blue-500/5 p-8">
           <div className="text-center mb-6">
             <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-500/15">

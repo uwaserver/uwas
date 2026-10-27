@@ -676,7 +676,7 @@ func (s *Server) handleSoftwareMonitorSummary(w http.ResponseWriter, r *http.Req
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	summary := softwareMonitorSummary{}
+	summary := softwareMonitorSummary{Items: []softwareMonitorResponse{}}
 	for _, inst := range items {
 		mon := collectSoftwareMonitor(inst)
 		summary.Items = append(summary.Items, mon)
