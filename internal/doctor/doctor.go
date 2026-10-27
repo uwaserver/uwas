@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/uwaserver/uwas/internal/config"
 )
 
 // Testable hooks — override in tests to avoid real system calls.
@@ -27,6 +29,7 @@ var (
 	osReadDirFn      = os.ReadDir
 	osReadFileFn     = os.ReadFile
 	osMkdirAllFn     = os.MkdirAll
+	configLoadFn     = config.Load
 	timeSleepFn      = time.Sleep
 )
 
@@ -400,6 +403,12 @@ func checkDomainsDir(configPath string) Check {
 	dir := "domains.d"
 	if configPath != "" {
 		dir = filepath.Join(filepath.Dir(configPath), "domains.d")
+		if cfg, err := configLoadFn(configPath); err == nil && cfg.DomainsDir != "" {
+			dir = cfg.DomainsDir
+			if !filepath.IsAbs(dir) {
+				dir = filepath.Join(filepath.Dir(configPath), dir)
+			}
+		}
 	}
 	entries, err := osReadDirFn(dir)
 	if err != nil {
@@ -418,6 +427,11 @@ func checkSSLCerts(configPath string) Check {
 	dir := "/etc/uwas/certs"
 	if configPath != "" {
 		dir = filepath.Join(filepath.Dir(configPath), "certs")
+		// The server keeps certificates in global.acme.storage, which is not
+		// next to the config file on a system install.
+		if cfg, err := configLoadFn(configPath); err == nil && cfg.Global.ACME.Storage != "" {
+			dir = cfg.Global.ACME.Storage
+		}
 	}
 	if _, err := osStatFn(dir); os.IsNotExist(err) {
 		return Check{Name: "SSL Certificates", Status: StatusWarn, Message: "No certs directory — SSL will be requested on first domain add"}

@@ -2,6 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import DNS from './DNS';
+import { ConfirmContext } from '@/components/useConfirm';
+
+const confirmValue = {
+  confirmAction: vi.fn().mockResolvedValue(true),
+  promptText: vi.fn().mockResolvedValue(null),
+};
 
 // ── API boundary mock (only the boundary — the real component runs) ─────────
 const apiMocks = vi.hoisted(() => ({
@@ -59,7 +65,7 @@ describe('DNS deep-link auto-load must not retry in an unbounded loop', () => {
     window.history.replaceState({}, '', '/dns?domain=x.com');
     render(
       <MemoryRouter initialEntries={['/dns?domain=x.com']}>
-        <DNS />
+        <ConfirmContext.Provider value={confirmValue}><DNS /></ConfirmContext.Provider>
       </MemoryRouter>,
     );
     await flush();
@@ -96,7 +102,7 @@ describe('DNS deep-link auto-load must not retry in an unbounded loop', () => {
     window.history.replaceState({}, '', '/dns?domain=x.com');
     render(
       <MemoryRouter initialEntries={['/dns?domain=x.com']}>
-        <DNS />
+        <ConfirmContext.Provider value={confirmValue}><DNS /></ConfirmContext.Provider>
       </MemoryRouter>,
     );
     await flush();
@@ -115,7 +121,7 @@ describe('DNS deep-link auto-load must not retry in an unbounded loop', () => {
     window.history.replaceState({}, '', '/dns');
     render(
       <MemoryRouter initialEntries={['/dns']}>
-        <DNS />
+        <ConfirmContext.Provider value={confirmValue}><DNS /></ConfirmContext.Provider>
       </MemoryRouter>,
     );
     await flush();
@@ -127,7 +133,7 @@ describe('DNS deep-link auto-load must not retry in an unbounded loop', () => {
     window.history.replaceState({}, '', '/dns?domain=x.com');
     render(
       <MemoryRouter initialEntries={['/dns?domain=x.com']}>
-        <DNS />
+        <ConfirmContext.Provider value={confirmValue}><DNS /></ConfirmContext.Provider>
       </MemoryRouter>,
     );
     await flush();

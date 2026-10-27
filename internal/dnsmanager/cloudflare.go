@@ -244,11 +244,25 @@ func (c *CloudflareProvider) ListRecords(zoneID string) ([]Record, error) {
 	return records, nil
 }
 
+// cfRecordBody is the request body for a record write. Record.Priority is
+// omitempty, which drops a valid preference of 0; Cloudflare requires the field
+// on MX, SRV and URI records.
+func cfRecordBody(rec Record) any {
+	switch strings.ToUpper(rec.Type) {
+	case "MX", "SRV", "URI":
+		return struct {
+			Record
+			Priority int `json:"priority"`
+		}{rec, rec.Priority}
+	}
+	return rec
+}
+
 func (c *CloudflareProvider) CreateRecord(zoneID string, rec Record) (*Record, error) {
 	if rec.TTL == 0 {
 		rec.TTL = 1 // auto
 	}
-	data, err := c.do("POST", fmt.Sprintf("/zones/%s/dns_records", zoneID), rec)
+	data, err := c.do("POST", fmt.Sprintf("/zones/%s/dns_records", zoneID), cfRecordBody(rec))
 	if err != nil {
 		return nil, err
 	}
@@ -269,7 +283,7 @@ func (c *CloudflareProvider) UpdateRecord(zoneID, recordID string, rec Record) (
 	// authorizes the operation against the {domain} path value, not against the
 	// zone the request ultimately reaches, so the escape crosses a tenant
 	// boundary. recordID arrives from r.PathValue("id").
-	data, err := c.do("PUT", fmt.Sprintf("/zones/%s/dns_records/%s", url.PathEscape(zoneID), url.PathEscape(recordID)), rec)
+	data, err := c.do("PUT", fmt.Sprintf("/zones/%s/dns_records/%s", url.PathEscape(zoneID), url.PathEscape(recordID)), cfRecordBody(rec))
 	if err != nil {
 		return nil, err
 	}

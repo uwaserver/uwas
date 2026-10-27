@@ -699,7 +699,10 @@ func (s *Server) parseHtaccessFull(root string) *htaccessCacheEntry {
 			target := rw.Target
 			// RewriteBase is prepended to relative targets (those not starting with /).
 			// Apache behavior: RewriteBase only affects targets that don't start with /.
-			if base != "" && target != "" && target != "-" && !strings.HasPrefix(target, "/") {
+			// An absolute http(s) URL is already complete (F30600).
+			lt := strings.ToLower(target)
+			absolute := strings.HasPrefix(lt, "http://") || strings.HasPrefix(lt, "https://")
+			if base != "" && target != "" && target != "-" && !strings.HasPrefix(target, "/") && !absolute {
 				target = base + target
 			}
 			rule, err := rewrite.ParseRule(perDirPattern(rw.Pattern), target, rw.Flags)

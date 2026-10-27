@@ -206,7 +206,7 @@ func (v *Variables) lookup(name string) string {
 	switch strings.ToUpper(name) {
 	case "REQUEST_URI":
 		return v.RequestURI
-	case "REQUEST_FILENAME":
+	case "REQUEST_FILENAME", "SCRIPT_FILENAME": // Apache: the same value
 		return v.RequestFilename
 	case "QUERY_STRING":
 		return v.QueryString
@@ -216,7 +216,7 @@ func (v *Variables) lookup(name string) string {
 		return v.HTTPReferer
 	case "HTTP_USER_AGENT":
 		return v.HTTPUserAgent
-	case "REMOTE_ADDR":
+	case "REMOTE_ADDR", "REMOTE_HOST": // no reverse lookup, as with HostnameLookups Off
 		return v.RemoteAddr
 	case "REQUEST_METHOD":
 		return v.RequestMethod

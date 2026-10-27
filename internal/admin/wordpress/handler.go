@@ -119,6 +119,7 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 	h.mu.Unlock()
 
 	h.deps.LogInfo("starting WordPress install", "domain", req.Domain)
+	h.deps.RecordAudit(r, "wordpress.install", "domain: "+req.Domain, true)
 
 	go func() {
 		result := installFn(req)

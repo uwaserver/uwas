@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { FileText, Search, Pause, Play, RefreshCw, Filter, Download } from 'lucide-react';
 import { usePolling } from '@/hooks/usePolling';
 import { fetchLogs, type LogEntry } from '@/lib/api';
@@ -68,9 +68,15 @@ export default function Logs() {
   const [methodFilter, setMethodFilter] = useState<MethodFilter>('all');
   const [showExport, setShowExport] = useState(false);
 
-  const load = useCallback(async () => {
+  // Pause must also freeze a poll that was already in flight when it was
+  // clicked; an explicit Refresh of an already-paused view (force) still lands.
+  const pausedRef = useRef(false);
+  pausedRef.current = paused;
+
+  const load = useCallback(async (force?: boolean) => {
     try {
       const data = await fetchLogs();
+      if (force !== true && pausedRef.current) return;
       setLogs((data ?? []).slice(-100));
       setError('');
     } catch (e) {
@@ -82,7 +88,7 @@ export default function Logs() {
 
   useEffect(() => { load(); }, [load]);
 
-  usePolling(load, paused ? null : 2000);
+  usePolling(() => load(), paused ? null : 2000);
 
   const filtered = logs.filter((entry) => {
     if (!matchesFilter(entry.status, filter)) return false;
@@ -120,7 +126,7 @@ export default function Logs() {
             {paused ? 'Resume' : 'Pause'}
           </button>
           <button
-            onClick={load}
+            onClick={() => load(paused)}
             disabled={loading}
             className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm text-card-foreground transition hover:bg-accent disabled:opacity-50"
           >

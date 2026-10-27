@@ -158,9 +158,14 @@ func (h *Handler) GenRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 		hashed[i] = hashRecoveryCode(codes[i])
 	}
 	h.deps.LockConfig()
+	prevCodes := h.deps.ConfigPtr().Global.Admin.RecoveryCodes
 	h.deps.ConfigPtr().Global.Admin.RecoveryCodes = hashed
 	h.deps.UnlockConfig()
 	if err := h.deps.PersistConfig(); err != nil {
+		// The caller never sees the new codes; keep the old ones usable.
+		h.deps.LockConfig()
+		h.deps.ConfigPtr().Global.Admin.RecoveryCodes = prevCodes
+		h.deps.UnlockConfig()
 		h.deps.RecordAudit(r, "2fa.recovery_codes.generated", err.Error(), false)
 		jsonError(w, "failed to persist recovery codes", http.StatusInternalServerError)
 		return
@@ -185,6 +190,7 @@ func (h *Handler) UseRecoveryCode(w http.ResponseWriter, r *http.Request) {
 	h.deps.LockConfig()
 	found := false
 	codes := h.deps.ConfigPtr().Global.Admin.RecoveryCodes
+	prevTOTP := h.deps.ConfigPtr().Global.Admin.TOTPSecret
 	for i, c := range codes {
 		if subtle.ConstantTimeCompare([]byte(c), []byte(sum)) == 1 {
 			// Build a new slice: persistConfig marshals a snapshot of the old
@@ -208,6 +214,12 @@ func (h *Handler) UseRecoveryCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.deps.PersistConfig(); err != nil {
+		// Undo the in-memory change so the live config matches the disk:
+		// the code stays valid and TOTP stays required.
+		h.deps.LockConfig()
+		h.deps.ConfigPtr().Global.Admin.RecoveryCodes = codes
+		h.deps.ConfigPtr().Global.Admin.TOTPSecret = prevTOTP
+		h.deps.UnlockConfig()
 		h.deps.RecordAudit(r, "2fa.recovery_code.used", err.Error(), false)
 		jsonError(w, "failed to persist recovery code change", http.StatusInternalServerError)
 		return

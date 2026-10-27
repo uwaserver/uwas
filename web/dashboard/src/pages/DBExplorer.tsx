@@ -94,6 +94,9 @@ export default function DBExplorer() {
   // previous table's columns.
   const tablesSeqRef = useRef(0);
   const columnsSeqRef = useRef(0);
+  // Same guard for the query runner: a query still in flight when the
+  // database changes must not publish its rows under the new selection.
+  const querySeqRef = useRef(0);
 
   const loadTables = useCallback(async (db: string) => {
     const seq = ++tablesSeqRef.current;
@@ -132,6 +135,7 @@ export default function DBExplorer() {
   // toasts from a previously selected database.
   useEffect(() => {
     if (selectedDB) {
+      querySeqRef.current++; // invalidate any query running against the previous DB
       loadTables(selectedDB);
       setSelectedTable('');
       setColumns([]);
@@ -151,21 +155,25 @@ export default function DBExplorer() {
   const executeQuery = async () => {
     if (!selectedDB || !query.trim()) return;
 
+    const seq = ++querySeqRef.current;
     try {
       setLoading(true);
       setError('');
       setSuccess('');
       const result = await runDBQuery(selectedDB, query);
+      if (querySeqRef.current !== seq) return; // database changed meanwhile — do not commit
       setQueryResult(result);
       setSuccess(`Query executed successfully. ${result.count} rows returned.`);
       // Auto-dismiss the green toast — without this it stayed forever and
       // could end up displayed alongside an error from a later failed query.
       window.setTimeout(() => setSuccess(s => s.startsWith('Query executed') ? '' : s), 4000);
     } catch (err: unknown) {
+      if (querySeqRef.current !== seq) return; // superseded — do not surface
       setError(errorMessage(err, 'Query execution failed'));
       setQueryResult(null);
     } finally {
-      setLoading(false);
+      // loadTables owns the flag once the database has changed
+      if (querySeqRef.current === seq) setLoading(false);
     }
   };
 

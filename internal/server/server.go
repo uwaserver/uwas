@@ -1493,24 +1493,29 @@ func directPeerIP(r *http.Request) string {
 func (s *Server) handleSignals() {
 	defer s.wg.Done()
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	// SIGINT/SIGTERM and SIGHUP use separate channels: the first shutdown
+	// signal must hand SIGINT/SIGTERM back to the default action, so a second
+	// Ctrl+C during the drain forces the process down, while a SIGHUP during
+	// the drain stays harmless.
+	termCh := make(chan os.Signal, 1)
+	signal.Notify(termCh, syscall.SIGINT, syscall.SIGTERM)
+	hupCh := make(chan os.Signal, 1)
+	signal.Notify(hupCh, syscall.SIGHUP)
 
 	for {
 		select {
-		case sig := <-sigCh:
-			switch sig {
-			case syscall.SIGHUP:
-				s.logger.Info("received SIGHUP, reloading config")
-				if err := s.reload(); err != nil {
-					s.logger.Error("config reload failed", "error", err)
-				}
-			case syscall.SIGINT, syscall.SIGTERM:
-				s.logger.Info("received signal, shutting down", "signal", sig)
-				s.cancel()
-				return
+		case <-hupCh:
+			s.logger.Info("received SIGHUP, reloading config")
+			if err := s.reload(); err != nil {
+				s.logger.Error("config reload failed", "error", err)
 			}
+		case sig := <-termCh:
+			s.logger.Info("received signal, shutting down", "signal", sig)
+			signal.Stop(termCh)
+			s.cancel()
+			return
 		case <-s.ctx.Done():
+			signal.Stop(termCh)
 			return
 		}
 	}

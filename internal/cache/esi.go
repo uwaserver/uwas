@@ -222,18 +222,9 @@ func esiFragmentKey(host, path string) string {
 }
 
 func parseFragmentTTL(headers http.Header) time.Duration {
-	cc := headers.Get("Cache-Control")
-	if cc == "" {
-		return 0
-	}
-	for _, part := range strings.Split(cc, ",") {
-		part = strings.ToLower(strings.TrimSpace(part))
-		if strings.HasPrefix(part, "max-age=") {
-			var secs int
-			if _, err := fmt.Sscanf(part, "max-age=%d", &secs); err == nil && secs > 0 {
-				return time.Duration(secs) * time.Second
-			}
-		}
+	// Same reading as the page cache: lines joined, s-maxage before max-age.
+	if origin, ok := originMaxAge(strings.Join(headers.Values("Cache-Control"), ",")); ok && origin > 0 {
+		return origin
 	}
 	return 0
 }

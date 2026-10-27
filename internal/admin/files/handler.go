@@ -5,6 +5,7 @@ package files
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -581,9 +582,15 @@ func (h *Handler) CronAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := cronjob.Add(job); err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		h.deps.RecordAudit(r, "cron.add", job.Schedule+" "+job.Command+": "+err.Error(), false)
+		status := http.StatusInternalServerError
+		if errors.Is(err, cronjob.ErrInvalidJob) {
+			status = http.StatusBadRequest
+		}
+		jsonError(w, err.Error(), status)
 		return
 	}
+	h.deps.RecordAudit(r, "cron.add", job.Schedule+" "+job.Command, true)
 	h.deps.LogInfo("cron job added", "schedule", job.Schedule, "command", job.Command)
 	jsonResponse(w, map[string]string{"status": "added"})
 }
@@ -602,9 +609,11 @@ func (h *Handler) CronDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := cronjob.Remove(req.Schedule, req.Command); err != nil {
+		h.deps.RecordAudit(r, "cron.delete", req.Schedule+" "+req.Command+": "+err.Error(), false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	h.deps.RecordAudit(r, "cron.delete", req.Schedule+" "+req.Command, true)
 	jsonResponse(w, map[string]string{"status": "removed"})
 }
 

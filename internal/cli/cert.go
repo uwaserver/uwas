@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -113,7 +114,7 @@ func (c *CertCommand) renew(domain string, args []string) error {
 	}
 
 	fmt.Printf("Renewing certificate for %s...\n", domain)
-	body, err := apiRequest("POST", *apiURL+"/api/v1/certs/"+domain+"/renew", *apiKey, strings.NewReader("{}"))
+	body, err := apiRequest("POST", *apiURL+"/api/v1/certs/"+url.PathEscape(domain)+"/renew", *apiKey, strings.NewReader("{}"))
 	if err != nil {
 		return fmt.Errorf("renewal failed: %w", err)
 	}

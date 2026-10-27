@@ -3,14 +3,18 @@ package notify
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
 	"io"
+	"mime"
 	"net"
 	"net/http"
+	"net/mail"
 	"net/smtp"
 	"net/url"
 	"os"
@@ -283,6 +287,14 @@ func resetServerIdentityForTest() {
 // for good, one per alert (F13600).
 var smtpTimeout = 20 * time.Second
 
+// smtpImplicitTLSPort is the submission port that speaks TLS from the first
+// byte (SMTPS); smtpTLSConfig builds the client TLS config. Both are
+// overridable in tests.
+var (
+	smtpImplicitTLSPort = "465"
+	smtpTLSConfig       = func(host string) *tls.Config { return &tls.Config{ServerName: host} }
+)
+
 // sendMailBounded is smtp.SendMail with a deadline on the connection: same
 // sequence (EHLO, STARTTLS when offered, AUTH, MAIL, RCPT, DATA, QUIT).
 func sendMailBounded(addr string, a smtp.Auth, from string, to []string, msg []byte) error {
@@ -294,12 +306,18 @@ func sendMailBounded(addr string, a smtp.Auth, from string, to []string, msg []b
 	if len(to) == 0 {
 		return errors.New("smtp: no recipients")
 	}
-	host, _, err := net.SplitHostPort(addr)
+	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return err
 	}
 	d := net.Dialer{Timeout: smtpTimeout}
-	conn, err := d.Dial("tcp", addr)
+	var conn net.Conn
+	implicitTLS := port == smtpImplicitTLSPort
+	if implicitTLS {
+		conn, err = tls.DialWithDialer(&d, "tcp", addr, smtpTLSConfig(host))
+	} else {
+		conn, err = d.Dial("tcp", addr)
+	}
 	if err != nil {
 		return err
 	}
@@ -316,8 +334,8 @@ func sendMailBounded(addr string, a smtp.Auth, from string, to []string, msg []b
 	if err = c.Hello("localhost"); err != nil {
 		return err
 	}
-	if ok, _ := c.Extension("STARTTLS"); ok {
-		if err = c.StartTLS(&tls.Config{ServerName: host}); err != nil {
+	if ok, _ := c.Extension("STARTTLS"); ok && !implicitTLS {
+		if err = c.StartTLS(smtpTLSConfig(host)); err != nil {
 			return err
 		}
 	}
@@ -382,15 +400,26 @@ func sendEmail(cfg map[string]string, msg Message) error {
 	// injection (an extra header or a smuggled body via a crafted title/from).
 	from = stripCRLF(from)
 	subject := fmt.Sprintf("[UWAS] %s: %s", strings.ToUpper(msg.Level), stripCRLF(msg.Title))
-	body := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\n\r\n%s\n\nSource: %s",
-		from, strings.Join(recipients, ", "), subject, msg.Body, msg.Source)
+	// The envelope sender must be a bare address; "Name <addr>" stays in From:.
+	envFrom, msgIDHost := from, "localhost"
+	if a, err := mail.ParseAddress(from); err == nil {
+		envFrom = a.Address
+		if i := strings.LastIndexByte(a.Address, '@'); i >= 0 {
+			msgIDHost = a.Address[i+1:]
+		}
+	}
+	var rnd [12]byte
+	_, _ = rand.Read(rnd[:])
+	body := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nDate: %s\r\nMessage-ID: <%s@%s>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n%s\n\nSource: %s",
+		from, strings.Join(recipients, ", "), mime.QEncoding.Encode("utf-8", subject),
+		time.Now().Format(time.RFC1123Z), hex.EncodeToString(rnd[:]), msgIDHost, msg.Body, msg.Source)
 
 	addr := net.JoinHostPort(host, port)
 	var auth smtp.Auth
 	if user != "" {
 		auth = smtp.PlainAuth("", user, pass, host)
 	}
-	return smtpSendMailFn(addr, auth, from, recipients, []byte(body))
+	return smtpSendMailFn(addr, auth, envFrom, recipients, []byte(body))
 }
 
 // stripCRLF removes carriage returns and line feeds so a value cannot break out

@@ -191,7 +191,7 @@ func (p *Route53Provider) listRRSets(zoneID string) ([]r53RRSet, error) {
 // sibling value.
 func (p *Route53Provider) CreateRecord(zoneID string, rec Record) (*Record, error) {
 	name := r53FQDN(rec.Name)
-	raw := r53EncodeValue(rec.Type, rec.Content)
+	raw := r53EncodeValue(rec.Type, mxValue(rec))
 	rec.ID = r53RecordID(name, rec.Type, raw)
 	err := p.submitChanges(zoneID, r53Change{"CREATE", name, rec.Type, r53DefaultTTL(rec.TTL), []string{raw}})
 	var apiErr *r53APIError
@@ -238,7 +238,7 @@ func (p *Route53Provider) UpdateRecord(zoneID, recordID string, rec Record) (*Re
 		return nil, err
 	}
 	name := r53FQDN(rec.Name)
-	newRaw := r53EncodeValue(rec.Type, rec.Content)
+	newRaw := r53EncodeValue(rec.Type, mxValue(rec))
 	if !hasValue {
 		if err := p.submitChanges(zoneID, r53Change{"UPSERT", name, rec.Type, r53DefaultTTL(rec.TTL), []string{newRaw}}); err != nil {
 			return nil, err

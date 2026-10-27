@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -171,6 +172,7 @@ func Install(req InstallRequest) InstallResult {
 	if req.DBUser == "" {
 		req.DBUser = req.DBName
 	}
+	generatedPass := req.DBPass == ""
 	if req.DBPass == "" {
 		var genErr error
 		req.DBPass, genErr = generateSecret(16)
@@ -178,6 +180,17 @@ func Install(req InstallRequest) InstallResult {
 			result.Error = genErr.Error()
 			return result
 		}
+	}
+	// createMySQLDB uses CREATE USER IF NOT EXISTS, which keeps an existing
+	// account's password, while wp-config.php would get the one generated just
+	// now. A retry after a failed download (the account is created before it)
+	// or a reinstall would then report "done" for a site that cannot connect.
+	// A password the caller supplied is theirs to vouch for; only a generated
+	// one is certainly wrong for an account that already exists.
+	if generatedPass && mysqlAccountExists(req.DBUser, req.DBHost) {
+		result.Status = "error"
+		result.Error = fmt.Sprintf("database user %q@%q already exists and its password is not known to UWAS; supply db_pass or choose another db_user (or drop the old account)", req.DBUser, req.DBHost)
+		return result
 	}
 	if req.SiteTitle == "" {
 		req.SiteTitle = req.Domain
@@ -275,6 +288,38 @@ add_filter('got_rewrite', '__return_true');
 	result.AdminURL = fmt.Sprintf("https://%s/wp-admin/install.php", req.Domain)
 	result.Output = log.String()
 	return result
+}
+
+// mysqlAccountExists reports whether user@host is already a MySQL account. Any
+// failure to ask (no client, no access) answers false: createMySQLDB then runs
+// as before and reports its own error.
+func mysqlAccountExists(user, host string) bool {
+	if !database.ValidDBIdentifier(user) {
+		return false
+	}
+	if _, err := execLookPathFn("mysql"); err != nil {
+		return false
+	}
+	sql := fmt.Sprintf("SELECT COUNT(*) FROM mysql.user WHERE User = '%s' AND Host = '%s';", escSQL(user), escSQL(host))
+	run := func(args ...string) (string, error) {
+		cmd := execCommandFn("mysql", args...)
+		cmd.Stdin = strings.NewReader(sql)
+		out, err := cmd.Output()
+		return string(out), err
+	}
+	out, err := run("-u", "root", "-N", "-B")
+	if err != nil {
+		out, err = run("-N", "-B")
+	}
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if n, convErr := strconv.Atoi(strings.TrimSpace(line)); convErr == nil && n > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func createMySQLDB(dbName, dbUser, dbPass, dbHost string, log *strings.Builder) error {
@@ -406,9 +451,19 @@ func downloadAndExtract(webRoot string, log *strings.Builder) error {
 	}
 	// If checksum file unavailable, continue (best-effort)
 
-	// Extract — tar xzf to parent, then move wordpress/* to webRoot
+	// Extract into a private directory beside webRoot (same filesystem, so the
+	// moves below are renames), then move wordpress/* into webRoot. The tarball
+	// used to be unpacked straight into <parent>/wordpress: for a document root
+	// named "wordpress" that directory IS the web root, and removing it
+	// afterwards deleted the whole install; a sibling site's "wordpress" folder
+	// was overwritten, drained into this site and removed.
 	parentDir := filepath.Dir(webRoot)
-	cmd := execCommandFn("tar", "xzf", tarPath, "-C", parentDir)
+	tmpDir, err := os.MkdirTemp(parentDir, ".uwas-wp-extract-*")
+	if err != nil {
+		return fmt.Errorf("create extract dir: %w", err)
+	}
+	defer osRemoveAllFn(tmpDir)
+	cmd := execCommandFn("tar", "xzf", tarPath, "-C", tmpDir)
 	out, err := cmd.CombinedOutput()
 	log.Write(out)
 	if err != nil {
@@ -416,7 +471,7 @@ func downloadAndExtract(webRoot string, log *strings.Builder) error {
 	}
 
 	// Move wordpress/* to webRoot
-	extractedDir := filepath.Join(parentDir, "wordpress")
+	extractedDir := filepath.Join(tmpDir, "wordpress")
 	if _, err := osStatFn(extractedDir); err == nil {
 		entries, _ := osReadDirFn(extractedDir)
 		for _, entry := range entries {
@@ -428,7 +483,6 @@ func downloadAndExtract(webRoot string, log *strings.Builder) error {
 				return fmt.Errorf("move %s into %s: %w", entry.Name(), webRoot, err)
 			}
 		}
-		osRemoveAllFn(extractedDir)
 	}
 	log.WriteString(fmt.Sprintf("Extracted to %s\n", webRoot))
 

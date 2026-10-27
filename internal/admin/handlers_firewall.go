@@ -88,6 +88,18 @@ func (s *Server) handleFirewallStatus(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, firewallGetStatus())
 }
 
+// firewallRuleDetail renders a port/proto/source rule for the audit log.
+func firewallRuleDetail(port, proto, from string) string {
+	d := "port: " + port
+	if proto != "" {
+		d += "/" + proto
+	}
+	if from != "" {
+		d += " from: " + from
+	}
+	return d
+}
+
 func (s *Server) handleFirewallAllow(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
@@ -108,10 +120,13 @@ func (s *Server) handleFirewallAllow(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "port or source IP required", http.StatusBadRequest)
 		return
 	}
+	rule := firewallRuleDetail(req.Port, req.Proto, req.From)
 	if err := firewallAllowPort(req.Port, req.Proto, req.From); err != nil {
+		s.recordAuditR(r, "firewall.allow", rule+": "+err.Error(), false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.recordAuditR(r, "firewall.allow", rule, true)
 	s.logger.Info("firewall allow", "port", req.Port, "proto", req.Proto, "from", req.From)
 	jsonResponse(w, map[string]string{"status": "allowed", "port": req.Port})
 }
@@ -134,10 +149,13 @@ func (s *Server) handleFirewallDeny(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "port or source IP required", http.StatusBadRequest)
 		return
 	}
+	rule := firewallRuleDetail(req.Port, req.Proto, req.From)
 	if err := firewallDenyPort(req.Port, req.Proto, req.From); err != nil {
+		s.recordAuditR(r, "firewall.deny", rule+": "+err.Error(), false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.recordAuditR(r, "firewall.deny", rule, true)
 	s.logger.Info("firewall deny", "port", req.Port, "proto", req.Proto, "from", req.From)
 	jsonResponse(w, map[string]string{"status": "denied", "port": req.Port})
 }
@@ -162,9 +180,11 @@ func (s *Server) handleFirewallMove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := firewallMoveRule(num, req.Direction); err != nil {
+		s.recordAuditR(r, "firewall.move", "rule "+numStr+" "+req.Direction+": "+err.Error(), false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.recordAuditR(r, "firewall.move", "rule "+numStr+" "+req.Direction, true)
 	jsonResponse(w, map[string]string{"status": "moved", "direction": req.Direction})
 }
 
@@ -183,9 +203,11 @@ func (s *Server) handleFirewallDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := firewallDeleteRule(num); err != nil {
+		s.recordAuditR(r, "firewall.delete", "rule "+numStr+": "+err.Error(), false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.recordAuditR(r, "firewall.delete", "rule "+numStr, true)
 	jsonResponse(w, map[string]string{"status": "deleted"})
 }
 
@@ -201,9 +223,11 @@ func (s *Server) handleFirewallEnable(w http.ResponseWriter, r *http.Request) {
 	// the enable drops the operator's connection they cannot confirm, and the
 	// firewall reverts on its own before they are locked out for good.
 	if err := firewallEnableWithRollback(firewallRollbackWindow, ports); err != nil {
+		s.recordAuditR(r, "firewall.enable", err.Error(), false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.recordAuditR(r, "firewall.enable", "ports: "+strings.Join(ports, ","), true)
 	s.logger.Info("firewall enabled with rollback", "allowed_ports", ports,
 		"rollback_seconds", int(firewallRollbackWindow.Seconds()))
 	jsonResponse(w, map[string]any{
@@ -220,6 +244,7 @@ func (s *Server) handleFirewallConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	confirmed := firewallConfirmEnable()
+	s.recordAuditR(r, "firewall.confirm", "was_pending: "+strconv.FormatBool(confirmed), true)
 	s.logger.Info("firewall enable confirmed", "was_pending", confirmed)
 	jsonResponse(w, map[string]any{"status": "confirmed", "was_pending": confirmed})
 }
@@ -229,9 +254,11 @@ func (s *Server) handleFirewallDisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := firewallDisable(); err != nil {
+		s.recordAuditR(r, "firewall.disable", err.Error(), false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.recordAuditR(r, "firewall.disable", "ufw disabled", true)
 	jsonResponse(w, map[string]string{"status": "disabled"})
 }
 

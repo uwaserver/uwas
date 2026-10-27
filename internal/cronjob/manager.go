@@ -3,6 +3,7 @@ package cronjob
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -201,12 +202,17 @@ func List() ([]Job, error) {
 	return jobs, nil
 }
 
-// Add adds a cron job.
-func Add(job Job) error {
-	if runtimeGOOS == "windows" {
-		return fmt.Errorf("cron not supported on Windows")
-	}
+// ErrInvalidJob matches (errors.Is) every rejection Add makes before touching
+// the crontab: the caller's job is malformed, nothing on the host failed.
+var ErrInvalidJob = errors.New("invalid cron job")
 
+type invalidJobError struct{ error }
+
+func (invalidJobError) Is(target error) bool { return target == ErrInvalidJob }
+func (e invalidJobError) Unwrap() error      { return e.error }
+
+// validateJob checks and normalizes a job in place.
+func validateJob(job *Job) error {
 	// Reject newlines/carriage returns to prevent crontab injection.
 	if strings.ContainsAny(job.Schedule, "\n\r") || strings.ContainsAny(job.Command, "\n\r") ||
 		strings.ContainsAny(job.Domain, "\n\r") || strings.ContainsAny(job.Comment, "\n\r") {
@@ -232,6 +238,17 @@ func Add(job Job) error {
 	// escaping gives `\\%`, which cron reads as a backslash and then a terminating %.
 	if strings.Contains(job.Command, `\%`) {
 		return fmt.Errorf(`command must not contain "\%%"`)
+	}
+	return nil
+}
+
+// Add adds a cron job.
+func Add(job Job) error {
+	if runtimeGOOS == "windows" {
+		return fmt.Errorf("cron not supported on Windows")
+	}
+	if err := validateJob(&job); err != nil {
+		return invalidJobError{err}
 	}
 
 	defer lockCrontab()()

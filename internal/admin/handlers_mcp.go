@@ -55,8 +55,10 @@ func (s *Server) handleMCPCall(w http.ResponseWriter, r *http.Request) {
 	}
 	s.configMu.RUnlock()
 	if err != nil {
+		s.recordAuditR(r, "mcp.call", req.Name+": "+err.Error(), false)
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	s.recordAuditR(r, "mcp.call", req.Name, true)
 	jsonResponse(w, json.RawMessage(body))
 }

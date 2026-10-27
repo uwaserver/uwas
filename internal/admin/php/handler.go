@@ -157,6 +157,7 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 	}
 	info := phpmanager.GetInstallInfo(req.Version)
 	h.deps.LogInfo("starting PHP install", "version", req.Version, "distro", info.Distro)
+	h.deps.RecordAudit(r, "php.install", "version: "+req.Version, true)
 	task := h.deps.TaskSubmit("php", req.Version, "install", func(appendOutput func(string)) error {
 		output, err := h.deps.PhpRunInstall(req.Version)
 		appendOutput(output)
@@ -237,9 +238,11 @@ func (h *Handler) ConfigUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.deps.PHPManager().SetConfig(version, req.Key, req.Value); err != nil {
+		h.deps.RecordAudit(r, "php.config_update", fmt.Sprintf("version: %s, key: %s: %s", version, req.Key, err.Error()), false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	h.deps.RecordAudit(r, "php.config_update", fmt.Sprintf("version: %s, key: %s", version, req.Key), true)
 	restarted := false
 	if err := h.deps.PHPManager().RestartFPM(version); err == nil {
 		restarted = true
@@ -284,9 +287,11 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 		req.ListenAddr = "127.0.0.1:9000"
 	}
 	if err := h.deps.PHPManager().StartFPM(version, req.ListenAddr); err != nil {
+		h.deps.RecordAudit(r, "php.start", fmt.Sprintf("version: %s: %s", version, err.Error()), false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	h.deps.RecordAudit(r, "php.start", fmt.Sprintf("version: %s, listen: %s", version, req.ListenAddr), true)
 	jsonResponse(w, map[string]string{"status": "started", "version": version, "listen": req.ListenAddr})
 }
 
@@ -300,9 +305,11 @@ func (h *Handler) Stop(w http.ResponseWriter, r *http.Request) {
 	}
 	version := r.PathValue("version")
 	if err := h.deps.PHPManager().StopFPM(version); err != nil {
+		h.deps.RecordAudit(r, "php.stop", fmt.Sprintf("version: %s: %s", version, err.Error()), false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	h.deps.RecordAudit(r, "php.stop", fmt.Sprintf("version: %s", version), true)
 	jsonResponse(w, map[string]string{"status": "stopped", "version": version})
 }
 
@@ -316,9 +323,11 @@ func (h *Handler) Restart(w http.ResponseWriter, r *http.Request) {
 	}
 	version := r.PathValue("version")
 	if err := h.deps.PHPManager().RestartFPM(version); err != nil {
+		h.deps.RecordAudit(r, "php.restart", fmt.Sprintf("version: %s: %s", version, err.Error()), false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	h.deps.RecordAudit(r, "php.restart", fmt.Sprintf("version: %s", version), true)
 	jsonResponse(w, map[string]string{"status": "restarted", "version": version})
 }
 
@@ -481,6 +490,7 @@ func (h *Handler) DomainUnassign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.deps.PHPManager().UnassignDomain(domain)
+	h.deps.RecordAudit(r, "php.unassign", "domain: "+domain, true)
 	jsonResponse(w, map[string]string{"status": "unassigned", "domain": domain})
 }
 

@@ -340,6 +340,9 @@ export default function Domains() {
   const [purgingHost, setPurgingHost] = useState<string | null>(null);
   const [forceUpdatingHost, setForceUpdatingHost] = useState<string | null>(null);
 
+  /* last domain-list request failure; an empty list must not look like "no domains" */
+  const [loadError, setLoadError] = useState('');
+
   /* server IPs for IP dropdown */
   const [serverIPs, setServerIPs] = useState<ServerIPInfo[]>([]);
 
@@ -353,8 +356,8 @@ export default function Domains() {
 
   const loadDomains = useCallback(() => {
     fetchDomains()
-      .then(d => setDomains(d ?? []))
-      .catch(() => {})
+      .then(d => { setDomains(d ?? []); setLoadError(''); })
+      .catch((e: Error) => setLoadError(e?.message || 'request failed'))
       .finally(() => setLoading(false));
   }, []);
 
@@ -866,6 +869,13 @@ export default function Domains() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {loadError && (
+        <div className="flex items-center justify-between gap-3 rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">
+          <span>Could not load domains: {loadError}</span>
+          <button onClick={loadDomains} className="rounded-md bg-red-500/20 px-2.5 py-1 text-xs hover:bg-red-500/30">Retry</button>
         </div>
       )}
 

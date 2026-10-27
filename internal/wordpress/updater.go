@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -247,34 +248,36 @@ func pathHasSymlink(root, rel string) bool {
 // FixPermissions sets correct WordPress file permissions.
 func FixPermissions(webRoot string) (string, error) {
 	var log strings.Builder
+	// Every step used to log its "... set" line whether or not it worked, so a
+	// host where chown/chmod fails (UWAS unprivileged, or no www-data account)
+	// told the operator the permissions were fixed. Say what actually happened,
+	// as setWordPressPermissions does for the installer.
+	var failed int
+	step := func(label, okMsg string, c *exec.Cmd) {
+		if out, err := c.CombinedOutput(); err != nil {
+			failed++
+			log.WriteString(fmt.Sprintf("warning: %s failed: %v %s\n", label, err, strings.TrimSpace(string(out))))
+		} else if okMsg != "" {
+			log.WriteString(okMsg + "\n")
+		}
+	}
 	// Directories: 755, files: 644
-	if out, err := execCommandFn("find", webRoot, "-type", "d", "-exec", "chmod", "755", "{}", ";").CombinedOutput(); err != nil {
-		log.WriteString(fmt.Sprintf("chmod dirs: %s\n", string(out)))
-	} else {
-		log.WriteString("Directories set to 755\n")
-	}
-	if out, err := execCommandFn("find", webRoot, "-type", "f", "-exec", "chmod", "644", "{}", ";").CombinedOutput(); err != nil {
-		log.WriteString(fmt.Sprintf("chmod files: %s\n", string(out)))
-	} else {
-		log.WriteString("Files set to 644\n")
-	}
+	step("chmod dirs 755", "Directories set to 755", execCommandFn("find", webRoot, "-type", "d", "-exec", "chmod", "755", "{}", ";"))
+	step("chmod files 644", "Files set to 644", execCommandFn("find", webRoot, "-type", "f", "-exec", "chmod", "644", "{}", ";"))
 	// wp-content writable
 	if pathHasSymlink(webRoot, "wp-content") {
 		log.WriteString("wp-content is a symlink — skipped chmod\n")
 	} else {
-		execCommandFn("chmod", "-R", "775", filepath.Join(webRoot, "wp-content")).Run()
-		log.WriteString("wp-content set to 775\n")
+		step("chmod -R 775 wp-content", "wp-content set to 775", execCommandFn("chmod", "-R", "775", filepath.Join(webRoot, "wp-content")))
 	}
 	// wp-config.php locked
 	if pathHasSymlink(webRoot, "wp-config.php") {
 		log.WriteString("wp-config.php is a symlink — skipped chmod\n")
 	} else {
-		execCommandFn("chmod", "600", filepath.Join(webRoot, "wp-config.php")).Run()
-		log.WriteString("wp-config.php set to 600\n")
+		step("chmod 600 wp-config.php", "wp-config.php set to 600", execCommandFn("chmod", "600", filepath.Join(webRoot, "wp-config.php")))
 	}
 	// Owner
-	execCommandFn("chown", "-R", "www-data:www-data", webRoot).Run()
-	log.WriteString("Owner set to www-data:www-data\n")
+	step("chown -R www-data:www-data", "Owner set to www-data:www-data", execCommandFn("chown", "-R", "www-data:www-data", webRoot))
 
 	// Ensure FS_METHOD is set in wp-config.php (prevents FTP prompt for plugin installs)
 	wpConfig := filepath.Join(webRoot, "wp-config.php")
@@ -286,30 +289,36 @@ func FixPermissions(webRoot string) (string, error) {
 		// while the rewrite itself had added a second define beside the existing
 		// one. A site that shipped WP_TEMP_DIR but not FS_METHOD then emitted
 		// "Constant WP_TEMP_DIR already defined" on every request.
-		_, hasFSMethod := "FS_METHOD", strings.Contains(content, "FS_METHOD")
-		_, hasWPTempDir := "WP_TEMP_DIR", strings.Contains(content, "WP_TEMP_DIR")
+		hasFSMethod := strings.Contains(content, "FS_METHOD")
+		hasWPTempDir := strings.Contains(content, "WP_TEMP_DIR")
+		var added string
 		switch {
 		case !hasFSMethod && !hasWPTempDir:
 			content = strings.Replace(content,
 				"require_once ABSPATH",
 				"define('FS_METHOD', 'direct');\ndefine('WP_TEMP_DIR', __DIR__ . '/.tmp');\n\nrequire_once ABSPATH",
 				1)
-			osWriteFileFn(wpConfig, []byte(content), 0600)
-			log.WriteString("Added FS_METHOD=direct to WP_TEMP_DIR to wp-config.php\n")
+			added = "Added FS_METHOD=direct to WP_TEMP_DIR to wp-config.php"
 		case !hasFSMethod:
 			content = strings.Replace(content,
 				"require_once ABSPATH",
 				"define('FS_METHOD', 'direct');\n\nrequire_once ABSPATH",
 				1)
-			osWriteFileFn(wpConfig, []byte(content), 0600)
-			log.WriteString("Added FS_METHOD=direct to wp-config.php\n")
+			added = "Added FS_METHOD=direct to wp-config.php"
 		case !hasWPTempDir:
 			content = strings.Replace(content,
 				"require_once ABSPATH",
 				"define('WP_TEMP_DIR', __DIR__ . '/.tmp');\n\nrequire_once ABSPATH",
 				1)
-			osWriteFileFn(wpConfig, []byte(content), 0600)
-			log.WriteString("Added WP_TEMP_DIR to wp-config.php\n")
+			added = "Added WP_TEMP_DIR to wp-config.php"
+		}
+		if added != "" {
+			if werr := osWriteFileFn(wpConfig, []byte(content), 0600); werr != nil {
+				failed++
+				log.WriteString(fmt.Sprintf("warning: update wp-config.php failed: %v\n", werr))
+			} else {
+				log.WriteString(added + "\n")
+			}
 		}
 	}
 
@@ -324,10 +333,18 @@ func FixPermissions(webRoot string) (string, error) {
 			continue
 		}
 		dir := filepath.Join(webRoot, sub)
-		osMkdirAllFn(dir, 0775)
-		execCommandFn("chown", "www-data:www-data", dir).Run()
+		if mkErr := osMkdirAllFn(dir, 0775); mkErr != nil {
+			failed++
+			log.WriteString(fmt.Sprintf("warning: create %s failed: %v\n", sub, mkErr))
+			continue
+		}
+		step("chown www-data:www-data "+sub, "", execCommandFn("chown", "www-data:www-data", dir))
 	}
-	log.WriteString("upgrade, uploads, .tmp directories created\n")
+	if failed == 0 {
+		log.WriteString("upgrade, uploads, .tmp directories created\n")
+	} else {
+		log.WriteString(fmt.Sprintf("WARNING: %d permission step(s) failed — WordPress may be unable to install plugins, upload media, or update until ownership is fixed\n", failed))
+	}
 
 	return log.String(), nil
 }
@@ -345,7 +362,9 @@ func SetDebugMode(webRoot string, enable bool) error {
 	content := string(data)
 
 	// Remove existing debug defines
-	re := regexp.MustCompile(`(?m)^\s*define\s*\(\s*'WP_DEBUG(?:_LOG|_DISPLAY)?'\s*,\s*(?:true|false)\s*\)\s*;\s*\n?`)
+	// Name quotes and the boolean's case vary in real configs (FALSE,
+	// "WP_DEBUG"); a define this misses survives and, being first, wins in PHP.
+	re := regexp.MustCompile(`(?mi)^\s*define\s*\(\s*['"]WP_DEBUG(?:_LOG|_DISPLAY)?['"]\s*,\s*(?:true|false)\s*\)\s*;\s*\n?`)
 	content = re.ReplaceAllString(content, "")
 
 	if enable {

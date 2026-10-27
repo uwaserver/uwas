@@ -157,7 +157,7 @@ func (p *HetznerProvider) ListRecords(zoneID string) ([]Record, error) {
 func (p *HetznerProvider) CreateRecord(zoneID string, rec Record) (*Record, error) {
 	body := map[string]interface{}{
 		"zone_id": zoneID, "type": rec.Type, "name": rec.Name,
-		"value": rec.Content, "ttl": rec.TTL,
+		"value": mxValue(rec), "ttl": rec.TTL,
 	}
 	data, err := p.hetznerRequest("POST", "/records", body)
 	if err != nil {
@@ -178,7 +178,7 @@ func (p *HetznerProvider) CreateRecord(zoneID string, rec Record) (*Record, erro
 func (p *HetznerProvider) UpdateRecord(zoneID, recordID string, rec Record) (*Record, error) {
 	body := map[string]interface{}{
 		"zone_id": zoneID, "type": rec.Type, "name": rec.Name,
-		"value": rec.Content, "ttl": rec.TTL,
+		"value": mxValue(rec), "ttl": rec.TTL,
 	}
 	_, err := p.hetznerRequest("PUT", "/records/"+url.PathEscape(recordID), body)
 	if err != nil {

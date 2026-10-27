@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -153,7 +154,7 @@ func (d *DomainCommand) remove(args []string) error {
 		return fmt.Errorf("host is required: uwas domain remove <host>")
 	}
 
-	_, err = apiRequest("DELETE", *apiURL+"/api/v1/domains/"+host, *apiKey, nil)
+	_, err = apiRequest("DELETE", *apiURL+"/api/v1/domains/"+url.PathEscape(host), *apiKey, nil)
 	if err != nil {
 		return fmt.Errorf("remove domain %s: %w", host, err)
 	}

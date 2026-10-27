@@ -179,11 +179,13 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "database user already exists; choose a different user name", http.StatusConflict)
 			return
 		}
+		h.deps.RecordAudit(r, "database.create", "db: "+req.Name+": "+err.Error(), false)
 		h.deps.LogError("database create failed", "name", req.Name, "error", err)
 		jsonError(w, "database creation failed", http.StatusInternalServerError)
 		return
 	}
 	h.deps.LogInfo("database created", "name", result.Name, "user", result.User)
+	h.deps.RecordAudit(r, "database.create", "db: "+result.Name+", user: "+result.User, true)
 	jsonResponse(w, result)
 }
 
@@ -555,9 +557,11 @@ func (h *Handler) DockerStart(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.PathValue("name")
 	if err := dbpkg.StartDockerDB(name); err != nil {
+		h.deps.RecordAudit(r, "docker_db.start", name+": "+err.Error(), false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	h.deps.RecordAudit(r, "docker_db.start", name, true)
 	jsonResponse(w, map[string]string{"status": "started"})
 }
 
@@ -567,9 +571,11 @@ func (h *Handler) DockerStop(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.PathValue("name")
 	if err := dbpkg.StopDockerDB(name); err != nil {
+		h.deps.RecordAudit(r, "docker_db.stop", name+": "+err.Error(), false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	h.deps.RecordAudit(r, "docker_db.stop", name, true)
 	jsonResponse(w, map[string]string{"status": "stopped"})
 }
 

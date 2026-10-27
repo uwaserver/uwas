@@ -16,7 +16,9 @@ func TestHtaccessRedirectStaysOnHost(t *testing.T) {
 		name, ht, path, want string
 	}{
 		{"prefix suffix //", "Redirect 301 /old-section /\n", "/old-section/evil.com", "/evil.com"},
-		{"prefix suffix backslash", "Redirect 301 /old-section /\n", "/old-section/%5Cevil.com", "/evil.com"},
+		// The carried suffix is escaped (F30601), so the backslash stays a
+		// percent-encoded path byte: still on this host, never "/\evil.com".
+		{"prefix suffix backslash", "Redirect 301 /old-section /\n", "/old-section/%5Cevil.com", "/%5Cevil.com"},
 		{"regex backref //", "RedirectMatch 301 ^/blog(/.*)$ $1\n", "/blog//evil.com", "/evil.com"},
 		{"regex backref %2F", "RedirectMatch 301 ^/blog(/.*)$ $1\n", "/blog/%2Fevil.com", "/evil.com"},
 		{"normal suffix append", "Redirect 301 /old /new\n", "/old/page", "/new/page"},

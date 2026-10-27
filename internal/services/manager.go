@@ -24,6 +24,9 @@ var (
 
 var errStatusTimeout = errors.New("systemctl did not answer in time")
 
+// ErrUnknownService is returned for a name outside the KnownServices allowlist.
+var ErrUnknownService = errors.New("unknown service")
+
 // outputWithin is cmd.Output with a deadline: a command still running after
 // statusTimeout is killed and errStatusTimeout returned. Exit errors keep their
 // *exec.ExitError type.
@@ -173,7 +176,7 @@ func IsKnownService(name string) bool {
 // StartService starts a systemd service (must be in KnownServices allowlist).
 func StartService(name string) error {
 	if !IsKnownService(name) {
-		return fmt.Errorf("unknown service: %s", name)
+		return fmt.Errorf("%w: %s", ErrUnknownService, name)
 	}
 	if err := execCommandFn("systemctl", "start", name).Run(); err != nil {
 		return err
@@ -184,7 +187,7 @@ func StartService(name string) error {
 // StopService stops a systemd service (must be in KnownServices allowlist).
 func StopService(name string) error {
 	if !IsKnownService(name) {
-		return fmt.Errorf("unknown service: %s", name)
+		return fmt.Errorf("%w: %s", ErrUnknownService, name)
 	}
 	return execCommandFn("systemctl", "stop", name).Run()
 }
@@ -192,7 +195,7 @@ func StopService(name string) error {
 // RestartService restarts a systemd service (must be in KnownServices allowlist).
 func RestartService(name string) error {
 	if !IsKnownService(name) {
-		return fmt.Errorf("unknown service: %s", name)
+		return fmt.Errorf("%w: %s", ErrUnknownService, name)
 	}
 	return execCommandFn("systemctl", "restart", name).Run()
 }

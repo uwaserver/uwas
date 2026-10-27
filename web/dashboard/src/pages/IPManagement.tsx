@@ -23,6 +23,8 @@ export default function IPManagement() {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(null);
   const [saving, setSaving] = useState<Record<string, boolean>>({});
+  /* last load failure; an empty list must not look like "no IPs / no domains" */
+  const [loadError, setLoadError] = useState('');
 
   const loadAll = useCallback(async () => {
     try {
@@ -33,8 +35,9 @@ export default function IPManagement() {
       setIPs(ipData?.ips ?? []);
       setPublicIP(ipData?.public_ip ?? '');
       setDomains(domainData ?? []);
-    } catch {
-      // ignore
+      setLoadError('');
+    } catch (e) {
+      setLoadError((e as Error)?.message || 'request failed');
     } finally {
       setLoading(false);
     }
@@ -114,6 +117,13 @@ export default function IPManagement() {
           <RefreshCw size={12} /> Refresh
         </button>
       </div>
+
+      {loadError && (
+        <div className="flex items-center justify-between gap-3 rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">
+          <span>Could not load IP information: {loadError}</span>
+          <button onClick={() => void loadAll()} className="rounded-md bg-red-500/20 px-2.5 py-1 text-xs hover:bg-red-500/30">Retry</button>
+        </div>
+      )}
 
       {/* Status toast */}
       {status && (

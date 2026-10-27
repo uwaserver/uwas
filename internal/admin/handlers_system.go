@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -113,15 +114,27 @@ func (s *Server) handleServicesList(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]any{"items": svcs, "total": total, "limit": limit, "offset": offset})
 }
 
+// serviceActionError answers an unknown service name 404 (the caller named
+// something that does not exist) and any other failure 500.
+func serviceActionError(w http.ResponseWriter, msg string, err error) {
+	if errors.Is(err, services.ErrUnknownService) {
+		jsonErrorCause(w, msg, err, http.StatusNotFound)
+		return
+	}
+	jsonErrorCause(w, msg, err, http.StatusInternalServerError)
+}
+
 func (s *Server) handleServiceStart(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
 	}
 	name := r.PathValue("name")
 	if err := servicesStartService(name); err != nil {
-		jsonErrorCause(w, "service start failed", err, http.StatusInternalServerError)
+		s.recordAuditR(r, "service.start", name+": "+err.Error(), false)
+		serviceActionError(w, "service start failed", err)
 		return
 	}
+	s.recordAuditR(r, "service.start", name, true)
 	s.logger.Info("service started", "name", name)
 	jsonResponse(w, map[string]string{"status": "started", "name": name})
 }
@@ -132,9 +145,11 @@ func (s *Server) handleServiceStop(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.PathValue("name")
 	if err := servicesStopService(name); err != nil {
-		jsonErrorCause(w, "service stop failed", err, http.StatusInternalServerError)
+		s.recordAuditR(r, "service.stop", name+": "+err.Error(), false)
+		serviceActionError(w, "service stop failed", err)
 		return
 	}
+	s.recordAuditR(r, "service.stop", name, true)
 	s.logger.Info("service stopped", "name", name)
 	jsonResponse(w, map[string]string{"status": "stopped", "name": name})
 }
@@ -145,9 +160,11 @@ func (s *Server) handleServiceRestart(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.PathValue("name")
 	if err := servicesRestartService(name); err != nil {
-		jsonErrorCause(w, "service restart failed", err, http.StatusInternalServerError)
+		s.recordAuditR(r, "service.restart", name+": "+err.Error(), false)
+		serviceActionError(w, "service restart failed", err)
 		return
 	}
+	s.recordAuditR(r, "service.restart", name, true)
 	s.logger.Info("service restarted", "name", name)
 	jsonResponse(w, map[string]string{"status": "restarted", "name": name})
 }
@@ -458,6 +475,11 @@ func (s *Server) handlePackageInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Action == "" {
 		req.Action = "install"
+	}
+	// Anything but the exact "remove" used to fall through to an install.
+	if req.Action != "install" && req.Action != "remove" {
+		jsonError(w, `invalid action: must be "install" or "remove"`, http.StatusBadRequest)
+		return
 	}
 
 	pkg := findPkg(req.ID)

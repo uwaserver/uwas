@@ -170,6 +170,12 @@ func (e *Engine) Process(uri, queryString string, vars *Variables) *Result {
 				// Update variables for subsequent rules
 				vars.RequestURI = newURI
 				vars.QueryString = result.Query
+				// REQUEST_FILENAME names the file the rewritten URI maps to;
+				// left alone, a later "!-f" condition tested the original
+				// request's file (F29701).
+				if vars.DocumentRoot != "" && !hasLiteralScheme(newURI) {
+					vars.RequestFilename = filepath.Join(vars.DocumentRoot, filepath.Clean("/"+newURI))
+				}
 			}
 
 			// Handle flags
@@ -181,9 +187,15 @@ func (e *Engine) Process(uri, queryString string, vars *Variables) *Result {
 				result.Gone = true
 				return result
 			}
-			if rule.Flags.Redirect > 0 {
+			// An absolute-URL substitution is an external redirect even
+			// without [R], as in Apache (F29700).
+			redirect := rule.Flags.Redirect
+			if redirect == 0 && hasLiteralScheme(rule.Target) {
+				redirect = 302
+			}
+			if redirect > 0 {
 				result.Redirect = true
-				result.StatusCode = rule.Flags.Redirect
+				result.StatusCode = redirect
 				result.URI = sameHostRedirectPath(result.URI)
 				if result.Query != "" {
 					result.URI = result.URI + "?" + result.Query
@@ -205,6 +217,14 @@ func (e *Engine) Process(uri, queryString string, vars *Variables) *Result {
 	}
 
 	return result
+}
+
+// hasLiteralScheme reports whether the rule's own target text starts with an
+// http(s) scheme. Only the template counts: a path captured from the request
+// ("/http://x" matched by "^/(.*)$" and substituted as "$1") never redirects.
+func hasLiteralScheme(target string) bool {
+	return len(target) >= 7 &&
+		(strings.EqualFold(target[:7], "http://") || (len(target) >= 8 && strings.EqualFold(target[:8], "https://")))
 }
 
 // overload ends processing once the work allowance is spent: the wall-clock

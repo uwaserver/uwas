@@ -191,8 +191,10 @@ export default function Settings() {
       setHealth(h);
       setSystem(s);
       setTwoFA(tfa);
+      return true;
     } catch {
       // ignore
+      return false;
     } finally {
       setLoading(false);
     }
@@ -280,7 +282,9 @@ export default function Settings() {
     try {
       await triggerReload();
       showStatus(true, 'Configuration reloaded successfully');
-      await load();
+      // load() replaces the form with the server's values, so edits it
+      // overwrote are no longer pending.
+      if (await load()) setDirtyKeys(new Set());
     } catch (e) {
       showStatus(false, (e as Error).message);
     } finally {

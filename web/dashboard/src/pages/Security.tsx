@@ -28,6 +28,10 @@ type Tab = 'monitor' | 'domains';
 export default function Security() {
   const [tab, setTab] = useState<Tab>('monitor');
   const [stats, setStats] = useState<SecurityStats | null>(null);
+  // Last stats/blocked request failure and last per-domain detail failure.
+  // A failed request must not render as "all traffic is clean".
+  const [loadError, setLoadError] = useState('');
+  const [detailError, setDetailError] = useState('');
   const [blocked, setBlocked] = useState<BlockedRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [domains, setDomains] = useState<DomainData[]>([]);
@@ -54,8 +58,8 @@ export default function Security() {
 
   const load = useCallback(() => {
     Promise.all([fetchSecurityStats(), fetchSecurityBlocked()])
-      .then(([s, b]) => { setStats(s); setBlocked(b ?? []); })
-      .catch(() => {})
+      .then(([s, b]) => { setStats(s); setBlocked(b ?? []); setLoadError(''); })
+      .catch((e: Error) => setLoadError(e?.message || 'request failed'))
       .finally(() => setLoading(false));
   }, []);
 
@@ -78,6 +82,7 @@ export default function Security() {
     setExpanded(host);
     expandedRef.current = host;
     setStatus(null);
+    setDetailError('');
     // Reset every editable field — previously wafBypassPaths and
     // newBypassPath/newBlockedPath/newWhitelistIP/newBlacklistIP were not
     // cleared, so paths/IPs from the previous domain stayed on screen
@@ -111,7 +116,11 @@ export default function Security() {
       setIpBlacklist(d.security?.ip_blacklist ?? []);
       setHotlinkEnabled(d.security?.hotlink_protection?.enabled ?? false);
       setWafBypassPaths(d.security?.waf?.bypass_paths ?? []);
-    } catch { setDetail(null); }
+    } catch (e) {
+      if (host !== expandedRef.current) return;
+      setDetail(null);
+      setDetailError((e as Error)?.message || 'request failed');
+    }
   };
 
   const saveSecurity = async (host: string) => {
@@ -220,6 +229,10 @@ export default function Security() {
           <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">Recent Blocked Requests ({blocked.length})</h2>
           {loading ? (
             <div className="text-center text-sm text-muted-foreground py-8">Loading...</div>
+          ) : loadError && blocked.length === 0 ? (
+            <div className="rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">
+              Could not load blocked requests: {loadError}
+            </div>
           ) : blocked.length === 0 ? (
             <div className="rounded-lg border border-border bg-card px-6 py-12 text-center">
               <Shield size={40} className="mx-auto mb-3 text-emerald-400" />
@@ -283,6 +296,14 @@ export default function Security() {
                     {expanded === d.host ? <ChevronUp size={16} className="text-muted-foreground" /> : <ChevronDown size={16} className="text-muted-foreground" />}
                   </div>
                 </div>
+
+                {expanded === d.host && !detail && detailError && (
+                  <div className="border-t border-border p-5">
+                    <div className="rounded-md bg-red-500/10 px-4 py-2.5 text-sm text-red-400">
+                      Could not load security settings for {d.host}: {detailError}
+                    </div>
+                  </div>
+                )}
 
                 {/* Expanded domain security config */}
                 {expanded === d.host && detail && (

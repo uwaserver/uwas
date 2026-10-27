@@ -1110,6 +1110,7 @@ func (h *Handler) UnknownBlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.deps.UnknownHostBlock(host)
+	h.deps.RecordAudit(r, "unknown_domain.block", "host: "+host, true)
 	jsonResponse(w, map[string]string{"status": "blocked", "host": host})
 }
 
@@ -1124,6 +1125,7 @@ func (h *Handler) UnknownUnblock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.deps.UnknownHostUnblock(host)
+	h.deps.RecordAudit(r, "unknown_domain.unblock", "host: "+host, true)
 	jsonResponse(w, map[string]string{"status": "unblocked", "host": host})
 }
 
@@ -1138,6 +1140,7 @@ func (h *Handler) UnknownDismiss(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.deps.UnknownHostDismiss(host)
+	h.deps.RecordAudit(r, "unknown_domain.dismiss", "host: "+host, true)
 	jsonResponse(w, map[string]string{"status": "dismissed", "host": host})
 }
 

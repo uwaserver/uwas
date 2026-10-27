@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/pathmatch"
 	"github.com/uwaserver/uwas/internal/rewrite"
@@ -174,6 +175,8 @@ func Validate(cfg *Config) error {
 		if cfg.Global.Backup.Keep <= 0 {
 			errs = append(errs, fmt.Sprintf("global.backup.keep: must be > 0, got %d", cfg.Global.Backup.Keep))
 		}
+
+		validateBackupSchedule(cfg.Global.Backup, &errs)
 
 		// S3-specific validation
 		if cfg.Global.Backup.Provider == "s3" {
@@ -1276,6 +1279,73 @@ func validateAutoBlockConfig(ab AutoBlockConfig, errs *[]string) {
 // validateWatchdogConfig keeps the liveness probe from restarting a healthy
 // server. A timeout at or above the interval means probes overlap and a slow
 // but working server reads as wedged.
+// validateBackupSchedule rejects a backup.cron or backup.schedule the scheduler
+// can never run. Startup used to skip such a value without a word, so the
+// operator believed backups were happening (F31303). A cron expression wins
+// over the interval, as it does at startup, so the interval is only checked
+// when no cron is set. Field ranges are checked here because the scheduler
+// treats an out-of-range value as one that never matches.
+func validateBackupSchedule(b BackupConfig, errs *[]string) {
+	if cron := strings.TrimSpace(b.Cron); cron != "" {
+		fields := strings.Fields(cron)
+		if len(fields) != 5 {
+			*errs = append(*errs, fmt.Sprintf("global.backup.cron: %q must have 5 fields (minute hour day month weekday)", b.Cron))
+			return
+		}
+		bounds := [5]struct {
+			name   string
+			lo, hi int
+		}{{"minute", 0, 59}, {"hour", 0, 23}, {"day", 1, 31}, {"month", 1, 12}, {"weekday", 0, 7}}
+		for i, f := range fields {
+			if err := checkCronField(f, bounds[i].lo, bounds[i].hi); err != nil {
+				*errs = append(*errs, fmt.Sprintf("global.backup.cron: %s field %q: %v", bounds[i].name, f, err))
+			}
+		}
+		return
+	}
+	if sched := strings.TrimSpace(b.Schedule); sched != "" {
+		if d, err := time.ParseDuration(sched); err != nil || d <= 0 {
+			*errs = append(*errs, fmt.Sprintf("global.backup.schedule: %q must be a positive duration such as \"24h\"", b.Schedule))
+		}
+	}
+}
+
+// checkCronField validates one cron field: comma-separated terms of "*", "n",
+// "a-b", each with an optional "/step".
+func checkCronField(field string, lo, hi int) error {
+	for _, term := range strings.Split(field, ",") {
+		base, step, hasStep := strings.Cut(term, "/")
+		if hasStep {
+			if n, err := strconv.Atoi(step); err != nil || n < 1 {
+				return fmt.Errorf("step %q must be a positive number", step)
+			}
+		}
+		if base == "*" {
+			continue
+		}
+		from, to, isRange := strings.Cut(base, "-")
+		for _, v := range []string{from, to} {
+			if v == "" && !isRange {
+				return fmt.Errorf("empty value")
+			}
+			if v == "" {
+				return fmt.Errorf("incomplete range %q", base)
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return fmt.Errorf("%q is not a number", v)
+			}
+			if n < lo || n > hi {
+				return fmt.Errorf("%d is outside %d-%d", n, lo, hi)
+			}
+			if !isRange {
+				break
+			}
+		}
+	}
+	return nil
+}
+
 func validateWatchdogConfig(w WatchdogConfig, errs *[]string) {
 	if !w.Enabled {
 		return

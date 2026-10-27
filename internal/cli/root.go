@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bufio"
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -63,9 +65,37 @@ func (c *CLI) Run(args []string) {
 		os.Exit(1)
 	}
 
+	// "uwas <command> --help" is advertised by printUsage. Commands with
+	// subcommands would otherwise report it as an unknown subcommand.
+	if len(args) > 1 && (args[1] == "--help" || args[1] == "-h") {
+		if _, ok := cmd.(interface{ Help() string }); ok {
+			printCommandHelp(name, cmd)
+			return
+		}
+	}
+
 	if err := cmd.Run(args[1:]); err != nil {
+		// The flag set already printed its usage; asking for help is not a failure.
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
 		fmt.Fprintf(os.Stderr, "uwas %s: %v\n", name, err)
 		os.Exit(1)
+	}
+}
+
+// printCommandHelp prints a command's description and, when it has one, its
+// detailed help.
+func printCommandHelp(name string, cmd Command) {
+	fmt.Printf("Usage: uwas %s [flags]\n\n", name)
+	fmt.Printf("  %s\n", cmd.Description())
+
+	if helper, ok := cmd.(interface{ Help() string }); ok {
+		detail := strings.TrimSpace(helper.Help())
+		if detail != "" {
+			fmt.Println()
+			fmt.Println(detail)
+		}
 	}
 }
 
@@ -109,17 +139,7 @@ func (h *HelpCommand) Run(args []string) error {
 	if len(args) > 0 {
 		name := args[0]
 		if cmd, ok := h.cli.commands[name]; ok {
-			fmt.Printf("Usage: uwas %s [flags]\n\n", name)
-			fmt.Printf("  %s\n", cmd.Description())
-
-			// If it has detailed help, print subcommand help
-			if helper, ok := cmd.(interface{ Help() string }); ok {
-				detail := strings.TrimSpace(helper.Help())
-				if detail != "" {
-					fmt.Println()
-					fmt.Println(detail)
-				}
-			}
+			printCommandHelp(name, cmd)
 			return nil
 		}
 		return fmt.Errorf("unknown command %q", name)

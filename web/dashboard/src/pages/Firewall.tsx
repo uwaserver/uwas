@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   ShieldCheck,
   ShieldOff,
@@ -59,9 +59,17 @@ export default function Firewall() {
   const [deleting, setDeleting] = useState(false);
   const [showV6, setShowV6] = useState(false);
 
+  // Requests overlap (1s rollback poll vs. post-action refresh); a response
+  // older than one already applied is dropped so stale state cannot come back.
+  const reqSeq = useRef(0);
+  const appliedSeq = useRef(0);
+
   const load = useCallback(async () => {
+    const seq = ++reqSeq.current;
     try {
       const result = await fetchFirewall();
+      if (seq < appliedSeq.current) return;
+      appliedSeq.current = seq;
       setFw(result);
       setError('');
     } catch (e) {

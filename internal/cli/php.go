@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -174,8 +176,12 @@ func (p *PHPCommand) start(args []string) error {
 		return fmt.Errorf("version is required: uwas php start <version> [--port 9000]")
 	}
 
+	if n, err := strconv.Atoi(*port); err != nil || n < 1 || n > 65535 || strconv.Itoa(n) != *port {
+		return fmt.Errorf("invalid --port %q: must be a TCP port (1-65535)", *port)
+	}
+
 	payload := fmt.Sprintf(`{"listen_addr":"127.0.0.1:%s"}`, *port)
-	body, err := apiRequest("POST", *apiURL+"/api/v1/php/"+version+"/start", *apiKey, strings.NewReader(payload))
+	body, err := apiRequest("POST", *apiURL+"/api/v1/php/"+url.PathEscape(version)+"/start", *apiKey, strings.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("start PHP %s: %w", version, err)
 	}
@@ -209,7 +215,7 @@ func (p *PHPCommand) stop(args []string) error {
 		return fmt.Errorf("version is required: uwas php stop <version>")
 	}
 
-	_, err = apiRequest("POST", *apiURL+"/api/v1/php/"+version+"/stop", *apiKey, nil)
+	_, err = apiRequest("POST", *apiURL+"/api/v1/php/"+url.PathEscape(version)+"/stop", *apiKey, nil)
 	if err != nil {
 		return fmt.Errorf("stop PHP %s: %w", version, err)
 	}
@@ -239,7 +245,7 @@ func (p *PHPCommand) config(args []string) error {
 		return fmt.Errorf("version is required: uwas php config <version>")
 	}
 
-	body, err := apiRequest("GET", *apiURL+"/api/v1/php/"+version+"/config", *apiKey, nil)
+	body, err := apiRequest("GET", *apiURL+"/api/v1/php/"+url.PathEscape(version)+"/config", *apiKey, nil)
 	if err != nil {
 		return fmt.Errorf("fetch PHP %s config: %w", version, err)
 	}
@@ -281,7 +287,7 @@ func (p *PHPCommand) extensions(args []string) error {
 		return fmt.Errorf("version is required: uwas php extensions <version>")
 	}
 
-	body, err := apiRequest("GET", *apiURL+"/api/v1/php/"+version+"/extensions", *apiKey, nil)
+	body, err := apiRequest("GET", *apiURL+"/api/v1/php/"+url.PathEscape(version)+"/extensions", *apiKey, nil)
 	if err != nil {
 		return fmt.Errorf("fetch PHP %s extensions: %w", version, err)
 	}

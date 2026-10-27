@@ -2,6 +2,7 @@ package htaccess
 
 import (
 	"net"
+	"net/url"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -1425,7 +1426,10 @@ func MatchRedirect(rule RedirectRule, urlPath string) (location string, status i
 		// The "gone" form has no target: report gone, no Location.
 		return "", status, true
 	}
-	return sameHostRedirectPath(rule.Target + urlPath[len(rule.Pattern):]), status, true
+	// The suffix is the decoded path: escape it so "%3F" / "%23" stay path bytes
+	// instead of becoming a query or fragment delimiter (F30601).
+	suffix := (&url.URL{Path: urlPath[len(rule.Pattern):]}).EscapedPath()
+	return sameHostRedirectPath(rule.Target + suffix), status, true
 }
 
 // sameHostRedirectPath collapses the leading run of '/' and '\\' in a

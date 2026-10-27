@@ -242,8 +242,12 @@ func classifyUA(ua string) string {
 		return "Bingbot"
 	case strings.Contains(lower, "bot") || strings.Contains(lower, "crawler") || strings.Contains(lower, "spider"):
 		return "Bot"
-	case strings.Contains(lower, "edg/"):
+	case strings.Contains(lower, "edg/") || strings.Contains(lower, "edgios") || strings.Contains(lower, "edga/"):
 		return "Edge"
+	case strings.Contains(lower, "fxios"):
+		return "Firefox"
+	case strings.Contains(lower, "crios"):
+		return "Chrome"
 	case strings.Contains(lower, "opr/") || strings.Contains(lower, "opera"):
 		return "Opera"
 	case strings.Contains(lower, "chrome") && !strings.Contains(lower, "edg/"):

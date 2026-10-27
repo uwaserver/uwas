@@ -30,6 +30,7 @@ import {
   type DNSResult,
   type DNSRecord,
 } from '@/lib/api';
+import { useConfirm } from '@/components/useConfirm';
 
 /* -- Record Row ---------------------------------------------------------- */
 
@@ -61,6 +62,7 @@ function RecordSection({
 /* -- Main Page ----------------------------------------------------------- */
 
 export default function DNS() {
+  const { confirmAction } = useConfirm();
   const [domains, setDomains] = useState<DomainData[]>([]);
   const [selectedDomain, setSelectedDomain] = useState('');
   const [result, setResult] = useState<DNSResult | null>(null);
@@ -200,8 +202,19 @@ export default function DNS() {
     }
   };
 
-  const handleDeleteRecord = async (id: string) => {
+  const handleDeleteRecord = async (rec: DNSRecord) => {
     if (!selectedDomain) return;
+    const id = rec.id;
+    // The record is removed at the DNS provider (live mail/web traffic) and
+    // cannot be restored from here, so every other destructive action in the
+    // dashboard asks first.
+    const ok = await confirmAction({
+      title: `Delete ${rec.type} record?`,
+      message: `${rec.type} ${rec.name} → ${rec.content} will be removed from the DNS provider for ${selectedDomain}.`,
+      confirmLabel: 'Delete',
+      variant: 'danger',
+    });
+    if (!ok) return;
     setDeleteLoading(id);
     setCfError('');
     try {
@@ -633,7 +646,7 @@ export default function DNS() {
                               <Pencil size={12} /> Edit
                             </button>
                             <button
-                              onClick={() => handleDeleteRecord(rec.id)}
+                              onClick={() => handleDeleteRecord(rec)}
                               disabled={deleteLoading === rec.id}
                               className="flex items-center gap-1 rounded px-2 py-1 text-xs text-red-400 transition hover:bg-red-500/10 disabled:opacity-50"
                             >

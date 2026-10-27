@@ -63,7 +63,7 @@ func (s *Server) registerTools() {
 				Type string `json:"type"`
 				SSL  string `json:"ssl"`
 			}
-			var domains []info
+			domains := []info{}
 			for _, d := range s.config.Domains {
 				domains = append(domains, info{Host: d.Host, Type: d.Type, SSL: d.SSL.Mode})
 			}
@@ -191,7 +191,7 @@ func (s *Server) registerTools() {
 				Host    string `json:"host"`
 				SSLMode string `json:"ssl_mode"`
 			}
-			var result []info
+			result := []info{}
 			for _, d := range s.config.Domains {
 				result = append(result, info{Host: d.Host, SSLMode: d.SSL.Mode})
 			}
@@ -211,7 +211,7 @@ func (s *Server) registerTools() {
 				IPWhite   int    `json:"ip_whitelist_count"`
 				IPBlack   int    `json:"ip_blacklist_count"`
 			}
-			var result []domSec
+			result := []domSec{}
 			for _, d := range s.config.Domains {
 				ds := domSec{
 					Host:      d.Host,

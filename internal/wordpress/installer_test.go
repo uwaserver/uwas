@@ -2048,12 +2048,9 @@ func TestDownloadAndExtract_MovesFiles(t *testing.T) {
 	webRoot := filepath.Join(parentDir, "site")
 	os.MkdirAll(webRoot, 0755)
 
-	// Create fake extracted "wordpress" dir in parent (what tar would produce)
-	wpExtracted := filepath.Join(parentDir, "wordpress")
-	os.MkdirAll(wpExtracted, 0755)
-	os.WriteFile(filepath.Join(wpExtracted, "index.php"), []byte("<?php\n"), 0644)
-
-	execCommandFn = fakeCmd("") // tar "succeeds"
+	// tar is emulated by fakeTarCmd: it writes wordpress/wp-load.php into the
+	// directory given with -C (a private directory beside webRoot).
+	execCommandFn = fakeTarCmd
 	osMkdirAllFn = os.MkdirAll
 	osStatFn = os.Stat
 	osReadDirFn = os.ReadDir
@@ -2066,9 +2063,13 @@ func TestDownloadAndExtract_MovesFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// index.php should have been moved to webRoot
-	if _, err := os.Stat(filepath.Join(webRoot, "index.php")); err != nil {
-		t.Error("index.php should be in webRoot after move")
+	// wp-load.php should have been moved to webRoot
+	if _, err := os.Stat(filepath.Join(webRoot, "wp-load.php")); err != nil {
+		t.Error("wp-load.php should be in webRoot after move")
+	}
+	// ... and no extraction directory is left behind.
+	if left, _ := filepath.Glob(filepath.Join(parentDir, ".uwas-wp-extract-*")); len(left) != 0 {
+		t.Errorf("extraction directory left behind: %v", left)
 	}
 }
 

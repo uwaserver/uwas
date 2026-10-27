@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Cloudflare MX/SRV records** keep a priority of 0 in the request body.
+- **MCP** `domain_list`, `ssl_status` and `security_overview` return `[]`
+  instead of `null` when there are no domains.
+- **Cron add** returns 400 (not 500) for an invalid schedule or command.
+- **Dashboard:** IP Management and Security show a load error with Retry
+  instead of "no data / all clean"; DNS record delete asks for confirmation;
+  the DB Explorer ignores a query result that finishes after the database was
+  switched.
+
+### Fixed
+
+- **Audit log** now records firewall changes, cron add/delete, PHP
+  install/config/start/stop/restart/unassign, WordPress install, database
+  create/start/stop, MCP calls and unknown-host block/unblock/dismiss.
+- **CLI:** `uwas <command> --help` works for every command (exit 0);
+  `php start --port` is validated; host and PHP version are escaped in API
+  paths.
+- **Doctor** checks certificates under `global.acme.storage` and the configured
+  `domains_dir` instead of paths next to the config file.
+- **ESI fragments** honour multi-line `Cache-Control`, `s-maxage` and quoted
+  `max-age`.
+
+### Fixed
+
+- **Second SIGINT/SIGTERM during graceful shutdown** terminates the process
+  immediately instead of being swallowed for the whole drain period.
+- **Service start/stop/restart** is recorded in the audit log; an unknown
+  service name returns 404 instead of 500.
+- **Package install endpoint** rejects unknown `action` values (400) instead of
+  falling through to install; only `install` and `remove` are accepted.
+- **`backup.schedule` / `backup.cron`** are validated when backups are enabled
+  (an invalid value used to load silently and never run).
+
+### Fixed
+
+- **WordPress install** never deletes the document root when it is itself named
+  `wordpress` (the tarball is extracted into a private temp directory), stops
+  with a clear error instead of writing a password the database user does not
+  have, and `FixPermissions` reports failed `chown`/`chmod`/`wp-config.php`
+  steps instead of claiming success; `SetDebugMode` handles `TRUE/FALSE` and
+  double-quoted `WP_DEBUG` definitions.
+- **.htaccess:** `RewriteBase` is no longer prepended to absolute `https://`
+  targets; `Redirect` escapes the appended path remainder (`/old/a%3Fb` no
+  longer turns into a query string).
+- **Dashboard:** the Domains page shows a load error with Retry instead of
+  "0 domains"; Logs pause ignores in-flight polls; Firewall ignores stale
+  rollback polls.
+- **Analytics** classifies iOS Chrome/Firefox/Edge and Android Edge correctly.
+
+### Fixed
+
+- **Rewrite rules:** an absolute-URL target (`RewriteRule ^old$ https://new/ [L]`)
+  redirects (302) like Apache instead of staying a path; `%{REQUEST_FILENAME}`
+  follows earlier rewrites; `%{SCRIPT_FILENAME}` and `%{REMOTE_HOST}` are
+  defined.
+- **Alert e-mail** carries `Date`, `Message-ID` and MIME headers, encodes
+  non-ASCII subjects, uses the bare address in the SMTP envelope, and supports
+  port 465 (implicit TLS).
+- **MX records** created through Hetzner and Route 53 keep their priority.
+- **2FA recovery codes:** a failed config write rolls back the in-memory codes
+  and TOTP secret instead of leaving the server out of step with the disk.
+- **Settings page:** after Reload, Save no longer writes server values back as
+  if they were edits.
+
 ## [0.11.37] - 2026-10-27
 
 ### Fixed
