@@ -64,14 +64,14 @@ func (d *phpDeps) TaskSubmit(category, name, action string, fn func(appendOutput
 
 func (d *phpDeps) TaskActiveByType(typ string) *phpadmin.TaskInfo {
 	if t := d.s.taskMgr.ActiveByType(typ); t != nil {
-		return &phpadmin.TaskInfo{ID: t.ID, Name: t.Name, Type: t.Type, Status: string(t.Status), Output: t.Output, Error: t.Error}
+		return &phpadmin.TaskInfo{ID: t.ID, Name: t.Name, Type: t.Type, Action: t.Action, Status: string(t.Status), Output: t.Output, Error: t.Error}
 	}
 	return nil
 }
 
 func (d *phpDeps) TaskLatestByType(typ string) *phpadmin.TaskInfo {
 	if t := d.s.taskMgr.LatestByType(typ); t != nil {
-		return &phpadmin.TaskInfo{ID: t.ID, Name: t.Name, Type: t.Type, Status: string(t.Status), Output: t.Output, Error: t.Error}
+		return &phpadmin.TaskInfo{ID: t.ID, Name: t.Name, Type: t.Type, Action: t.Action, Status: string(t.Status), Output: t.Output, Error: t.Error}
 	}
 	return nil
 }
@@ -102,6 +102,9 @@ func (d *phpDeps) PersistConfig() error { return d.s.persistConfig() }
 func (d *phpDeps) NotifyDomainChange()  { d.s.notifyDomainChange() }
 func (d *phpDeps) PersistDomainPHPOverrides(domain string) {
 	d.s.persistDomainPHPOverrides(domain)
+}
+func (d *phpDeps) PersistDomainPHPOverridesErr(domain string) error {
+	return d.s.persistDomainPHPOverridesErr(domain)
 }
 
 func (d *phpDeps) PHPManager() *phpmanager.Manager { return d.s.phpMgr }

@@ -157,7 +157,8 @@ func (p *PHPCommand) start(args []string) error {
 	apiURL := fs.String("api-url", "", "admin API URL")
 	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
 	port := fs.String("port", "9000", "listen port")
-	if err := fs.Parse(args); err != nil {
+	rest, err := parseInterspersed(fs, args)
+	if err != nil {
 		return err
 	}
 
@@ -165,7 +166,10 @@ func (p *PHPCommand) start(args []string) error {
 		*apiURL = adminURLFromConfig()
 	}
 
-	version := fs.Arg(0)
+	version := ""
+	if len(rest) > 0 {
+		version = rest[0]
+	}
 	if version == "" {
 		return fmt.Errorf("version is required: uwas php start <version> [--port 9000]")
 	}
@@ -188,7 +192,8 @@ func (p *PHPCommand) stop(args []string) error {
 	fs := flag.NewFlagSet("php stop", flag.ContinueOnError)
 	apiURL := fs.String("api-url", "", "admin API URL")
 	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
-	if err := fs.Parse(args); err != nil {
+	rest, err := parseInterspersed(fs, args)
+	if err != nil {
 		return err
 	}
 
@@ -196,12 +201,15 @@ func (p *PHPCommand) stop(args []string) error {
 		*apiURL = adminURLFromConfig()
 	}
 
-	version := fs.Arg(0)
+	version := ""
+	if len(rest) > 0 {
+		version = rest[0]
+	}
 	if version == "" {
 		return fmt.Errorf("version is required: uwas php stop <version>")
 	}
 
-	_, err := apiRequest("POST", *apiURL+"/api/v1/php/"+version+"/stop", *apiKey, nil)
+	_, err = apiRequest("POST", *apiURL+"/api/v1/php/"+version+"/stop", *apiKey, nil)
 	if err != nil {
 		return fmt.Errorf("stop PHP %s: %w", version, err)
 	}
@@ -214,7 +222,8 @@ func (p *PHPCommand) config(args []string) error {
 	fs := flag.NewFlagSet("php config", flag.ContinueOnError)
 	apiURL := fs.String("api-url", "", "admin API URL")
 	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
-	if err := fs.Parse(args); err != nil {
+	rest, err := parseInterspersed(fs, args)
+	if err != nil {
 		return err
 	}
 
@@ -222,7 +231,10 @@ func (p *PHPCommand) config(args []string) error {
 		*apiURL = adminURLFromConfig()
 	}
 
-	version := fs.Arg(0)
+	version := ""
+	if len(rest) > 0 {
+		version = rest[0]
+	}
 	if version == "" {
 		return fmt.Errorf("version is required: uwas php config <version>")
 	}
@@ -252,7 +264,8 @@ func (p *PHPCommand) extensions(args []string) error {
 	fs := flag.NewFlagSet("php extensions", flag.ContinueOnError)
 	apiURL := fs.String("api-url", "", "admin API URL")
 	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
-	if err := fs.Parse(args); err != nil {
+	rest, err := parseInterspersed(fs, args)
+	if err != nil {
 		return err
 	}
 
@@ -260,7 +273,10 @@ func (p *PHPCommand) extensions(args []string) error {
 		*apiURL = adminURLFromConfig()
 	}
 
-	version := fs.Arg(0)
+	version := ""
+	if len(rest) > 0 {
+		version = rest[0]
+	}
 	if version == "" {
 		return fmt.Errorf("version is required: uwas php extensions <version>")
 	}

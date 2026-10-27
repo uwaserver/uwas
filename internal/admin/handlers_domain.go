@@ -147,6 +147,8 @@ func (d *domainDeps) RecordAudit(r *http.Request, action, detail string, success
 
 func (d *domainDeps) NotifyDomainChange() { d.s.notifyDomainChange() }
 
+func (d *domainDeps) NotifyDomainChangeErr() error { return d.s.notifyDomainChangeErr() }
+
 func (d *domainDeps) Reload() error {
 	if d.s.reloadFn == nil {
 		return nil

@@ -230,23 +230,27 @@ export default function Backups() {
       .catch(() => addDebugLog({ level: 'warn', scope: 'backups', message: 'Failed to fetch feature flags' }));
   }, []);
 
-  const load = useCallback(async () => {
+  // syncForm=false refreshes the lists but leaves unsaved schedule edits alone
+  // (a created/restored/deleted backup says nothing about the schedule form).
+  const load = useCallback(async (syncForm = true) => {
     try {
       const [b, s] = await Promise.all([fetchBackups(), fetchBackupSchedule()]);
       setBackups(b ?? []);
       setSchedule(s);
-      // A stored interval that is not one of the presets (e.g. "90m", or
-      // "48h" converted from a saved "2d") matches no <select> option, which
-      // silently renders the first preset. Represent it as Custom... with
-      // the stored value prefilled so the configured schedule stays visible
-      // and round-trips on save.
-      const preset = PRESET_INTERVALS.has(s.interval);
-      setScheduleForm({
-        enabled: s.enabled,
-        interval: preset ? s.interval : '__custom__',
-        keep: s.keep,
-        customInterval: preset ? '' : s.interval,
-      });
+      if (syncForm) {
+        // A stored interval that is not one of the presets (e.g. "90m", or
+        // "48h" converted from a saved "2d") matches no <select> option, which
+        // silently renders the first preset. Represent it as Custom... with
+        // the stored value prefilled so the configured schedule stays visible
+        // and round-trips on save.
+        const preset = PRESET_INTERVALS.has(s.interval);
+        setScheduleForm({
+          enabled: s.enabled,
+          interval: preset ? s.interval : '__custom__',
+          keep: s.keep,
+          customInterval: preset ? '' : s.interval,
+        });
+      }
       setError('');
     } catch (e) {
       setError((e as Error).message);
@@ -281,7 +285,7 @@ export default function Backups() {
     try {
       const backup = await createBackup(createProvider);
       showStatus({ ok: true, message: `Backup created: ${backup.name} (${formatSize(backup.size)})` });
-      await load();
+      await load(false);
     } catch (e) {
       showStatus({ ok: false, message: (e as Error).message });
     } finally {
@@ -297,7 +301,7 @@ export default function Backups() {
       await restoreBackup(restoreTarget.name, restoreTarget.provider);
       setRestoreTarget(null);
       showStatus({ ok: true, message: `Backup restored: ${restoreTarget.name}. A reload may be required for changes to take effect.` });
-      await load();
+      await load(false);
     } catch (e) {
       showStatus({ ok: false, message: (e as Error).message });
     } finally {
@@ -313,7 +317,7 @@ export default function Backups() {
       await deleteBackup(deleteTarget.name, deleteTarget.provider);
       setDeleteTarget(null);
       showStatus({ ok: true, message: `Backup deleted: ${deleteTarget.name}` });
-      await load();
+      await load(false);
     } catch (e) {
       showStatus({ ok: false, message: (e as Error).message });
     } finally {
@@ -373,7 +377,7 @@ export default function Backups() {
           <p className="text-sm text-muted-foreground">Backup and restore management</p>
         </div>
         <button
-          onClick={load}
+          onClick={() => load()}
           className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569]"
         >
           <RefreshCw size={12} /> Refresh

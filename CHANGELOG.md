@@ -7,7 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.37] - 2026-10-27
+
 ### Fixed
+
+- **Changing your own admin password requires the current password**, for every
+  role (a stolen admin session can no longer set a new password). The Admin
+  Users page has a "Current (own account)" field. Resetting another user's
+  password is unchanged.
+- **Database remote access** no longer reports a password that was never set
+  when the account already exists (409), and `bind-address` is only widened
+  after the account was created.
+- **PHP settings** first save on an install without `php.ini` no longer races
+  with concurrent reads.
+- **Backups page** keeps an unsaved schedule form when a backup is created,
+  restored or deleted.
+
+- **Clone auto-create no longer hangs the panel.** A failed config write while
+  creating the clone's domain deadlocked on the configuration lock; it now
+  rolls back and reports an error.
+- **Domain create/update/delete, unknown-host alias/redirect, Cloudflare zone
+  import, software-library attach and per-domain PHP settings** return 500
+  when the configuration cannot be written instead of reporting success.
+- **Uptime percentage** is computed over a 24 h window of 10-minute buckets.
+- **.htaccess** quoted arguments honour `\"` and `\\` escapes.
+- **Dashboard PHP page** shows update/uninstall progress with the right title
+  and survives a single failed poll.
+- **iptables unblock** removes duplicate rules; unblocking an absent rule is a
+  no-op.
+- **CLI** flags after the first positional argument (`domain add`, `php
+  start/stop/config/extensions`) are honoured instead of silently ignored.
+- **Circuit breaker** releases the half-open probe slot when a proxied request
+  ends without a recorded result (no more permanent 503).
+- **`/healthz`** on a reverse-proxy site's own host now reaches the upstream;
+  `/.well-known/health` stays server-wide.
 
 - **OCSP refresh no longer makes a manual certificate impossible to remove**
   (the stapled copy replaced the pointer the removal compared against).

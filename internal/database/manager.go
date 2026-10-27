@@ -719,9 +719,12 @@ func ConfigureRemoteAccess(user, host, password, databaseName string) (*RemoteAc
 		return nil, fmt.Errorf("invalid password: null byte not allowed")
 	}
 
-	configPath, err := setBindAddressAllInterfaces()
-	if err != nil {
-		return nil, err
+	// An existing account keeps its password under CREATE USER IF NOT EXISTS,
+	// so the password returned below would be one that was never set (F29400).
+	if exists, err := dbUserExists(user, host); err != nil {
+		return nil, fmt.Errorf("create remote user %q@%q: %w", user, host, err)
+	} else if exists {
+		return nil, fmt.Errorf("create remote user %q@%q: %w", user, host, ErrUserExists)
 	}
 
 	sql := fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'%s' IDENTIFIED BY '%s';\n", escapeSQL(user), escapeSQL(host), escapeSQL(password))
@@ -731,6 +734,12 @@ func ConfigureRemoteAccess(user, host, password, databaseName string) (*RemoteAc
 	sql += "FLUSH PRIVILEGES;"
 	if _, err := runMySQLFn(sql); err != nil {
 		return nil, fmt.Errorf("create remote user %q@%q: %w", user, host, err)
+	}
+	// Open the listener only once the account exists: a failed statement must
+	// not leave bind-address on 0.0.0.0 for the next restart (F29401).
+	configPath, err := setBindAddressAllInterfaces()
+	if err != nil {
+		return nil, fmt.Errorf("remote user created but bind-address update failed: %w", err)
 	}
 	if err := RestartService(); err != nil {
 		return nil, fmt.Errorf("remote user created but database restart failed: %w", err)

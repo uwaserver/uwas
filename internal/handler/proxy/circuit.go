@@ -119,6 +119,17 @@ func (cb *CircuitBreaker) RecordFailure() {
 	}
 }
 
+// Abandon releases the half-open probe slot for a request Allow() admitted but
+// that ended without an outcome (the client's body broke, the handler
+// panicked). Neither success nor failure is recorded: the upstream was not
+// tested. Left claimed, the slot made every later Allow() lose its CAS and the
+// domain answered 503 forever (F28200).
+func (cb *CircuitBreaker) Abandon() {
+	if CircuitState(cb.state.Load()) == CircuitHalfOpen {
+		cb.probeSlot.Store(0)
+	}
+}
+
 // State returns the current state.
 func (cb *CircuitBreaker) State() CircuitState {
 	return CircuitState(cb.state.Load())

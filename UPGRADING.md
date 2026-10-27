@@ -5,6 +5,19 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.37
+
+Drop-in binary; no config or data migration. Behavior changes worth knowing:
+
+- Changing your own admin password now requires `current_password` for every
+  role (the Admin Users page has a new field). Resetting another user's
+  password is unchanged.
+- On a reverse-proxy site's own host, `/healthz` is forwarded to the upstream;
+  `/.well-known/health` remains the server-wide check.
+- Database remote access returns 409 when the account already exists.
+
+---
+
 ## Upgrading to v0.11.36 (includes v0.11.35)
 
 Drop-in binary; no config or data migration. Behavior changes worth knowing:

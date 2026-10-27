@@ -778,10 +778,21 @@ func (h *Handler) ZoneImport(w http.ResponseWriter, r *http.Request) {
 		existing[importHostKey(host)] = true
 		added = append(added, host)
 	}
+	var perr error
 	if len(added) > 0 && !req.DryRun {
-		h.deps.NotifyDomainChange()
+		if n, ok := h.deps.(interface{ NotifyDomainChangeErr() error }); ok {
+			perr = n.NotifyDomainChangeErr()
+		} else {
+			h.deps.NotifyDomainChange()
+		}
 	}
-	h.deps.RecordAudit(r, "cloudflare.zones.import", fmt.Sprintf("zone: %s, added: %d, skipped: %d", zoneID, len(added), len(skipped)), true)
+	detail := fmt.Sprintf("zone: %s, added: %d, skipped: %d", zoneID, len(added), len(skipped))
+	if perr != nil {
+		h.deps.RecordAudit(r, "cloudflare.zones.import", detail+": "+perr.Error(), false)
+		jsonError(w, "domains imported but could not be persisted: "+perr.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.deps.RecordAudit(r, "cloudflare.zones.import", detail, true)
 	if req.DryRun {
 		jsonResponse(w, map[string]any{
 			"added": added, "skipped": skipped, "total": len(hostnames), "dry_run": true,

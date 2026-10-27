@@ -108,6 +108,9 @@ const defaultRow: RowState = {
   configDirty: false,
 };
 
+// Consecutive failed status polls before a task panel gives up.
+const maxPollFailures = 5;
+
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
@@ -196,7 +199,13 @@ export default function PHP() {
       if (cancelled) return;
       if (st && (st.status === 'running' || st.status === 'queued')) {
         setInstallJob(st);
-        setShowInstall(true);
+        // A task that outlived a page reload keeps its own panel: updates and
+        // uninstalls are not shown as installs.
+        if (st.action === 'update' || st.action === 'uninstall') {
+          setJobAction(st.action);
+        } else {
+          setShowInstall(true);
+        }
         pollHandle = setInterval(async () => {
           try {
             const s = await fetchPHPInstallStatus();
@@ -257,16 +266,24 @@ export default function PHP() {
       if (!aliveRef.current) return; // unmounted mid-request — cleanup already ran
       setInstallJob({ status: 'running', version: label });
       if (installPollRef.current) clearInterval(installPollRef.current);
+      // One failed poll (network blip) must not freeze the panel at "running"
+      // while the task keeps going: give up only after repeated failures.
+      let failures = 0;
       installPollRef.current = setInterval(async () => {
         try {
           const st = await fetchPHPInstallStatus();
+          failures = 0;
           setInstallJob(st);
           if (st.status !== 'running' && st.status !== 'queued') {
             if (installPollRef.current) clearInterval(installPollRef.current);
             void loadAll();
           }
-        } catch {
-          if (installPollRef.current) clearInterval(installPollRef.current);
+        } catch (e) {
+          failures++;
+          if (failures >= maxPollFailures) {
+            if (installPollRef.current) clearInterval(installPollRef.current);
+            setInstallJob({ status: 'error', version: label, error: `Lost contact with the server: ${(e as Error).message}` });
+          }
         }
       }, 2000);
     } catch (e) {

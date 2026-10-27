@@ -536,9 +536,13 @@ func (h *Handler) Add(w http.ResponseWriter, r *http.Request) {
 		h.deps.RemoveDomainFile(rh)
 	}
 
-	h.deps.RecordAudit(r, "domain.create", "domain: "+d.Host, true)
-	h.deps.NotifyDomainChange()
+	perr := h.notifyChange()
+	h.deps.RecordAudit(r, "domain.create", persistDetail("domain: "+d.Host, perr), perr == nil)
 	h.deps.WebhookFire(webhook.EventDomainAdd, map[string]any{"host": d.Host, "type": d.Type, "root": d.Root})
+	if perr != nil {
+		jsonError(w, "domain created but could not be persisted: "+perr.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -615,11 +619,32 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		siteuser.DeleteUser(host)
 	}
 
-	h.deps.RecordAudit(r, "domain.delete", "domain: "+host, true)
-	h.deps.NotifyDomainChange()
+	perr := h.notifyChange()
+	h.deps.RecordAudit(r, "domain.delete", persistDetail("domain: "+host, perr), perr == nil)
 	h.deps.WebhookFire(webhook.EventDomainDelete, map[string]any{"host": host})
+	if perr != nil {
+		jsonError(w, "domain deleted but could not be persisted: "+perr.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	jsonResponse(w, map[string]string{"status": "deleted"})
+}
+
+// notifyChange applies a domain change and saves it. A server that can report
+// the save failure does; any other Deps keeps the log-only behaviour.
+func (h *Handler) notifyChange() error {
+	if n, ok := h.deps.(interface{ NotifyDomainChangeErr() error }); ok {
+		return n.NotifyDomainChangeErr()
+	}
+	h.deps.NotifyDomainChange()
+	return nil
+}
+
+func persistDetail(detail string, err error) string {
+	if err != nil {
+		return detail + ": " + err.Error()
+	}
+	return detail
 }
 
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
@@ -887,8 +912,12 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		h.deps.RemoveDomainFile(rh)
 	}
 
-	h.deps.RecordAudit(r, "domain.update", "domain: "+host, true)
-	h.deps.NotifyDomainChange()
+	perr := h.notifyChange()
+	h.deps.RecordAudit(r, "domain.update", persistDetail("domain: "+host, perr), perr == nil)
+	if perr != nil {
+		jsonError(w, "domain updated but could not be persisted: "+perr.Error(), http.StatusInternalServerError)
+		return
+	}
 	jsonResponse(w, d)
 }
 
@@ -1163,7 +1192,10 @@ func (h *Handler) UnknownAlias(w http.ResponseWriter, r *http.Request) {
 		h.deps.UnlockConfig()
 		h.deps.UnknownHostUnblock(host)
 		h.deps.UnknownHostDismiss(host)
-		h.deps.NotifyDomainChange()
+		if perr := h.notifyChange(); perr != nil {
+			jsonError(w, "alias change applied but could not be persisted: "+perr.Error(), http.StatusInternalServerError)
+			return
+		}
 		jsonResponse(w, map[string]string{"status": "already_primary", "host": host, "domain": target})
 		return
 	}
@@ -1201,7 +1233,10 @@ func (h *Handler) UnknownAlias(w http.ResponseWriter, r *http.Request) {
 		h.deps.UnlockConfig()
 		h.deps.UnknownHostUnblock(host)
 		h.deps.UnknownHostDismiss(host)
-		h.deps.NotifyDomainChange()
+		if perr := h.notifyChange(); perr != nil {
+			jsonError(w, "alias change applied but could not be persisted: "+perr.Error(), http.StatusInternalServerError)
+			return
+		}
 		jsonResponse(w, map[string]string{"status": "already_primary", "host": host, "domain": target})
 		return
 	}
@@ -1212,8 +1247,12 @@ func (h *Handler) UnknownAlias(w http.ResponseWriter, r *http.Request) {
 
 	h.deps.UnknownHostUnblock(host)
 	h.deps.UnknownHostDismiss(host)
-	h.deps.RecordAudit(r, "unknown_domain.alias_redirect", fmt.Sprintf("host: %s -> %s (%d)", host, target, redirectCode), true)
-	h.deps.NotifyDomainChange()
+	perr := h.notifyChange()
+	h.deps.RecordAudit(r, "unknown_domain.alias_redirect", persistDetail(fmt.Sprintf("host: %s -> %s (%d)", host, target, redirectCode), perr), perr == nil)
+	if perr != nil {
+		jsonError(w, "redirect applied but could not be persisted: "+perr.Error(), http.StatusInternalServerError)
+		return
+	}
 	jsonResponse(w, map[string]any{"status": "redirect", "host": host, "domain": target, "redirect_code": redirectCode})
 }
 

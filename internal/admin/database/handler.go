@@ -336,6 +336,10 @@ func (h *Handler) RemoteAccess(w http.ResponseWriter, r *http.Request) {
 	result, err := dbpkg.ConfigureRemoteAccess(req.User, req.Host, req.Password, req.Database)
 	if err != nil {
 		h.deps.RecordAudit(r, "database.remote_access", "error: "+err.Error(), false)
+		if errors.Is(err, dbpkg.ErrUserExists) {
+			jsonError(w, "database user already exists; choose a different user name", http.StatusConflict)
+			return
+		}
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

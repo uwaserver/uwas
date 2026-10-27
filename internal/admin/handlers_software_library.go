@@ -760,7 +760,12 @@ func (s *Server) attachSoftwareDomain(host string, hostPort int) error {
 	}
 	s.config.Domains = append(s.config.Domains, d)
 	s.configMu.Unlock()
-	s.notifyDomainChange()
+	if err := s.notifyDomainChangeErr(); err != nil {
+		// The caller reports the failed attach, so the proxy entry must not
+		// stay live in memory without being on disk.
+		s.detachSoftwareDomain(host, hostPort)
+		return fmt.Errorf("domain attached but could not be persisted: %w", err)
+	}
 	return nil
 }
 

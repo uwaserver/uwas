@@ -191,6 +191,14 @@ func splitArgsQuoted(line string) ([]string, []bool) {
 		ch := line[i]
 
 		if inQuote {
+			// Like Apache, a backslash before the quote character or another
+			// backslash inside a quoted argument is an escape: "{\"a\":1}" is
+			// {"a":1}, and the escaped quote does not end the argument (F27500).
+			if ch == '\\' && i+1 < len(line) && (line[i+1] == quoteChar || line[i+1] == '\\') {
+				i++
+				current.WriteByte(line[i])
+				continue
+			}
 			if ch == quoteChar {
 				inQuote = false
 				// Include the content without quotes

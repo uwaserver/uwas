@@ -103,13 +103,39 @@ func UnblockIP(ip string) error {
 		}
 		return nil
 	case "iptables":
+		bin := "iptables"
 		if a.Is6() {
-			return iptablesRun("ip6tables", "-D", "INPUT", "-s", a.String(), "-j", "DROP")
+			bin = "ip6tables"
 		}
-		return iptablesRun("iptables", "-D", "INPUT", "-s", a.String(), "-j", "DROP")
+		return iptablesDeleteAll(bin, "-D", "INPUT", "-s", a.String(), "-j", "DROP")
 	default:
 		return fmt.Errorf("no firewall backend available (ufw or iptables required)")
 	}
+}
+
+// maxDuplicateDrops bounds iptablesDeleteAll; far more copies than a block that
+// was applied a few times can leave behind.
+const maxDuplicateDrops = 64
+
+// iptablesDeleteAll removes every copy of a rule: `-D` deletes only one, and a
+// block applied more than once (manual block over an autoblock, a replayed
+// queue entry) leaves the address cut off after a single delete. An absent rule
+// is not an error, as with the ufw backend.
+func iptablesDeleteAll(bin string, args ...string) error {
+	if _, err := execLookPathFn(bin); err != nil {
+		return fmt.Errorf("%s not installed", bin)
+	}
+	for i := 0; i < maxDuplicateDrops; i++ {
+		out, err := execCommandFn(bin, args...).CombinedOutput()
+		if err == nil {
+			continue
+		}
+		if strings.Contains(string(out), "does not exist") {
+			return nil
+		}
+		return fmt.Errorf("%s %s: %w: %s", bin, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func iptablesRun(bin string, args ...string) error {

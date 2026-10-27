@@ -142,7 +142,8 @@ func TestUserChangePasswordAdminSuccess(t *testing.T) {
 	s := testServer()
 	s.SetAuthManager(newMockAuthManager())
 	rec := httptest.NewRecorder()
-	r := httptest.NewRequest("POST", "/api/v1/auth/users/admin/password", strings.NewReader(`{"new_password":"S3cure-Passw0rd!"}`))
+	// Own password: the current one is required even for admins (F28800).
+	r := httptest.NewRequest("POST", "/api/v1/auth/users/admin/password", strings.NewReader(`{"current_password":"password","new_password":"S3cure-Passw0rd!"}`))
 	r = withAdminContext(r)
 	s.mux.ServeHTTP(rec, r)
 	if rec.Code != 200 {

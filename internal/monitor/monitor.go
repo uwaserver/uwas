@@ -90,6 +90,65 @@ type HealthResult struct {
 	// changes once it reaches failThreshold, so a single slow or challenged
 	// reply does not flip a healthy site to down.
 	consecutiveFail int
+
+	// uptimeBuckets summarise every check of the last 24h in uptimeBucket
+	// slices. Checks holds only the last maxChecks results (about 50
+	// minutes), far less than the 24h Uptime reports on.
+	uptimeBuckets []uptimeBucket
+}
+
+const (
+	uptimeWindow = 24 * time.Hour
+	uptimeSlot   = 10 * time.Minute
+)
+
+// uptimeBucket counts the checks that fell in one uptimeSlot.
+type uptimeBucket struct {
+	slot      int64
+	total, up int
+}
+
+// recordUptime adds c to the 24h summary and drops slots that aged out.
+func (r *HealthResult) recordUptime(c Check) {
+	slot := c.Time.UnixNano() / int64(uptimeSlot)
+	if n := len(r.uptimeBuckets); n > 0 && r.uptimeBuckets[n-1].slot == slot {
+		r.uptimeBuckets[n-1].total++
+		if c.Error == "" && c.StatusCode >= 200 && c.StatusCode < 400 {
+			r.uptimeBuckets[n-1].up++
+		}
+	} else {
+		b := uptimeBucket{slot: slot, total: 1}
+		if c.Error == "" && c.StatusCode >= 200 && c.StatusCode < 400 {
+			b.up = 1
+		}
+		r.uptimeBuckets = append(r.uptimeBuckets, b)
+	}
+	keep := 0
+	for keep < len(r.uptimeBuckets) && !r.slotInWindow(r.uptimeBuckets[keep].slot, c.Time) {
+		keep++
+	}
+	r.uptimeBuckets = r.uptimeBuckets[keep:]
+}
+
+func (r *HealthResult) slotInWindow(slot int64, now time.Time) bool {
+	cutoff := now.Add(-uptimeWindow).UnixNano() / int64(uptimeSlot)
+	return slot >= cutoff
+}
+
+// uptimePercent is the share of good checks over the last 24h as of now.
+func (r *HealthResult) uptimePercent(now time.Time) float64 {
+	var total, up int
+	for _, b := range r.uptimeBuckets {
+		if !r.slotInWindow(b.slot, now) {
+			continue
+		}
+		total += b.total
+		up += b.up
+	}
+	if total == 0 {
+		return 100.0
+	}
+	return float64(up) / float64(total) * 100.0
 }
 
 // Check records a single health check result.
@@ -321,7 +380,8 @@ func (m *Monitor) checkDomain(ctx context.Context, d config.Domain) {
 	result.StatusCode = statusCode
 	result.ResponseMs = elapsed
 	result.LastCheck = check.Time
-	result.Uptime = calculateUptime(result.Checks)
+	result.recordUptime(check)
+	result.Uptime = result.uptimePercent(check.Time)
 	fails := result.consecutiveFail
 	m.resultsMu.Unlock()
 	m.domainsMu.RUnlock()

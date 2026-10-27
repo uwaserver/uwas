@@ -212,3 +212,104 @@ describe('PHP page install polling lifecycle', () => {
     });
   });
 });
+
+// F27700: a task that is already running when the page loads (reload mid-update)
+// must be labelled with its real action, not as an install.
+describe('PHP page resumes a running task with its real action', () => {
+  beforeEach(() => {
+    Object.values(apiMocks).forEach(fn => {
+      if (vi.isMockFunction(fn)) fn.mockReset();
+    });
+    apiMocks.fetchPHP.mockResolvedValue([]);
+    apiMocks.fetchDomains.mockResolvedValue([]);
+    apiMocks.fetchDomainPHPInstances.mockResolvedValue([]);
+    apiMocks.fetchPHPInstallInfo.mockResolvedValue({ distro: 'ubuntu', version: '8.4', commands: [], packages: [], notes: '' });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('shows "Updating" for a running update task after a reload', async () => {
+    apiMocks.fetchPHPInstallStatus.mockResolvedValue({ status: 'running', version: '8.3', action: 'update' });
+    renderPage();
+    await flush();
+    expect(screen.queryByText(/Installing PHP 8\.3/)).toBeNull();
+    expect(screen.getByText(/Updating PHP 8\.3/)).toBeTruthy();
+  });
+
+  it('shows "Uninstalling" for a running uninstall task after a reload', async () => {
+    apiMocks.fetchPHPInstallStatus.mockResolvedValue({ status: 'running', version: '8.1', action: 'uninstall' });
+    renderPage();
+    await flush();
+    expect(screen.queryByText(/Installing PHP 8\.1/)).toBeNull();
+    expect(screen.getByText(/Uninstalling PHP 8\.1/)).toBeTruthy();
+  });
+
+  // Control: a running install keeps the installer panel.
+  it('still shows "Installing" for a running install task', async () => {
+    apiMocks.fetchPHPInstallStatus.mockResolvedValue({ status: 'running', version: '8.4', action: 'install' });
+    renderPage();
+    await flush();
+    expect(screen.getByText(/Installing PHP 8\.4/)).toBeTruthy();
+  });
+});
+
+// F27701: one failed status poll (network blip, proxy restart) must not freeze
+// the progress panel at "running" forever while the task keeps going.
+describe('PHP task polling survives transient errors', () => {
+  const inst = {
+    version: '8.4.27', binary: '/usr/bin/php-fpm8.4', config_file: '', extensions: [],
+    sapi: 'fpm-fcgi', running: false, listen_addr: '', domain_count: 0,
+  };
+
+  beforeEach(() => {
+    Object.values(apiMocks).forEach(fn => {
+      if (vi.isMockFunction(fn)) fn.mockReset();
+    });
+    apiMocks.fetchPHP.mockResolvedValue([inst]);
+    apiMocks.fetchDomains.mockResolvedValue([]);
+    apiMocks.fetchDomainPHPInstances.mockResolvedValue([]);
+    apiMocks.fetchPHPInstallInfo.mockResolvedValue({ distro: 'ubuntu', version: '8.4', commands: [], packages: [], notes: '' });
+    apiMocks.updatePHP.mockResolvedValue({ status: 'started', versions: ['8.4'] });
+    confirmValue.confirmAction.mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function startUpdate() {
+    vi.useFakeTimers();
+    renderPage();
+    await act(async () => {});
+    fireEvent.click(screen.getByRole('button', { name: /^update$/i }));
+    await act(async () => {});
+  }
+
+  it('keeps polling after one failed poll and reports the finished task', async () => {
+    apiMocks.fetchPHPInstallStatus
+      .mockResolvedValueOnce({ status: 'idle' }) // mount-time resume check
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValue({ status: 'done', version: '8.4', action: 'update' });
+    await startUpdate();
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); }); // poll #1 fails
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); }); // poll #2 succeeds
+    expect(screen.getByText(/PHP 8\.4 updated/)).toBeTruthy();
+  });
+
+  // Control: when the server stays unreachable the poll gives up and says so.
+  it('gives up with an error after repeated failures', async () => {
+    apiMocks.fetchPHPInstallStatus
+      .mockResolvedValueOnce({ status: 'idle' })
+      .mockRejectedValue(new Error('network down'));
+    await startUpdate();
+    for (let i = 0; i < 12; i++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    }
+    const calls = apiMocks.fetchPHPInstallStatus.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(20000); });
+    expect(apiMocks.fetchPHPInstallStatus.mock.calls.length).toBe(calls); // stopped
+    expect(screen.getByText(/Update failed/)).toBeTruthy();
+  });
+});

@@ -133,6 +133,13 @@ func (s *Server) enforceDomainRateLimit(ctx *router.RequestContext, r *http.Requ
 	return false
 }
 
+// proxyOwnsHost reports whether host is a configured reverse-proxy site, whose
+// upstream owns every path under it.
+func (s *Server) proxyOwnsHost(host string) bool {
+	d, ok := s.vhosts.LookupWithStatus(host)
+	return ok && d != nil && d.Type == "proxy"
+}
+
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// An ESI sub-request runs inside its parent's request: it takes no
 	// connection slot of its own and is not counted as a second request.
@@ -149,8 +156,11 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Health check on main port (no auth, fast path)
-	if r.URL.Path == "/.well-known/health" || r.URL.Path == "/healthz" {
+	// Health check on main port (no auth, fast path). The bare /healthz alias
+	// is not the server's on a proxy site's own Host: there it is the upstream
+	// application's liveness endpoint, and answering "ok" for it hid both the
+	// application's page and an upstream that was down (F28201).
+	if r.URL.Path == "/.well-known/health" || (r.URL.Path == "/healthz" && !s.proxyOwnsHost(r.Host)) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 
@@ -1285,6 +1295,16 @@ func (s *Server) handleProxy(ctx *router.RequestContext, domain *config.Domain) 
 		s.renderDomainErrorFor(ctx.Request, ctx.Response, http.StatusServiceUnavailable, domain)
 		return
 	}
+	// A request admitted as the half-open probe that leaves without recording
+	// an outcome must give the probe slot back (F28200).
+	outcomeRecorded := false
+	if cb != nil {
+		defer func() {
+			if !outcomeRecorded {
+				cb.Abandon()
+			}
+		}()
+	}
 
 	// Request mirroring: fire-and-forget copy to mirror backend
 	if mirror != nil && mirror.ShouldMirror() {
@@ -1335,6 +1355,7 @@ func (s *Server) handleProxy(ctx *router.RequestContext, domain *config.Domain) 
 
 	// Record circuit breaker result
 	if cb != nil {
+		outcomeRecorded = true
 		if ctx.Response.StatusCode() >= 500 {
 			cb.RecordFailure()
 		} else {

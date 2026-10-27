@@ -184,8 +184,9 @@ func (s *Server) autoCreateDomainForClone(req *migrate.CloneRequest, result *mig
 		return
 	}
 
+	// persistConfig takes configMu itself, so the lock must be released before
+	// it runs; the domain is registered under the lock and saved after it.
 	s.configMu.Lock()
-	defer s.configMu.Unlock()
 
 	// Find source domain config to copy settings
 	var sourceCfg *config.Domain
@@ -199,6 +200,7 @@ func (s *Server) autoCreateDomainForClone(req *migrate.CloneRequest, result *mig
 	// Check target doesn't already exist
 	for _, d := range s.config.Domains {
 		if d.Host == req.TargetDomain {
+			s.configMu.Unlock()
 			return
 		}
 	}
@@ -218,7 +220,23 @@ func (s *Server) autoCreateDomainForClone(req *migrate.CloneRequest, result *mig
 		newDomain.Security = sourceCfg.Security
 	}
 	s.config.Domains = append(s.config.Domains, newDomain)
-	s.persistConfig()
+	s.configMu.Unlock()
+	if err := s.persistConfig(); err != nil {
+		// Keep memory and disk in step: a site that is not saved would vanish on
+		// restart while the clone reported success.
+		s.configMu.Lock()
+		for i := range s.config.Domains {
+			if s.config.Domains[i].Host == req.TargetDomain {
+				s.config.Domains = append(s.config.Domains[:i:i], s.config.Domains[i+1:]...)
+				break
+			}
+		}
+		s.configMu.Unlock()
+		result.Status = "error"
+		result.Error = "clone finished but the domain could not be saved: " + err.Error()
+		s.logger.Error("clone: failed to persist auto-created domain", "domain", req.TargetDomain, "error", err)
+		return
+	}
 	s.notifyDomainChange()
 	s.logger.Info("clone: auto-created domain", "domain", req.TargetDomain, "root", req.TargetRoot)
 }

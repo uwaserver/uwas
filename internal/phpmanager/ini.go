@@ -148,39 +148,52 @@ func (m *Manager) GetConfigRaw(version string) (string, error) {
 
 // SetConfigRaw writes the entire php.ini file content.
 func (m *Manager) SetConfigRaw(version, content string) error {
-	inst, ok := m.findInstallPtr(version)
-	if !ok {
-		return fmt.Errorf("PHP %s not found", version)
-	}
-	if inst.ConfigFile == "" {
-		// Create config file via findOrCreatePHPConfig
-		info, _ := m.runPHP(inst.Binary, "-i")
-		inst.ConfigFile = findOrCreatePHPConfig(inst.Version, info)
-		if inst.ConfigFile == "" {
-			return fmt.Errorf("cannot create php.ini for PHP %s", version)
-		}
+	path, err := m.configFileFor(version)
+	if err != nil {
+		return err
 	}
 	iniMu.Lock()
 	defer iniMu.Unlock()
-	return writeINIAtomic(inst.ConfigFile, []byte(content))
+	return writeINIAtomic(path, []byte(content))
+}
+
+// configFileFor returns the php.ini path for version, creating the file and
+// recording it on the installation when none was detected. The record is
+// written under m.mu: the old code assigned through a pointer taken from
+// findInstallPtr after the lock was released, racing every reader of the
+// installation list (F29100).
+func (m *Manager) configFileFor(version string) (string, error) {
+	inst, ok := m.findInstall(version)
+	if !ok {
+		return "", fmt.Errorf("PHP %s not found", version)
+	}
+	if inst.ConfigFile != "" {
+		return inst.ConfigFile, nil
+	}
+	info, _ := m.runPHP(inst.Binary, "-i")
+	path := findOrCreatePHPConfig(inst.Version, info)
+	if path == "" {
+		return "", fmt.Errorf("cannot create php.ini for PHP %s", version)
+	}
+	m.mu.Lock()
+	for i := range m.installations {
+		cur := &m.installations[i]
+		if cur.Version == inst.Version && cur.Binary == inst.Binary && cur.SAPI == inst.SAPI && cur.ConfigFile == "" {
+			cur.ConfigFile = path
+		}
+	}
+	m.mu.Unlock()
+	return path, nil
 }
 
 // SetConfig updates a single php.ini directive for the given PHP version.
 // It rewrites the ini file in place.
 func (m *Manager) SetConfig(version, key, value string) error {
-	inst, ok := m.findInstallPtr(version)
-	if !ok {
-		return fmt.Errorf("PHP %s not found", version)
+	path, err := m.configFileFor(version)
+	if err != nil {
+		return err
 	}
-	if inst.ConfigFile == "" {
-		info, _ := m.runPHP(inst.Binary, "-i")
-		inst.ConfigFile = findOrCreatePHPConfig(inst.Version, info)
-		if inst.ConfigFile == "" {
-			return fmt.Errorf("cannot create php.ini for PHP %s", version)
-		}
-	}
-
-	return updateINI(inst.ConfigFile, key, value)
+	return updateINI(path, key, value)
 }
 
 // afterINIRead, when set (tests only), runs between updateINI's read and write.

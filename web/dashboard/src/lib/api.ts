@@ -592,6 +592,7 @@ export const fetchPHPInstallInfo = (version?: string) =>
 
 export interface PHPInstallStatus {
   version?: string;
+  action?: string; // "install", "update", "uninstall"
   status: string; // "idle", "running", "done", "error"
   output?: string;
   error?: string;
@@ -958,8 +959,8 @@ export const fetchAdminUsers = () => api<AdminUser[]>('/api/v1/auth/users').then
 export const createAdminUser = (user: { username: string; password: string; role: string; email?: string; domains?: string[] }) =>
   api<AdminUserCreated>('/api/v1/auth/users', { method: 'POST', body: JSON.stringify(user) });
 export const deleteAdminUser = (username: string) => api<{ status: string }>(`/api/v1/auth/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
-export const changeAdminPassword = (username: string, password: string) =>
-  api<{ status: string }>(`/api/v1/auth/users/${encodeURIComponent(username)}/password`, { method: 'POST', body: JSON.stringify({ new_password: password }) });
+export const changeAdminPassword = (username: string, password: string, currentPassword?: string) =>
+  api<{ status: string }>(`/api/v1/auth/users/${encodeURIComponent(username)}/password`, { method: 'POST', body: JSON.stringify({ new_password: password, ...(currentPassword ? { current_password: currentPassword } : {}) }) });
 export const regenAdminApiKey = (username: string) =>
   api<{ api_key: string }>(`/api/v1/auth/users/${encodeURIComponent(username)}/apikey`, { method: 'POST' });
 

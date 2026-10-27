@@ -85,6 +85,23 @@ func TestWebhookNonPushEventDoesNotDeploy(t *testing.T) {
 				t.Fatalf("status = %d, want 202", rec.Code)
 			}
 			got := webhookStatus(t, rec)
+			if got == "accepted" {
+				// The accepted delivery deploys in the background; let it finish
+				// before the temp dir is removed. Registered after the helper's
+				// cleanup, so it runs first.
+				t.Cleanup(func() {
+					deadline := time.Now().Add(10 * time.Second)
+					for time.Now().Before(deadline) {
+						h.lastWebhookMu.Lock()
+						st := h.lastWebhookByName["demo"]
+						h.lastWebhookMu.Unlock()
+						if st != nil && !st.Finished.IsZero() {
+							return
+						}
+						time.Sleep(5 * time.Millisecond)
+					}
+				})
+			}
 			t.Logf("EXPECTED: %s\nACTUAL: %s", c.want, got)
 			if got != c.want {
 				t.Fatalf("PROBLEM CONFIRMED: %s delivery answered %q, want %q (audit: %v)", c.value, got, c.want, d.audited)

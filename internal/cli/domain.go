@@ -103,7 +103,8 @@ func (d *DomainCommand) add(args []string) error {
 	domainType := fs.String("type", "static", "domain type")
 	root := fs.String("root", "", "document root")
 	ssl := fs.String("ssl", "off", "SSL mode")
-	if err := fs.Parse(args); err != nil {
+	rest, err := parseInterspersed(fs, args)
+	if err != nil {
 		return err
 	}
 
@@ -111,7 +112,10 @@ func (d *DomainCommand) add(args []string) error {
 		*apiURL = adminURLFromConfig()
 	}
 
-	host := fs.Arg(0)
+	host := ""
+	if len(rest) > 0 {
+		host = rest[0]
+	}
 	if host == "" {
 		return fmt.Errorf("host is required: uwas domain add <host> [flags]")
 	}
@@ -132,7 +136,8 @@ func (d *DomainCommand) remove(args []string) error {
 	fs := flag.NewFlagSet("domain remove", flag.ContinueOnError)
 	apiURL := fs.String("api-url", "", "admin API URL")
 	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
-	if err := fs.Parse(args); err != nil {
+	rest, err := parseInterspersed(fs, args)
+	if err != nil {
 		return err
 	}
 
@@ -140,12 +145,15 @@ func (d *DomainCommand) remove(args []string) error {
 		*apiURL = adminURLFromConfig()
 	}
 
-	host := fs.Arg(0)
+	host := ""
+	if len(rest) > 0 {
+		host = rest[0]
+	}
 	if host == "" {
 		return fmt.Errorf("host is required: uwas domain remove <host>")
 	}
 
-	_, err := apiRequest("DELETE", *apiURL+"/api/v1/domains/"+host, *apiKey, nil)
+	_, err = apiRequest("DELETE", *apiURL+"/api/v1/domains/"+host, *apiKey, nil)
 	if err != nil {
 		return fmt.Errorf("remove domain %s: %w", host, err)
 	}

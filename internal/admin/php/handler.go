@@ -52,6 +52,7 @@ type TaskInfo struct {
 	ID     string
 	Name   string
 	Type   string
+	Action string
 	Status string
 	Output string
 	Error  string
@@ -185,14 +186,14 @@ func (h *Handler) InstallStatus(w http.ResponseWriter, r *http.Request) {
 	if t := h.deps.TaskActiveByType("php"); t != nil {
 		jsonResponse(w, map[string]any{
 			"status": t.Status, "output": t.Output, "error": t.Error,
-			"task_id": t.ID, "version": t.Name,
+			"task_id": t.ID, "version": t.Name, "action": t.Action,
 		})
 		return
 	}
 	if t := h.deps.TaskLatestByType("php"); t != nil {
 		jsonResponse(w, map[string]any{
 			"status": t.Status, "output": t.Output, "error": t.Error,
-			"task_id": t.ID, "version": t.Name,
+			"task_id": t.ID, "version": t.Name, "action": t.Action,
 		})
 		return
 	}
@@ -566,7 +567,15 @@ func (h *Handler) DomainConfigPut(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	h.deps.PersistDomainPHPOverrides(domain)
+	if p, ok := h.deps.(interface{ PersistDomainPHPOverridesErr(string) error }); ok {
+		if err := p.PersistDomainPHPOverridesErr(domain); err != nil {
+			h.deps.RecordAudit(r, "php.domain_config_put", "domain: "+domain+": "+err.Error(), false)
+			jsonError(w, "override applied but could not be persisted: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		h.deps.PersistDomainPHPOverrides(domain)
+	}
 	restarted := false
 	if err := h.deps.PHPManager().RestartDomain(domain); err == nil {
 		restarted = true

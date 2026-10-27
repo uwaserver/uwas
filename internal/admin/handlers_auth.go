@@ -595,7 +595,11 @@ func (s *Server) handleUserChangePasswordAuth(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if currentUser.Role == auth.RoleAdmin {
+	// Changing your own password always proves the current one, admins
+	// included (handleUserUpdateAuth refuses the same shortcut): a hijacked
+	// session must not be able to replace the password. Only an admin
+	// resetting ANOTHER user's password skips it.
+	if currentUser.Role == auth.RoleAdmin && currentUser.Username != username {
 		updates := &auth.User{Password: req.NewPassword}
 		if err := s.getAuthMgr().UpdateUser(username, updates); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)

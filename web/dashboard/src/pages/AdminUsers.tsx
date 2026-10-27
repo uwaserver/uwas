@@ -24,6 +24,8 @@ export default function AdminUsers() {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [pwUser, setPwUser] = useState<string | null>(null);
   const [newPw, setNewPw] = useState('');
+  // Required by the server only when changing your OWN password.
+  const [curPw, setCurPw] = useState('');
   const [actionLoading, setActionLoading] = useState('');
 
   const load = useCallback(async () => {
@@ -84,8 +86,8 @@ export default function AdminUsers() {
     if (!newPw) return;
     setActionLoading('pw-' + username);
     try {
-      await changeAdminPassword(username, newPw);
-      setPwUser(null); setNewPw('');
+      await changeAdminPassword(username, newPw, curPw);
+      setPwUser(null); setNewPw(''); setCurPw('');
       showStatus(`Password changed for ${username}`);
     } catch (e) { setError((e as Error).message); }
     finally { setActionLoading(''); }
@@ -257,11 +259,13 @@ export default function AdminUsers() {
                     <div className="flex items-center justify-end gap-2">
                       {pwUser === u.username ? (
                         <div className="flex items-center gap-1">
+                          <input type="password" value={curPw} onChange={e => setCurPw(e.target.value)} placeholder="Current (own account)"
+                            className="w-36 rounded border border-border bg-background px-2 py-1 text-xs text-foreground outline-none" />
                           <input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="New password"
                             className="w-32 rounded border border-border bg-background px-2 py-1 text-xs text-foreground outline-none" />
                           <button disabled={!newPw || actionLoading === 'pw-' + u.username} onClick={() => handleChangePw(u.username)}
                             className="rounded bg-blue-600 px-2 py-1 text-xs text-white disabled:opacity-50">Save</button>
-                          <button onClick={() => { setPwUser(null); setNewPw(''); }} className="text-xs text-muted-foreground">X</button>
+                          <button onClick={() => { setPwUser(null); setNewPw(''); setCurPw(''); }} className="text-xs text-muted-foreground">X</button>
                         </div>
                       ) : (
                         <>

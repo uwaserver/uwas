@@ -931,9 +931,13 @@ func (s *Server) HTTPServer() *http.Server {
 
 // persistDomainPHPOverrides saves the current in-memory PHP config overrides
 // for a domain into its domains.d/*.yaml file so they survive server restarts.
-func (s *Server) persistDomainPHPOverrides(domain string) {
+func (s *Server) persistDomainPHPOverrides(domain string) { _ = s.persistDomainPHPOverridesErr(domain) }
+
+// persistDomainPHPOverridesErr is persistDomainPHPOverrides reporting why the
+// domain file could not be rewritten.
+func (s *Server) persistDomainPHPOverridesErr(domain string) error {
 	if s.phpMgr == nil {
-		return
+		return nil
 	}
 	overrides := s.phpMgr.GetDomainConfig(domain)
 	// Keep the in-memory config in step with the file: persistConfig rewrites
@@ -958,29 +962,30 @@ func (s *Server) persistDomainPHPOverrides(domain string) {
 	path, err := s.domainFilePath(domain)
 	if err != nil {
 		s.logger.Warn("cannot persist PHP overrides: bad domain path", "domain", domain, "error", err)
-		return
+		return fmt.Errorf("persist PHP overrides: bad domain path: %w", err)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		s.logger.Warn("cannot persist PHP overrides: read failed", "domain", domain, "error", err)
-		return
+		return fmt.Errorf("persist PHP overrides: read failed: %w", err)
 	}
 	var domCfg config.Domain
 	if err := yaml.Unmarshal(data, &domCfg); err != nil {
 		s.logger.Warn("cannot persist PHP overrides: parse failed", "domain", domain, "error", err)
-		return
+		return fmt.Errorf("persist PHP overrides: parse failed: %w", err)
 	}
 	domCfg.PHP.ConfigOverrides = overrides
 	out, err := yaml.Marshal(&domCfg)
 	if err != nil {
 		s.logger.Warn("cannot persist PHP overrides: marshal failed", "domain", domain, "error", err)
-		return
+		return fmt.Errorf("persist PHP overrides: marshal failed: %w", err)
 	}
 	if err := atomicWriteFile(path, out, 0600); err != nil {
 		s.logger.Warn("cannot persist PHP overrides: write failed", "domain", domain, "error", err)
-		return
+		return fmt.Errorf("persist PHP overrides: write failed: %w", err)
 	}
 	s.logger.Info("persisted PHP config overrides", "domain", domain, "count", len(overrides))
+	return nil
 }
 
 // Close releases background resources used by the admin module.
@@ -1327,14 +1332,21 @@ func requireJSONMiddleware(next http.Handler) http.Handler {
 // SetOnDomainChange sets a callback invoked after domain add/update/delete.
 func (s *Server) SetOnDomainChange(fn func()) { s.onDomainChange = fn }
 
-func (s *Server) notifyDomainChange() {
+func (s *Server) notifyDomainChange() { _ = s.notifyDomainChangeErr() }
+
+// notifyDomainChangeErr applies a domain change and persists it, returning the
+// persist error so a handler can tell the caller the change will not survive a
+// restart.
+func (s *Server) notifyDomainChangeErr() error {
 	if s.onDomainChange != nil {
 		s.onDomainChange()
 	}
 	// Persist config to disk so changes survive restart.
 	if err := s.persistConfig(); err != nil {
 		s.logger.Error("failed to persist config after domain change", "error", err)
+		return err
 	}
+	return nil
 }
 
 // persistConfig writes the global config to the main YAML file and each domain
