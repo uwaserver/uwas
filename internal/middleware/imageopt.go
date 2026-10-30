@@ -110,7 +110,7 @@ func ImageOptimization(cfg ImageOptConfig, docRoot string) Middleware {
 				if err != nil || !srcInfo.Mode().IsRegular() {
 					continue
 				}
-				info, ok := variantFresh(srcInfo, diskPath)
+				_, ok := variantFresh(srcInfo, diskPath)
 				if !ok {
 					continue
 				}
@@ -118,11 +118,10 @@ func ImageOptimization(cfg ImageOptConfig, docRoot string) Middleware {
 				// Serve the optimized file. The variant sits in the tenant's
 				// directory and is opened by the (root) server process: refuse a
 				// symlink swapped in since the checks above (F45303).
-				f, openedInfo, err := openVariantNoFollow(diskPath)
+				f, info, err := openVariantNoFollow(diskPath)
 				if err != nil {
 					continue
 				}
-				info = openedInfo
 
 				w.Header().Set("Content-Type", c.accept)
 				http.ServeContent(w, r, filepath.Base(diskPath), info.ModTime(), f)

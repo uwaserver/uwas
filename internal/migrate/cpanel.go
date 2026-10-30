@@ -698,24 +698,3 @@ func copyFile(src, dst string) error {
 	_, err = io.Copy(out, in)
 	return err
 }
-
-// copyPrivateFile copies src to dst with owner-only permissions, tightening an
-// existing dst, so a private key never lands world-readable.
-func copyPrivateFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	if err := out.Chmod(0o600); err != nil {
-		return err
-	}
-	_, err = io.Copy(out, in)
-	return err
-}

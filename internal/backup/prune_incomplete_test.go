@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -50,7 +51,7 @@ func TestPruneSkippedWhenNewBackupMissesDomainRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	names := map[string]bool{}
-	items, _ := mp.List(nil)
+	items, _ := mp.List(context.Background())
 	for _, it := range items {
 		names[it.Name] = true
 	}
@@ -67,7 +68,7 @@ func TestPruneSkippedWhenNewBackupMissesDomainRoot(t *testing.T) {
 	if _, err := m.CreateBackup("mem"); err != nil {
 		t.Fatal(err)
 	}
-	items, _ = mp.List(nil)
+	items, _ = mp.List(context.Background())
 	if len(items) != 1 {
 		t.Fatalf("after a complete backup retention keeps %d, want 1", len(items))
 	}
