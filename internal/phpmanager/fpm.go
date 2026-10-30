@@ -98,7 +98,13 @@ func (m *Manager) StartFPM(version, listenAddr string) error {
 		return nil
 	}
 
+	ident, err := workerIdentityFor()
+	if err != nil {
+		release()
+		return err
+	}
 	cmd := m.execCommand(inst.Binary, "-b", listenAddr)
+	applyWorkerIdentity(cmd, ident) // not as UWAS's own (root) identity (F42700)
 	// PHP_FCGI_CHILDREN: spawn N worker children for parallel requests.
 	// Without this, php-cgi handles only 1 request at a time!
 	cmd.Env = phpWorkerEnv(

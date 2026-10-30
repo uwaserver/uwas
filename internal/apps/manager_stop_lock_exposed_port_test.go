@@ -16,14 +16,27 @@ func stopLockStacks() string {
 	return string(buf[:runtime.Stack(buf, true)])
 }
 
+// stopLockMonitors counts goroutines currently inside monitorNative. A global
+// "none left" check is wrong: monitors of unrelated apps may be alive too, so
+// callers compare against a baseline taken before they started their own.
+func stopLockMonitors() int {
+	n := 0
+	for _, g := range strings.Split(stopLockStacks(), "\n\n") {
+		if strings.Contains(g, "apps.(*Manager).monitorNative") {
+			n++
+		}
+	}
+	return n
+}
+
 func stopLockWaitFor(t *testing.T, cond func(string) bool, what string) {
 	t.Helper()
-	deadline := time.Now().Add(15 * time.Second) // failure bound only
+	deadline := time.Now().Add(60 * time.Second) // failure bound only; a stack dump of every goroutine is slow under load
 	for time.Now().Before(deadline) {
 		if cond(stopLockStacks()) {
 			return
 		}
-		runtime.Gosched()
+		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", what)
 }
@@ -31,7 +44,7 @@ func stopLockWaitFor(t *testing.T, cond func(string) bool, what string) {
 func exposedPortManager(t *testing.T) *Manager {
 	s := NewStore(t.TempDir())
 	s.DataRoot = s.Dir
-	return NewManager(s, nil)
+	return testManager(t, s, nil)
 }
 
 func TestRegisterAvoidsOtherAppsExposedPorts(t *testing.T) {
@@ -94,6 +107,7 @@ func TestStopReleasesManagerLockDuringGrace(t *testing.T) {
 	defer func() { isPortFreeFn, execCommandFn = origFree, origExec }()
 
 	m := exposedPortManager(t)
+	baselineMonitors := stopLockMonitors()
 	for i, n := range []string{"slow", "other"} {
 		if err := m.Register(&App{Name: n, Runtime: RuntimeCustom, Command: "run", Port: 45101 + i, WorkDir: t.TempDir()}); err != nil {
 			t.Fatal(err)
@@ -144,7 +158,7 @@ func TestStopReleasesManagerLockDuringGrace(t *testing.T) {
 		t.Fatalf("still reported running after Stop: %+v", inst)
 	}
 	// edge: monitor does not auto-restart a stopped app
-	stopLockWaitFor(t, func(s string) bool { return !strings.Contains(s, "apps.(*Manager).monitorNative") }, "monitor exit")
+	stopLockWaitFor(t, func(string) bool { return stopLockMonitors() <= baselineMonitors }, "monitor exit")
 	if m.Get("slow").Running {
 		t.Fatal("auto-restarted after Stop")
 	}

@@ -172,6 +172,15 @@ func Install(req InstallRequest) InstallResult {
 	if req.DBUser == "" {
 		req.DBUser = req.DBName
 	}
+	// db_pass and db_host come from the request body and end up in SQL string
+	// literals, where a NUL byte cannot be represented (escSQL panics on it).
+	// Refuse it here as bad input instead of ending the process (F51300).
+	if strings.ContainsRune(req.DBPass, 0) || strings.ContainsRune(req.DBHost, 0) {
+		result.Status = "error"
+		result.Error = "db_pass and db_host must not contain a NUL byte"
+		result.DBPass = ""
+		return result
+	}
 	generatedPass := req.DBPass == ""
 	if req.DBPass == "" {
 		var genErr error
@@ -270,7 +279,15 @@ RewriteRule . /index.php [L]
 	// Under PHP-CGI/FPM, got_mod_rewrite() returns false → WordPress uses
 	// ugly /index.php/hello-world/ PATHINFO permalinks. This mu-plugin fixes it.
 	muDir := filepath.Join(req.WebRoot, "wp-content", "mu-plugins")
-	osMkdirAllFn(muDir, 0755)
+	// Root writes here, and MkdirAll and the final open only guard the last
+	// component: the site's own code can swap wp-content or mu-plugins for a
+	// link while the earlier steps run (F54301, as in Harden's F9200). Checked
+	// again after the mkdir, which is the last point before the write.
+	muSafe := !pathHasSymlink(req.WebRoot, filepath.Join("wp-content", "mu-plugins"))
+	if muSafe {
+		osMkdirAllFn(muDir, 0755)
+		muSafe = !pathHasSymlink(req.WebRoot, filepath.Join("wp-content", "mu-plugins"))
+	}
 	muPlugin := `<?php
 // UWAS: Tell WordPress that URL rewriting is available.
 // UWAS handles rewrite rules via .htaccess parsing + built-in try_files.
@@ -278,7 +295,9 @@ add_filter('got_url_rewrite', '__return_true');
 add_filter('got_rewrite', '__return_true');
 `
 	muPath := filepath.Join(muDir, "uwas-rewrite.php")
-	if err := osWriteFileFn(muPath, []byte(muPlugin), 0644); err != nil {
+	if !muSafe {
+		log.WriteString("Warning: wp-content/mu-plugins is under a symlink; skipped the mod_rewrite mu-plugin\n")
+	} else if err := osWriteFileFn(muPath, []byte(muPlugin), 0644); err != nil {
 		log.WriteString(fmt.Sprintf("Warning: failed to create mu-plugin: %s\n", err))
 	} else {
 		log.WriteString("mu-plugin created (mod_rewrite compatibility)\n")
@@ -294,7 +313,7 @@ add_filter('got_rewrite', '__return_true');
 // failure to ask (no client, no access) answers false: createMySQLDB then runs
 // as before and reports its own error.
 func mysqlAccountExists(user, host string) bool {
-	if !database.ValidDBIdentifier(user) {
+	if !database.ValidDBIdentifier(user) || strings.ContainsRune(host, 0) {
 		return false
 	}
 	if _, err := execLookPathFn("mysql"); err != nil {
@@ -328,6 +347,9 @@ func createMySQLDB(dbName, dbUser, dbPass, dbHost string, log *strings.Builder) 
 	}
 	if !database.ValidDBIdentifier(dbUser) {
 		return fmt.Errorf("invalid database user")
+	}
+	if strings.ContainsRune(dbPass, 0) || strings.ContainsRune(dbHost, 0) {
+		return fmt.Errorf("invalid password or host: NUL byte not allowed")
 	}
 
 	// Try mysql client
@@ -575,10 +597,14 @@ func setWordPressPermissions(webRoot string, log *strings.Builder) {
 	}
 
 	run("chown -R www-data:www-data", execCommandFn("chown", "-R", "www-data:www-data", webRoot))
-	run("chmod 755 (directories)", execCommandFn("find", webRoot, "-type", "d", "-exec", "chmod", "755", "{}", ";"))
 	// wp-config.php keeps the 0600 generateWPConfig gave it: it holds the DB
 	// password and salts, and 644 would make it readable by every local user.
-	run("chmod 644 (files)", execCommandFn("find", webRoot, "-type", "f", "!", "-name", "wp-config.php", "-exec", "chmod", "644", "{}", ";"))
+	// Done in Go through an os.Root rather than `find -exec chmod`, which
+	// follows a symlink the tenant swaps in while root runs it (F46001).
+	if err := normalizeTreeModes(webRoot, 0o755, 0o644, func(name string) bool { return name == "wp-config.php" }); err != nil {
+		failed++
+		log.WriteString(fmt.Sprintf("  warning: chmod 755/644 failed (%v) — run as a user permitted to chmod this web root, or set the modes manually\n", err))
+	}
 	// wp-content needs to be writable. chmod/chown/MkdirAll follow symlinks
 	// and this runs as root, so skip any path the domain user has pointed
 	// elsewhere (.tmp is not in the archive, so a planted one survives).
@@ -600,7 +626,13 @@ func setWordPressPermissions(webRoot string, log *strings.Builder) {
 		}
 		dir := filepath.Join(webRoot, rel)
 		osMkdirAllFn(dir, 0775)
-		run("chown www-data:www-data "+sub, execCommandFn("chown", "www-data:www-data", dir))
+		if c, done, cerr := chownDirToWebAccount(webRoot, rel); cerr != nil {
+			failed++
+			log.WriteString(fmt.Sprintf("  warning: chown www-data:www-data %s refused: %v\n", sub, cerr))
+		} else {
+			run("chown www-data:www-data "+sub, c)
+			done()
+		}
 	}
 	if failed == 0 {
 		log.WriteString("Permissions set (www-data:www-data, 755/644, wp-content 775, upgrade/uploads created)\n")
@@ -992,6 +1024,21 @@ func wpCLIStdin(webRoot string, stdin io.Reader, args ...string) (string, error)
 	cmd.Dir = webRoot
 	// wp-cli loads the site's plugins and themes in-process: no UWAS secrets (F9210).
 	cmd.Env = childenv.Filtered()
+	// ...and no root either: those are tenant-controlled PHP files (F43000).
+	id, idErr := wpRunIdentityFn(webRoot)
+	if idErr != nil {
+		return "", idErr
+	}
+	if id != nil {
+		applyRunIdentity(cmd, id)
+		// Root's HOME is unreadable to the site account; give wp-cli a private
+		// scratch cache it can write instead.
+		if cacheDir, err := os.MkdirTemp("", "uwas-wpcli-*"); err == nil {
+			defer os.RemoveAll(cacheDir)
+			_ = os.Lchown(cacheDir, id.uid, id.gid)
+			cmd.Env = append(cmd.Env, "HOME="+cacheDir, "WP_CLI_CACHE_DIR="+cacheDir)
+		}
+	}
 	cmd.Stdin = stdin
 	// Separate stdout from stderr — PHP deprecation warnings go to stderr
 	// and corrupt JSON output if mixed via CombinedOutput.

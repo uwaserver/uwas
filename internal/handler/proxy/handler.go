@@ -356,6 +356,15 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 			}
 		}
 
+		// A fully buffered body needs no 100-continue handshake: the client has
+		// already been answered and every byte is in hand. Forwarding Expect
+		// made the transport hold the body for the write timeout (60s by
+		// default) when the upstream never sends 100 Continue (F40301). A
+		// streamed body keeps it so the upstream can refuse a large upload.
+		if bodyBytes != nil {
+			proxyReq.Header.Del("Expect")
+		}
+
 		// Remove hop-by-hop headers BEFORE adding the proxy headers: the
 		// client's Connection header may name X-Forwarded-For / X-Real-IP,
 		// and laundering after the Set calls would delete the authoritative
@@ -434,9 +443,17 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 				mergeVary(ctx.Response.Header(), vals)
 				continue
 			}
+			if key == "Set-Cookie" {
+				// UWAS may already have queued a cookie of its own (the canary
+				// stickiness cookie); the upstream's cookies add to it instead
+				// of replacing the list (F40300).
+				ctx.Response.Header()[key] = append(ctx.Response.Header()[key], vals...)
+				continue
+			}
 			ctx.Response.Header()[key] = append([]string(nil), vals...)
 		}
 		removeHopByHop(ctx.Response.Header())
+		RewriteBackendLocation(ctx.Response.Header(), backend.URL, forwardedProto(ctx), ctx.Request.Host)
 
 		// Set sticky session cookie if the balancer is sticky
 		if sb, ok := balancer.(*StickyBalancer); ok {

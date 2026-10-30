@@ -34,6 +34,7 @@ and starts with sensible defaults.`
 func (s *ServeCommand) Run(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	configPath := fs.String("c", "", "path to config file")
+	fs.StringVar(configPath, "config", "", "path to config file (same as -c)")
 	logLevel := fs.String("log-level", "", "log level override")
 	httpPort := fs.String("http-port", "", "HTTP port for first-run setup")
 	adminPort := fs.String("admin-port", "", "admin API port for first-run setup")
@@ -54,7 +55,10 @@ func (s *ServeCommand) Run(args []string) error {
 
 	// If user explicitly specified a config path that doesn't exist, fail immediately
 	if !found && *configPath != "" {
-		return fmt.Errorf("load config: read config: open %s: The system cannot find the file specified", *configPath)
+		// The real reason (not found, permission denied...), not a fixed Windows
+		// sentence (F52604).
+		_, statErr := os.Stat(*configPath)
+		return fmt.Errorf("load config: read config: %w", statErr)
 	}
 
 	if !found {

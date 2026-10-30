@@ -24,6 +24,12 @@ var (
 
 var errStatusTimeout = errors.New("systemctl did not answer in time")
 
+// actionTimeout bounds start/stop/restart/enable. systemd's own default unit
+// start/stop timeout is 90 s, so this only fires on a wedged systemd (F57001).
+var actionTimeout = 2 * time.Minute
+
+var errActionTimeout = errors.New("systemctl did not finish in time")
+
 // ErrUnknownService is returned for a name outside the KnownServices allowlist.
 var ErrUnknownService = errors.New("unknown service")
 
@@ -48,6 +54,27 @@ func outputWithin(cmd *exec.Cmd) ([]byte, error) {
 		_ = cmd.Process.Kill()
 		<-done
 		return nil, errStatusTimeout
+	}
+}
+
+// runWithin is cmd.Run with the actionTimeout deadline; a command still
+// running after it is killed and errActionTimeout returned.
+func runWithin(cmd *exec.Cmd) error {
+	cmd.WaitDelay = time.Second
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	timer := time.NewTimer(actionTimeout)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		_ = cmd.Process.Kill()
+		<-done
+		return errActionTimeout
 	}
 }
 
@@ -178,10 +205,10 @@ func StartService(name string) error {
 	if !IsKnownService(name) {
 		return fmt.Errorf("%w: %s", ErrUnknownService, name)
 	}
-	if err := execCommandFn("systemctl", "start", name).Run(); err != nil {
+	if err := runWithin(execCommandFn("systemctl", "start", name)); err != nil {
 		return err
 	}
-	return execCommandFn("systemctl", "enable", name).Run()
+	return runWithin(execCommandFn("systemctl", "enable", name))
 }
 
 // StopService stops a systemd service (must be in KnownServices allowlist).
@@ -189,7 +216,7 @@ func StopService(name string) error {
 	if !IsKnownService(name) {
 		return fmt.Errorf("%w: %s", ErrUnknownService, name)
 	}
-	return execCommandFn("systemctl", "stop", name).Run()
+	return runWithin(execCommandFn("systemctl", "stop", name))
 }
 
 // RestartService restarts a systemd service (must be in KnownServices allowlist).
@@ -197,5 +224,5 @@ func RestartService(name string) error {
 	if !IsKnownService(name) {
 		return fmt.Errorf("%w: %s", ErrUnknownService, name)
 	}
-	return execCommandFn("systemctl", "restart", name).Run()
+	return runWithin(execCommandFn("systemctl", "restart", name))
 }

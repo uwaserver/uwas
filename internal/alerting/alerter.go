@@ -23,6 +23,12 @@ import (
 
 const maxAlertHistory = 100
 
+// maxAlertDeliveries bounds concurrent webhook/channel deliveries. A burst of
+// alerts while a destination hangs would otherwise start a goroutine (and a
+// socket) per alert per channel; deliveries over the cap are dropped and
+// logged, the alert itself stays in the history.
+const maxAlertDeliveries = 16
+
 // maxChannelBody bounds the message body handed to Slack / Telegram / email.
 // Telegram rejects a sendMessage text over 4096 characters, and the title,
 // source and server-identity lines share that budget; cron_failed carries the
@@ -72,6 +78,13 @@ type Alerter struct {
 	// test cannot point them at a loopback server).
 	sendChannel func(notify.Channel, notify.Message) error
 
+	// deliverSlots caps concurrent deliveries per destination
+	// (maxAlertDeliveries each), so one hung destination cannot use up the
+	// slots of the healthy ones. Destinations are the webhook and the channel
+	// types, a small fixed set, so the total stays bounded.
+	slotMu       sync.Mutex
+	deliverSlots map[string]chan struct{}
+
 	// Rate limit tracking for error_spike detection.
 	errorWindow    []errorEntry
 	errorWindowErr int // running count of error entries in errorWindow
@@ -95,6 +108,7 @@ func New(enabled bool, webhookURL string, channels []notify.Channel, log *logger
 		urlSafetyCheck: config.IsWebhookURLSafe,
 		dialControl:    config.SafeDialControl,
 		sendChannel:    notify.Send,
+		deliverSlots:   make(map[string]chan struct{}),
 	}
 	a.client = &http.Client{
 		Timeout: 10 * time.Second,
@@ -169,11 +183,11 @@ func (a *Alerter) Alert(alert Alert) {
 	)
 
 	if webhookURL != "" {
-		go func() {
+		a.deliver("webhook", alert.Type, func() {
 			if err := a.sendWebhook(alert); err != nil {
 				a.logger.Warn("webhook delivery failed", "error", err)
 			}
-		}()
+		})
 	}
 
 	// Fan out to the configured channels. Each send is its own goroutine: an
@@ -184,7 +198,8 @@ func (a *Alerter) Alert(alert Alert) {
 		if !ch.Enabled {
 			continue
 		}
-		go func(ch notify.Channel) {
+		ch := ch
+		a.deliver(ch.Type, alert.Type, func() {
 			if err := a.sendChannel(ch, notify.Message{
 				Level:  alert.Level,
 				Title:  alertTitle(alert.Type),
@@ -194,8 +209,34 @@ func (a *Alerter) Alert(alert Alert) {
 				a.logger.Warn("alert channel delivery failed",
 					"channel", ch.Type, "type", alert.Type, "error", err)
 			}
-		}(ch)
+		})
 	}
+}
+
+// deliver runs fn on its own goroutine while fewer than maxAlertDeliveries
+// are in flight for dest; otherwise the delivery is dropped (the caller must never
+// block — Alert runs on request paths).
+func (a *Alerter) deliver(dest, typ string, fn func()) {
+	a.slotMu.Lock()
+	if a.deliverSlots == nil {
+		a.deliverSlots = make(map[string]chan struct{})
+	}
+	slots := a.deliverSlots[dest]
+	if slots == nil {
+		slots = make(chan struct{}, maxAlertDeliveries)
+		a.deliverSlots[dest] = slots
+	}
+	a.slotMu.Unlock()
+	select {
+	case slots <- struct{}{}:
+	default:
+		a.logger.Warn("alert delivery dropped: too many deliveries in flight", "destination", dest, "type", typ)
+		return
+	}
+	go func() {
+		defer func() { <-slots }()
+		fn()
+	}()
 }
 
 // alertTitle turns the stable machine type into the human headline shown on
@@ -361,7 +402,8 @@ func (a *Alerter) sendWebhook(alert Alert) error {
 		a.logger.Error("webhook delivery failed", "error", err)
 		return fmt.Errorf("webhook delivery failed: %w", err)
 	}
-	io.Copy(io.Discard, resp.Body)
+	// Only the status matters; do not read whatever the receiver streams.
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 	resp.Body.Close()
 
 	if resp.StatusCode >= 400 {

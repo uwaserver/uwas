@@ -20,7 +20,7 @@ func TestStopKillsNativeProcessGroupChildren(t *testing.T) {
 	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
 		t.Fatalf("write script: %v", err)
 	}
-	mgr := NewManager(NewStore(dir), nil)
+	mgr := testManager(t, NewStore(dir), nil)
 	app := &App{
 		Name:    "tree-stop",
 		Runtime: RuntimeCustom,

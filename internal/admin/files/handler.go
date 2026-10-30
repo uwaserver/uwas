@@ -28,6 +28,7 @@ type Deps interface {
 	RequirePin(w http.ResponseWriter, r *http.Request) bool
 	RequireDomainAccess(w http.ResponseWriter, r *http.Request, domain, action string) bool
 	CanAccessDomain(r *http.Request, domain string) bool
+	CronMonitor() *cronjob.Monitor
 	RecordAudit(r *http.Request, action, detail string, success bool)
 	ParsePagination(r *http.Request) (limit, offset int)
 	LogInfo(msg string, args ...any)
@@ -398,6 +399,19 @@ func (h *Handler) Read(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]string{"content": string(data), "path": path})
 }
 
+// existedBefore reports whether rel names something under root right now. It
+// is only used to decide whether a write replaces data, so a path that does
+// not resolve (or escapes root, which the write itself then rejects) counts as
+// "did not exist": nothing is audited for a request that changes nothing.
+func existedBefore(root, rel string) bool {
+	_, err := os.Lstat(filepath.Join(root, filepath.FromSlash(rel)))
+	return err == nil
+}
+
+// Write, Delete and Upload feed the audit log only for the changes that cannot
+// be taken back: removing something and replacing an existing file. Creating
+// a file or directory and saving from the editor are routine and would push
+// the operations that matter out of the bounded audit ring.
 func (h *Handler) Write(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
 	root, ok := h.authorizedDomainRoot(w, r, domain, "file.write")
@@ -413,9 +427,13 @@ func (h *Handler) Write(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	replaces := existedBefore(root, req.Path)
 	if err := filemanager.WriteFile(root, req.Path, []byte(req.Content)); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if replaces {
+		h.deps.RecordAudit(r, "file.overwrite", domain+": "+req.Path, true)
 	}
 	jsonResponse(w, map[string]string{"status": "written", "path": req.Path})
 }
@@ -428,9 +446,11 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	path := r.URL.Query().Get("path")
 	if err := filemanager.Delete(root, path); err != nil {
+		h.deps.RecordAudit(r, "file.delete", domain+": "+path+": "+err.Error(), false)
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	h.deps.RecordAudit(r, "file.delete", domain+": "+path, true)
 	jsonResponse(w, map[string]string{"status": "deleted", "path": path})
 }
 
@@ -492,6 +512,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	for _, fHeaders := range r.MultipartForm.File {
 		for _, fh := range fHeaders {
 			relPath := filepath.Join(dir, filepath.Base(fh.Filename))
+			replaces := existedBefore(root, relPath)
 			src, err := fh.Open()
 			if err == nil {
 				_, err = filemanager.SaveUpload(root, relPath, src)
@@ -509,6 +530,9 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			uploaded = append(uploaded, relPath)
+			if replaces {
+				h.deps.RecordAudit(r, "file.overwrite", domain+": "+relPath, true)
+			}
 		}
 	}
 	jsonResponse(w, map[string]any{"status": "uploaded", "files": uploaded})
@@ -608,10 +632,27 @@ func (h *Handler) CronDelete(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	removed := cronjob.DomainsOf(req.Schedule, req.Command)
 	if err := cronjob.Remove(req.Schedule, req.Command); err != nil {
 		h.deps.RecordAudit(r, "cron.delete", req.Schedule+" "+req.Command+": "+err.Error(), false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	// The job is gone; its monitor history must not outlive it (F53603).
+	// A same-command job left on the domain under another schedule keeps it.
+	if mon := h.deps.CronMonitor(); mon != nil && len(removed) > 0 {
+		remaining, _ := cronjob.List()
+		for _, domain := range removed {
+			still := false
+			for _, j := range remaining {
+				if j.Domain == domain && j.Command == strings.TrimSpace(req.Command) {
+					still = true
+				}
+			}
+			if !still && domain != "" {
+				mon.ClearHistory(domain, strings.TrimSpace(req.Command))
+			}
+		}
 	}
 	h.deps.RecordAudit(r, "cron.delete", req.Schedule+" "+req.Command, true)
 	jsonResponse(w, map[string]string{"status": "removed"})

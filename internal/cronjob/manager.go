@@ -319,6 +319,24 @@ func Remove(schedule, command string) error {
 	return writeCrontab(strings.Join(filtered, "\n"))
 }
 
+// DomainsOf returns the domains of the managed jobs matching schedule and
+// command, as Remove matches them. Callers use it before Remove to know whose
+// monitor history the removal orphans.
+func DomainsOf(schedule, command string) []string {
+	jobs, err := List()
+	if err != nil {
+		return nil
+	}
+	schedule, command = normalizeSchedule(schedule), strings.TrimSpace(command)
+	var domains []string
+	for _, j := range jobs {
+		if j.Schedule == schedule && j.Command == command {
+			domains = append(domains, j.Domain)
+		}
+	}
+	return domains
+}
+
 // RemoveByDomain removes all UWAS-managed cron jobs for a given domain.
 func RemoveByDomain(domain string) error {
 	if runtimeGOOS == "windows" {

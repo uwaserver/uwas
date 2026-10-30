@@ -185,7 +185,7 @@ export default function Metrics() {
                   </td>
                 </tr>
               ))}
-              {visibleMetrics.length === 0 && !loading && (
+              {visibleMetrics.length === 0 && !loading && !error && (
                 <tr>
                   <td
                     colSpan={3}

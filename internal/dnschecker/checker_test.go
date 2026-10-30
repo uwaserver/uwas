@@ -80,7 +80,14 @@ func saveAndRestore(t *testing.T) {
 	origTXT := lookupTXT
 	origAddrs := interfaceAddrs
 	origTimeout := txtTimeout
+	origPublicIP := publicIP
+	// No test reaches the real detection services; a test that wants a public
+	// address sets publicIP itself.
+	publicIP = func() string { return "" }
+	resetPublicIPCache()
 	t.Cleanup(func() {
+		publicIP = origPublicIP
+		resetPublicIPCache()
 		lookupHost = origHost
 		lookupCNAME = origCNAME
 		lookupMX = origMX
@@ -389,4 +396,10 @@ func TestGetServerIPsMixed(t *testing.T) {
 	if len(ips) != 2 {
 		t.Errorf("expected 2 IPs, got %v", ips)
 	}
+}
+
+func resetPublicIPCache() {
+	publicIPCache.mu.Lock()
+	publicIPCache.ip, publicIPCache.at = "", time.Time{}
+	publicIPCache.mu.Unlock()
 }

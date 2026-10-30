@@ -527,7 +527,7 @@ export default function Backups() {
                   </td>
                 </tr>
               ))}
-              {sortedBackups.length === 0 && (
+              {sortedBackups.length === 0 && !error && (
                 <tr>
                   <td colSpan={5} className="px-5 py-12 text-center text-muted-foreground">
                     <Archive size={32} className="mx-auto mb-3 opacity-40" />

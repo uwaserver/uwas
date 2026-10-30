@@ -284,7 +284,7 @@ export default function Logs() {
                   </td>
                 </tr>
               )}
-              {!loading && filtered.length === 0 && (
+              {!loading && !error && filtered.length === 0 && (
                 <tr>
                   <td
                     colSpan={8}

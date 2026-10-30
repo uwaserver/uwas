@@ -101,6 +101,15 @@ func firewallRuleDetail(port, proto, from string) string {
 	return d
 }
 
+// siteUserErrStatus answers 400 for a request the caller itself got wrong (a
+// malformed key, an empty key identifier) and 500 for a failure of the host.
+func siteUserErrStatus(err error) int {
+	if errors.Is(err, siteuser.ErrInvalidInput) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
+}
+
 // firewallErrStatus answers 400 for a rule the request itself got wrong and 500
 // for a failure of the firewall backend.
 func firewallErrStatus(err error) int {
@@ -346,7 +355,7 @@ func (s *Server) handleSSHKeyAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := siteuser.AddSSHKeyForWebDir(root, identity, req.PublicKey); err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		jsonError(w, err.Error(), siteUserErrStatus(err))
 		return
 	}
 	s.logger.Info("SSH key added", "target", domain, "identity", identity)
@@ -390,7 +399,7 @@ func (s *Server) handleSSHKeyDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := siteuser.RemoveSSHKeyForWebDir(root, identity, req.Fingerprint); err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		jsonError(w, err.Error(), siteUserErrStatus(err))
 		return
 	}
 	jsonResponse(w, map[string]string{"status": "removed"})

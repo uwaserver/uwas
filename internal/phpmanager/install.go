@@ -119,6 +119,9 @@ func GetInstallInfo(phpVersion string) InstallInfo {
 	info := InstallInfo{
 		Distro:  d.Name,
 		Version: phpVersion,
+		// Non-nil so the JSON is [] rather than null on the distributions
+		// whose plan has no package list (the dashboard types it string[]).
+		Packages: []string{},
 	}
 
 	// Normalize version: "8.3.6" → "8.3", "8.3" stays "8.3"

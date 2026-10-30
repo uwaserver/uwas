@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func cloneTestRoots(t *testing.T) (src, dst string) {
@@ -395,14 +396,17 @@ func TestImportCPanelBackupTraversalSkipped(t *testing.T) {
 func TestImportCPanelBackupFullWithSSLAndDB(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "backup.tar.gz")
 	target := t.TempDir()
+	// A certificate that does not parse is no longer imported, so the fixture
+	// carries a real pair.
+	certPEM, keyPEM := selfSignedPair(t, []string{"alice.com"}, time.Now().Add(90*24*time.Hour))
 	writeCPanelBackup(t, p, map[string]string{
 		"cpmove-alice/":                           "",
 		"cpmove-alice/homedir/":                   "",
 		"cpmove-alice/homedir/public_html/":       "",
 		"cpmove-alice/homedir/public_html/i.html": "<html></html>",
 		"cpmove-alice/userdata/main":              "main_domain: alice.com\n",
-		"cpmove-alice/ssl/alice.com.crt":          "CERTDATA",
-		"cpmove-alice/ssl/alice.com.key":          "KEYDATA",
+		"cpmove-alice/ssl/alice.com.crt":          certPEM,
+		"cpmove-alice/ssl/alice.com.key":          keyPEM,
 		"cpmove-alice/mysql/alice_wp.sql":         "CREATE TABLE x;",
 		"cpmove-alice/mysql/notes.txt":            "ignore me",
 	})

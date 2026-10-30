@@ -159,7 +159,7 @@ func (p *DigitalOceanProvider) ListRecords(zoneID string) ([]Record, error) {
 
 func (p *DigitalOceanProvider) CreateRecord(zoneID string, rec Record) (*Record, error) {
 	body := map[string]interface{}{
-		"type": rec.Type, "name": rec.Name, "data": rec.Content,
+		"type": rec.Type, "name": zoneRelativeName(rec.Name, zoneID), "data": rec.Content,
 		"ttl": rec.TTL, "priority": rec.Priority,
 	}
 	data, err := p.doRequest("POST", "/domains/"+url.PathEscape(zoneID)+"/records", body)
@@ -180,7 +180,7 @@ func (p *DigitalOceanProvider) CreateRecord(zoneID string, rec Record) (*Record,
 
 func (p *DigitalOceanProvider) UpdateRecord(zoneID, recordID string, rec Record) (*Record, error) {
 	body := map[string]interface{}{
-		"type": rec.Type, "name": rec.Name, "data": rec.Content,
+		"type": rec.Type, "name": zoneRelativeName(rec.Name, zoneID), "data": rec.Content,
 		"ttl": rec.TTL, "priority": rec.Priority,
 	}
 	_, err := p.doRequest("PUT", "/domains/"+url.PathEscape(zoneID)+"/records/"+url.PathEscape(recordID), body)

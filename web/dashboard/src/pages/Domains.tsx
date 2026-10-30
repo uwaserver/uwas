@@ -266,6 +266,24 @@ function InfoCard({ icon, title, children }: { icon: ReactNode; title: string; c
   );
 }
 
+/** config.Duration marshals to JSON as a Go duration string ("30s", "1m30s") or 0. */
+function formatDurationValue(v: string | number | undefined): string {
+  if (typeof v === 'number') return v > 0 ? `${v}s` : '--';
+  if (!v) return '--';
+  if (/^\d+(\.\d+)?$/.test(v)) return Number(v) > 0 ? `${v}s` : '--';
+  return /^0+(\.0+)?[a-z]*$/i.test(v) ? '--' : v;
+}
+
+/** config.ByteSize marshals to JSON as a byte count. */
+function formatByteSize(n: number | undefined): string {
+  if (!n || n <= 0) return '--';
+  const units: [number, string][] = [[1024 ** 3, 'GB'], [1024 ** 2, 'MB'], [1024, 'KB']];
+  for (const [size, unit] of units) {
+    if (n >= size) return `${Number((n / size).toFixed(1))} ${unit}`;
+  }
+  return `${n} B`;
+}
+
 function DetailRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-4">
@@ -329,6 +347,20 @@ export default function Domains() {
   // server replaces the whole block when the patch carries a `cache` key
   // (config.MergeDomain) — a {enabled, ttl}-only block would drop them.
   const editCacheRef = useRef<DomainDetail['cache']>(undefined);
+  // Whether the domain being edited has a saved compression block. An untouched
+  // add form sends none (the server reads that as "on, built-in defaults"), but
+  // on edit a saved block can only be reset to the defaults by sending one, so
+  // its presence has to force the block into the payload.
+  const editCompressionRef = useRef(false);
+  // Saved proxy and redirect blocks, for the same reason: the server replaces
+  // the whole proxy block when a patch carries proxy.upstreams and the whole
+  // redirect block when it carries redirect.target (config.MergeDomain). The
+  // form manages only the upstream addresses + algorithm and target + status,
+  // so a block built from those alone reset health checks, sticky sessions,
+  // circuit breaker, websocket/gRPC, timeouts, retries, canary and every
+  // upstream weight, and dropped preserve_path.
+  const editProxyRef = useRef<DomainDetail['proxy']>(undefined);
+  const editRedirectRef = useRef<DomainDetail['redirect']>(undefined);
   const [showRedirect, setShowRedirect] = useState(false);
   const [redirectForm, setRedirectForm] = useState({ baseHost: '', targetHost: '', code: '301' });
 
@@ -578,6 +610,9 @@ export default function Domains() {
     setEditingHost(null);
     editSecurityRef.current = undefined;
     editCacheRef.current = undefined;
+    editCompressionRef.current = false;
+    editProxyRef.current = undefined;
+    editRedirectRef.current = undefined;
     setSelectedTemplate(null);
     setForm({ ...emptyForm });
     setPhpCustomInput(false);
@@ -593,6 +628,9 @@ export default function Domains() {
       // security fields and two cache fields of them.
       editSecurityRef.current = d.security;
       editCacheRef.current = d.cache;
+      editCompressionRef.current = !!d.compression;
+      editProxyRef.current = d.proxy;
+      editRedirectRef.current = d.redirect;
       const editForm: DomainFormState = {
         host: d.host,
         ip: d.ip ?? '',
@@ -677,15 +715,23 @@ export default function Domains() {
 
     if (form.ip) payload.ip = form.ip;
     // Only send type-specific fields
-    if (form.type === 'proxy' && form.proxyUpstreams.trim()) {
+    if (form.type === 'proxy' && form.proxyUpstreams.split(',').some(a => a.trim())) {
+      // On edit, start from the saved block and keep each upstream's weight.
+      const savedProxy = editingHost ? editProxyRef.current : undefined;
+      const savedWeights = new Map<string, number>();
+      for (const u of savedProxy?.upstreams ?? []) {
+        if (typeof u !== 'string' && u.weight > 0) savedWeights.set(u.address, u.weight);
+      }
       payload.proxy = {
-        upstreams: form.proxyUpstreams.split(',').map(s => s.trim()).filter(Boolean).map(addr => ({ address: addr, weight: 1 })),
+        ...savedProxy,
+        upstreams: form.proxyUpstreams.split(',').map(s => s.trim()).filter(Boolean).map(addr => ({ address: addr, weight: savedWeights.get(addr) ?? 1 })),
         algorithm: form.proxyAlgorithm || 'round-robin',
       };
     }
 
     if (form.type === 'redirect' && form.redirectTarget.trim()) {
       payload.redirect = {
+        ...(editingHost ? editRedirectRef.current : undefined),
         target: form.redirectTarget.trim(),
         status: parseInt(form.redirectCode, 10) || 301,
       };
@@ -729,11 +775,13 @@ export default function Domains() {
 
     // Compression settings. Only sent when the operator moved away from the
     // defaults — an untouched form leaves the block absent, which the server
-    // reads as "compression on with built-in defaults".
+    // reads as "compression on with built-in defaults". A domain that already
+    // has a saved block always sends one, so it can be reset to the defaults.
     const algorithms = form.compressionAlgorithms.split(',').map(s => s.trim()).filter(Boolean);
     const types = form.compressionTypes.split(',').map(s => s.trim()).filter(Boolean);
     const minSize = parseInt(form.compressionMinSize, 10) || 1024;
-    if (form.type !== 'redirect' && (!form.compressionEnabled || minSize !== 1024 || algorithms.length > 0 || types.length > 0)) {
+    const hadCompression = editingHost ? editCompressionRef.current : false;
+    if (form.type !== 'redirect' && (hadCompression || !form.compressionEnabled || minSize !== 1024 || algorithms.length > 0 || types.length > 0)) {
       // types must be sent even when the operator did not touch it: the server
       // replaces the whole compression block on any patch that touches it, so
       // omitting a configured list deletes it.
@@ -775,6 +823,9 @@ export default function Domains() {
       setEditingHost(null);
       editSecurityRef.current = undefined;
       editCacheRef.current = undefined;
+      editCompressionRef.current = false;
+      editProxyRef.current = undefined;
+      editRedirectRef.current = undefined;
       setPhpCustomInput(false);
       setShowAdd(false);
       loadDomains();
@@ -1268,9 +1319,12 @@ export default function Domains() {
                     <div>
                       <label className="text-xs font-medium text-muted-foreground mb-2 block">Upstreams</label>
                       {(() => {
-                        const ups = form.proxyUpstreams ? form.proxyUpstreams.split(',').map(s => s.trim()).filter(Boolean) : [];
+                        // Empty entries are kept in the stored value so that "Add
+                        // Upstream" shows a row to fill in; the submit handlers
+                        // drop them (split + filter(Boolean)).
+                        const ups = form.proxyUpstreams ? form.proxyUpstreams.split(',').map(s => s.trim()) : [];
                         if (ups.length === 0) ups.push('');
-                        const update = (newUps: string[]) => patchField('proxyUpstreams', newUps.filter(Boolean).join(','));
+                        const update = (newUps: string[]) => patchField('proxyUpstreams', newUps.length === 1 && !newUps[0] ? '' : newUps.join(','));
                         return (
                           <div className="space-y-1.5">
                             {ups.map((u, i) => (
@@ -1848,8 +1902,8 @@ function DomainDetailPanel({ detail, aliasHealth, certInfo, purgingHost, onPurge
         {detail.type === 'php' && detail.php && (
           <InfoCard icon={<FileCode size={16} />} title="PHP / FPM">
             <DetailRow label="FPM Address" value={<span className="font-mono">{detail.php.fpm_address}</span>} />
-            <DetailRow label="Timeout" value={Number(detail.php.timeout) > 0 ? `${detail.php.timeout}s` : '--'} />
-            <DetailRow label="Upload Max" value={detail.php.upload_max_size || '--'} />
+            <DetailRow label="Timeout" value={formatDurationValue(detail.php.timeout)} />
+            <DetailRow label="Upload Max" value={formatByteSize(detail.php.max_upload)} />
             {detail.php.index_files && detail.php.index_files.length > 0 && (
               <DetailRow label="Index Files" value={detail.php.index_files.join(', ')} />
             )}

@@ -14,15 +14,11 @@ import (
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/testport"
 )
 
 func TestStartHTTPSBindFailureReturnsAndReleasesHTTP(t *testing.T) {
-	httpLn, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	httpAddr := httpLn.Addr().String()
-	httpLn.Close()
+	httpAddr := testport.FreeAddr(t)
 
 	// Hold the HTTPS port for the whole test so that bind fails deterministically.
 	httpsLn, err := net.Listen("tcp", "127.0.0.1:0")

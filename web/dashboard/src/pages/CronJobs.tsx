@@ -45,6 +45,8 @@ export default function CronJobs() {
   const [domains, setDomains] = useState<DomainData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // last list-load failure; an empty list must not read as "no cron jobs"
+  const [loadFailed, setLoadFailed] = useState(false);
   const [status, setStatus] = useState('');
   const [monitorData, setMonitorData] = useState<CronJobStatus[]>([]);
   const [showMonitor, setShowMonitor] = useState(false);
@@ -76,9 +78,11 @@ export default function CronJobs() {
       setJobs(j ?? []);
       setDomains(d ?? []);
       setError('');
+      setLoadFailed(false);
       fetchCronMonitor().then(m => setMonitorData(m ?? [])).catch(() => {});
     } catch (e) {
       setError((e as Error).message);
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
@@ -328,7 +332,7 @@ export default function CronJobs() {
                   </td>
                 </tr>
               ))}
-              {jobs.length === 0 && (
+              {jobs.length === 0 && !loadFailed && (
                 <tr>
                   <td colSpan={5} className="px-5 py-12 text-center text-muted-foreground">
                     <Clock size={32} className="mx-auto mb-3 opacity-40" />

@@ -200,9 +200,17 @@ export default function DomainDetail() {
       const geoAllowList = geoAllow.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
       const currentSecurity: Partial<NonNullable<DDType['security']>> = detail?.security ?? {};
       await updateDomain(host, {
+        // The server replaces the whole basic_auth block, so a disabled block
+        // keeps the realm and users it already has (the config validator accepts
+        // a disabled block that lists users); otherwise saving any other
+        // setting on this page deleted them.
         basic_auth: basicAuthEnabled
           ? { enabled: true, realm: basicAuthRealm.trim() || undefined, users: basicAuthMap }
-          : { enabled: false },
+          : {
+              enabled: false,
+              ...(basicAuthRealm.trim() ? { realm: basicAuthRealm.trim() } : {}),
+              ...(cleanedBasicAuthUsers.length > 0 ? { users: basicAuthMap } : {}),
+            },
         security: {
           waf: { ...(currentSecurity.waf ?? {}), enabled: wafEnabled },
           cloudflare_only: cloudflareOnly,
@@ -1054,6 +1062,10 @@ interface RouteRow {
   basicAuthEnabled: boolean;
   basicAuthRealm: string;
   basicAuthUsers: string;
+  // Saved fields the form does not edit (response headers, per-path timeout
+  // and rate limit, and the Cache-Control of a non-"headers" route). The server
+  // replaces the whole locations list, so they are sent back on save.
+  extra?: Pick<DomainLocationRule, 'headers' | 'request_timeout' | 'rate_limit' | 'cache_control'>;
 }
 
 function RoutesEditor({ detail, onSave, saving }: {
@@ -1063,16 +1075,25 @@ function RoutesEditor({ detail, onSave, saving }: {
 }) {
   const [routes, setRoutes] = useState<RouteRow[]>(() => {
     const locs = detail.locations || [];
-    return locs.map((l) => ({
+    return locs.map((l) => {
+      const type: RouteRow['type'] = l.proxy_pass ? 'proxy' : l.root ? 'static' : l.redirect ? 'redirect' : 'headers';
+      const extra: NonNullable<RouteRow['extra']> = {};
+      if (l.headers) extra.headers = l.headers;
+      if (l.request_timeout) extra.request_timeout = l.request_timeout;
+      if (l.rate_limit) extra.rate_limit = l.rate_limit;
+      if (type !== 'headers' && l.cache_control) extra.cache_control = l.cache_control;
+      return {
       match: l.match || '',
-      type: l.proxy_pass ? 'proxy' : l.root ? 'static' : l.redirect ? 'redirect' : 'headers',
+      type,
       target: l.proxy_pass || l.root || l.redirect || l.cache_control || '',
       stripPrefix: l.strip_prefix || false,
       redirectCode: l.redirect_code || 301,
       basicAuthEnabled: !!l.basic_auth?.enabled,
       basicAuthRealm: l.basic_auth?.realm || '',
       basicAuthUsers: Object.entries(l.basic_auth?.users || {}).map(([u, p]) => `${u}:${String(p)}`).join('\n'),
-    }));
+      extra,
+      };
+    });
   });
   const addRoute = () => setRoutes([...routes, {
     match: '/',
@@ -1091,7 +1112,7 @@ function RoutesEditor({ detail, onSave, saving }: {
 
   const handleSave = () => {
     const locs = routes.filter(r => r.match && r.target).map(r => {
-      const loc: DomainLocationRule = { match: r.match };
+      const loc: DomainLocationRule = { ...r.extra, match: r.match };
       if (r.type === 'proxy') { loc.proxy_pass = r.target; loc.strip_prefix = r.stripPrefix; }
       else if (r.type === 'static') { loc.root = r.target; }
       else if (r.type === 'redirect') { loc.redirect = r.target; loc.redirect_code = r.redirectCode; }

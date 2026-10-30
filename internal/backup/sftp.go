@@ -215,8 +215,15 @@ func (p *SFTPProvider) List(ctx context.Context) ([]BackupInfo, error) {
 		quotedRemotePath, quotedRemotePath)
 	out, err := session.Output(cmd)
 	if err != nil {
-		// Empty directory is not an error.
-		return nil, nil
+		// The remote ran the command and it failed (directory missing or
+		// empty): nothing to list. A dropped connection or a cancelled
+		// context is not an empty remote — report it, or the panel shows no
+		// backups and the failure never reaches the log (F58001).
+		var exitErr *ssh.ExitError
+		if errors.As(err, &exitErr) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("sftp list: %w", err)
 	}
 
 	var infos []BackupInfo

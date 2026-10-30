@@ -15,7 +15,9 @@ import (
 // migrateHostRe matches an optional "user@" prefix followed by a hostname or IP.
 // It deliberately excludes whitespace and leading dashes so a value can never be
 // parsed by ssh/rsync as a flag.
-var migrateHostRe = regexp.MustCompile(`^([a-zA-Z0-9._-]+@)?[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+// The user part may not start with "-": the whole value is one ssh argument and
+// the start of rsync's "user@host:path" source, where "-J…@host" is a flag (F51301).
+var migrateHostRe = regexp.MustCompile(`^([a-zA-Z0-9._][a-zA-Z0-9._-]*@)?[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
 // validateSSHInput rejects migration parameters that could inject additional
 // ssh/rsync options. The classic vector is a value like source_port="22
@@ -351,8 +353,12 @@ func migrateDBReal(req MigrateRequest, log *strings.Builder) string {
 
 // updateWPConfigDB updates database credentials in wp-config.php.
 func updateWPConfigDB(path, dbName, dbUser, dbPass string, log *strings.Builder) {
-	data, err := os.ReadFile(path)
+	data, err := readWPConfigNoFollow(path)
 	if err != nil {
+		if isSymlink(path) {
+			log.WriteString("wp-config.php is a symlink — local DB credentials not written\n")
+			return
+		}
 		log.WriteString(fmt.Sprintf("read wp-config: %s\n", err))
 		return
 	}
@@ -417,7 +423,9 @@ func updateWPConfigDB(path, dbName, dbUser, dbPass string, log *strings.Builder)
 
 	// 0600: wp-config.php holds DB credentials; the installer writes it 0600 and
 	// a migration must not relax that to world-readable.
-	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+	// No-follow write: a wp-config.php symlink that arrived with the remote tree
+	// must not redirect root's write to another tenant's config (F45301).
+	if err := writeWPConfigNoFollow(path, []byte(content), 0600); err != nil {
 		log.WriteString(fmt.Sprintf("write wp-config: %s\n", err))
 		return
 	}

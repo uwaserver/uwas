@@ -139,6 +139,9 @@ func CreateUserForWebDir(webDir, hostname string) (*User, string, error) {
 	if err := chmodDir(webDir, "775"); err != nil {
 		return nil, "", fmt.Errorf("chmod %s 775: %w", webDir, err)
 	}
+	if err := keepWPConfigWebReadable(webDir); err != nil {
+		return nil, "", err
+	}
 
 	// Ensure SFTP chroot config exists in sshd_config
 	if err := ensureSFTPConfig(username, domainDir, startDir); err != nil {
@@ -259,18 +262,18 @@ func sshdPathArg(path string) (string, error) {
 
 func validateSiteHostname(hostname string) error {
 	if hostname == "" || len(hostname) > 253 || strings.TrimSpace(hostname) != hostname {
-		return fmt.Errorf("invalid hostname: %s", hostname)
+		return invalidInputf("invalid hostname: %s", hostname)
 	}
 	if strings.ContainsAny(hostname, `/\:*?"<>|`+"\r\n\t ") || strings.Contains(hostname, "..") {
-		return fmt.Errorf("invalid hostname: %s", hostname)
+		return invalidInputf("invalid hostname: %s", hostname)
 	}
 	for _, label := range strings.Split(hostname, ".") {
 		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-			return fmt.Errorf("invalid hostname: %s", hostname)
+			return invalidInputf("invalid hostname: %s", hostname)
 		}
 		for _, c := range label {
 			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-') {
-				return fmt.Errorf("invalid hostname: %s", hostname)
+				return invalidInputf("invalid hostname: %s", hostname)
 			}
 		}
 	}
@@ -357,6 +360,30 @@ func userExists(username string) bool {
 // tenant.
 func chown(path, user, group string) error {
 	return execCommandFn("chown", "-h", user+":"+group, path).Run()
+}
+
+// keepWPConfigWebReadable restores the web group's read access to a WordPress
+// wp-config.php. UWAS writes it 0600, and the recursive chown above hands it
+// to the site user, so a file that PHP-FPM (group www-data) read as owner
+// became unreadable and the site went down. Adding the group read bit gives
+// back exactly what www-data had; nothing is opened to other accounts. The
+// open refuses a symlink the tenant may have planted (this runs as root) and
+// only a regular file is touched.
+func keepWPConfigWebReadable(webDir string) error {
+	path := filepath.Join(webDir, "wp-config.php")
+	f, err := os.OpenFile(path, os.O_RDONLY|noFollowFlag|noBlockFlag, 0)
+	if err != nil {
+		return nil // absent, or a symlink: not ours to touch
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || !fi.Mode().IsRegular() || fi.Mode().Perm()&0o040 != 0 {
+		return nil
+	}
+	if err := f.Chmod(fi.Mode().Perm() | 0o040); err != nil {
+		return fmt.Errorf("chmod %s group-readable: %w", path, err)
+	}
+	return nil
 }
 
 func chownRecursive(path, user, group string) error {

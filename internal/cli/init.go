@@ -135,7 +135,7 @@ func ensureDefaultConfig(httpPort, adminPort, adminBind, webRoot, acmeEmail stri
 	if err != nil {
 		return "", fmt.Errorf("ensure default config: %w", err)
 	}
-	envContent := fmt.Sprintf("UWAS_ADMIN_KEY=%s\nUWAS_PURGE_KEY=%s\n", apiKey, purgeKey)
+	envContent := fmt.Sprintf("UWAS_ADMIN_KEY=%s\nUWAS_ADMIN_PIN=%s\nUWAS_PURGE_KEY=%s\n", apiKey, pinCode, purgeKey)
 	os.WriteFile(envPath, []byte(envContent), 0600)
 
 	fmt.Printf("\n  %s Created default configuration\n", colorize("*", "green"))

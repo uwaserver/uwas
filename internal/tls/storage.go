@@ -78,7 +78,7 @@ func (s *CertStorage) Save(domain string, cert *tls.Certificate, keyPEM, certPEM
 	// below; a crash between them leaves a new key beside the old cert, and
 	// Load falls back to this pair instead of losing the certificate (F8500).
 	prevKey, prevCert := keyPath+prevSuffix, certPath+prevSuffix
-	keepPrev := linkPrev(keyPath, prevKey) && linkPrev(certPath, prevCert)
+	_ = linkPrev(keyPath, prevKey) && linkPrev(certPath, prevCert)
 	if err := os.Rename(keyTmp, keyPath); err != nil {
 		return fmt.Errorf("write key: %w", err)
 	}
@@ -91,10 +91,11 @@ func (s *CertStorage) Save(domain string, cert *tls.Certificate, keyPEM, certPEM
 		return fmt.Errorf("write cert: %w", err)
 	}
 
-	if keepPrev {
-		os.Remove(prevKey)
-		os.Remove(prevCert)
-	}
+	// Both names go once the pair is in place, also when only one of them was
+	// linked (a key.pem with no cert.pem): the half left behind was an extra
+	// copy of a private key nothing ever removed (F47303).
+	os.Remove(prevKey)
+	os.Remove(prevCert)
 
 	// Write metadata
 	meta := CertMeta{
@@ -276,6 +277,17 @@ func (s *CertStorage) Exists(domain string) bool {
 	}
 	certPath := filepath.Join(dir, "cert.pem")
 	_, err = os.Stat(certPath)
+	return err == nil
+}
+
+// HasMeta reports whether the directory for domain holds the meta.json the ACME
+// store writes with every pair it saves. An uploaded pair has none.
+func (s *CertStorage) HasMeta(domain string) bool {
+	dir, err := s.domainDir(domain)
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(filepath.Join(dir, "meta.json"))
 	return err == nil
 }
 

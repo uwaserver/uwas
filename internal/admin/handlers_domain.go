@@ -9,6 +9,7 @@ import (
 	domainadmin "github.com/uwaserver/uwas/internal/admin/domain"
 	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/cronjob"
 	"github.com/uwaserver/uwas/internal/domainutil"
 	"github.com/uwaserver/uwas/internal/pathsafe"
 	"github.com/uwaserver/uwas/internal/phpmanager"
@@ -85,6 +86,8 @@ func (d *domainDeps) AtomicWriteFile(path string, data []byte, perm os.FileMode)
 }
 
 func (d *domainDeps) PHPManager() *phpmanager.Manager { return d.s.phpMgr }
+
+func (d *domainDeps) CronMonitor() *cronjob.Monitor { return d.s.cronMonitor }
 
 func (d *domainDeps) CachePurgeByTag(tag string) int {
 	if d.s.cache != nil {
@@ -288,6 +291,7 @@ func (s *Server) removeDomainFile(host string) {
 	}
 	s.configMu.RLock()
 	domainsDir := s.config.DomainsDir
+	includes := append([]string(nil), s.config.Include...)
 	s.configMu.RUnlock()
 	if domainsDir == "" {
 		domainsDir = "domains.d"
@@ -303,6 +307,9 @@ func (s *Server) removeDomainFile(host string) {
 			s.logger.Info("removed domain file", "path", path)
 		}
 	}
+	// A domain that came from a file with another name would be loaded again
+	// at the next start.
+	s.removeHostFromDomainFiles(domainsDir, dirOf(s.configPath), includes, host)
 }
 
 func (s *Server) initDomainHandler() {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/testport"
 )
 
 func testWatchdog(t *testing.T, failures int, probe func(context.Context) error) *Watchdog {
@@ -141,12 +142,7 @@ func TestHTTPProbeAcceptsAnyStatus(t *testing.T) {
 }
 
 func TestHTTPProbeFailsWhenNothingIsListening(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close() // nothing is listening now
+	addr := testport.Dead(t) // nothing is listening
 
 	probe := httpProbe(addr, false, 200*time.Millisecond)
 	if err := probe(context.Background()); err == nil {

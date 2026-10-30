@@ -373,7 +373,7 @@ func lookupExternal(ip string) string {
 	var result struct {
 		CountryCode string `json:"countryCode"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&result); err != nil {
 		return ""
 	}
 	return result.CountryCode

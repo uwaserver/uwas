@@ -30,6 +30,9 @@ var (
 	osWriteFileHook = os.WriteFile
 	// osCreateTemp wraps os.CreateTemp for testability.
 	osCreateTempHook = os.CreateTemp
+	// osChownHook wraps os.Lchown for testability. It must not follow
+	// symlinks: it is aimed at paths inside tenant-writable web roots (F44000).
+	osChownHook = os.Lchown
 )
 
 // PHPInstall describes a single detected PHP installation.

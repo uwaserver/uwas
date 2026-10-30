@@ -200,8 +200,9 @@ func TestPHPConfigUpdateVersionNotFound(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/php/9.9/config", body))
 
-	if rec.Code != 500 {
-		t.Errorf("status = %d, want 500", rec.Code)
+	// A version that is not installed is a 404 (F58301); it used to be a 500.
+	if rec.Code != 404 {
+		t.Errorf("status = %d, want 404", rec.Code)
 	}
 }
 

@@ -25,7 +25,7 @@ func (b *BackupCommand) Description() string { return "Backup config and certifi
 func (b *BackupCommand) Help() string {
 	return `Flags:
   --output string   Path for the backup archive (default "uwas-backup-<timestamp>.tar.gz")
-  -c string         Path to config file (default "uwas.yaml")
+  -c, --config string  Path to config file (default: found the way 'uwas serve' finds it)
   --certs string    Path to certificates directory (default "/var/lib/uwas/certs")
 
 Examples:
@@ -36,26 +36,61 @@ Examples:
 func (b *BackupCommand) Run(args []string) error {
 	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
 	output := fs.String("output", "", "output path for backup archive")
-	configPath := fs.String("c", "uwas.yaml", "path to config file")
+	configPath := fs.String("c", "", "path to config file")
+	fs.StringVar(configPath, "config", "", "path to config file (same as -c)")
 	certsDir := fs.String("certs", "/var/lib/uwas/certs", "path to certificates directory")
 
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
+	// Without -c, look where serve, config and the other commands look
+	// (./uwas.yaml, ./.uwas, ~/.uwas, /etc/uwas). A fixed ./uwas.yaml made a
+	// backup taken from any other directory of an installed server contain no
+	// configuration at all (F52603).
+	if *configPath == "" {
+		if p, ok := findConfig(""); ok {
+			*configPath = p
+		} else {
+			*configPath = "uwas.yaml"
+		}
+	}
+
 	if *output == "" {
 		*output = fmt.Sprintf("uwas-backup-%s.tar.gz", time.Now().Format("20060102-150405"))
 	}
 
-	return createBackup(*output, *configPath, *certsDir)
+	n, err := createBackupCount(*output, *configPath, *certsDir)
+	if err != nil {
+		return err
+	}
+	// An archive with nothing in it is not a backup. It used to be reported as
+	// "Backup created (0 files)" with exit code 0 when the config was not found
+	// and the certificate directory was empty (F52603).
+	if n == 0 {
+		_ = os.Remove(*output)
+		return fmt.Errorf("nothing to back up: no configuration at %s and no certificates in %s (use -c and --certs)", *configPath, *certsDir)
+	}
+	fmt.Printf("Backup created: %s (%d files)\n", *output, n)
+	return nil
 }
 
 func createBackup(output, configPath, certsDir string) error {
+	n, err := createBackupCount(output, configPath, certsDir)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Backup created: %s (%d files)\n", output, n)
+	return nil
+}
+
+// createBackupCount writes the archive and returns how many files it holds.
+func createBackupCount(output, configPath, certsDir string) (int, error) {
 	// The archive bundles the config (API key, secrets) and TLS private keys,
 	// so it must not be readable by other local users (os.Create gives 0644).
 	outFile, err := os.OpenFile(output, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
-		return fmt.Errorf("create backup file: %w", err)
+		return 0, fmt.Errorf("create backup file: %w", err)
 	}
 	defer outFile.Close()
 	// Tighten a pre-existing wider file, but only a regular one: devices and
@@ -75,7 +110,7 @@ func createBackup(output, configPath, certsDir string) error {
 	// Add main config file
 	if err := addFileToTar(tw, configPath, "config/"+filepath.Base(configPath)); err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("add config: %w", err)
+			return 0, fmt.Errorf("add config: %w", err)
 		}
 		if _, err := fmt.Fprintf(os.Stderr, "warning: config file not found: %s\n", configPath); err != nil {
 			// stderr broken — nothing we can do
@@ -132,14 +167,13 @@ func createBackup(output, configPath, certsDir string) error {
 
 	if err := tw.Close(); err != nil {
 		gw.Close()
-		return fmt.Errorf("finalize tar: %w", err)
+		return 0, fmt.Errorf("finalize tar: %w", err)
 	}
 	if err := gw.Close(); err != nil {
-		return fmt.Errorf("finalize gzip: %w", err)
+		return 0, fmt.Errorf("finalize gzip: %w", err)
 	}
 
-	fmt.Printf("Backup created: %s (%d files)\n", output, fileCount)
-	return nil
+	return fileCount, nil
 }
 
 func addFileToTar(tw *tar.Writer, srcPath, tarName string) error {

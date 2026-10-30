@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/testport"
 )
 
 // ---------------------------------------------------------------------------
@@ -137,16 +138,11 @@ func TestWaitForAppImpl_Success(t *testing.T) {
 
 func TestWaitForAppImpl_Timeout(t *testing.T) {
 	// Pick an address that is almost certainly not listening.
-	// Reserve a port then close the listener so nothing is bound.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	// A reserved port that refuses connections: nothing is listening.
+	addr := testport.Dead(t)
 
 	start := time.Now()
-	err = waitForAppImpl(addr, 300*time.Millisecond)
+	err := waitForAppImpl(addr, 300*time.Millisecond)
 	if err == nil {
 		t.Fatal("waitForAppImpl() expected timeout error")
 	}

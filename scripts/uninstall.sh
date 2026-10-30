@@ -23,7 +23,7 @@ echo ""
 echo "This will remove:"
 echo "  - /usr/local/bin/uwas (binary)"
 echo "  - /usr/bin/uwas (symlink)"
-echo "  - /etc/systemd/system/uwas.service"
+echo "  - /etc/systemd/system/uwas.service (and its uwas.service.d drop-ins)"
 echo ""
 echo -e "${YELLOW}This will NOT remove:${NC}"
 echo "  - /etc/uwas/ (config files)"
@@ -51,6 +51,8 @@ fi
 # ── Remove files ────────────────────────────────────────
 
 [[ -f /etc/systemd/system/uwas.service ]] && rm /etc/systemd/system/uwas.service && ok "Removed systemd service"
+# The resilience drop-in written by scripts/install.sh would otherwise outlive the unit.
+[[ -d /etc/systemd/system/uwas.service.d ]] && rm -rf /etc/systemd/system/uwas.service.d && ok "Removed systemd drop-ins"
 [[ -L /usr/bin/uwas ]] && rm /usr/bin/uwas && ok "Removed /usr/bin/uwas symlink"
 [[ -f /usr/local/bin/uwas ]] && rm /usr/local/bin/uwas && ok "Removed /usr/local/bin/uwas binary"
 

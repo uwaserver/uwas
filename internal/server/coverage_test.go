@@ -2012,7 +2012,8 @@ func TestWritePIDEmptyPathCov(t *testing.T) {
 func TestRemovePIDCov(t *testing.T) {
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "uwas.pid")
-	os.WriteFile(pidFile, []byte("12345"), 0644)
+	// removePID only deletes a PID file that names this process (F56301).
+	os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644)
 
 	cfg := testConfig(dir)
 	cfg.Global.PIDFile = pidFile

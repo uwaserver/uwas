@@ -1,12 +1,15 @@
 package middleware
 
 import (
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/pathsafe"
 )
@@ -112,11 +115,14 @@ func ImageOptimization(cfg ImageOptConfig, docRoot string) Middleware {
 					continue
 				}
 
-				// Serve the optimized file.
-				f, err := os.Open(diskPath)
+				// Serve the optimized file. The variant sits in the tenant's
+				// directory and is opened by the (root) server process: refuse a
+				// symlink swapped in since the checks above (F45303).
+				f, openedInfo, err := openVariantNoFollow(diskPath)
 				if err != nil {
 					continue
 				}
+				info = openedInfo
 
 				w.Header().Set("Content-Type", c.accept)
 				http.ServeContent(w, r, filepath.Base(diskPath), info.ModTime(), f)
@@ -138,14 +144,11 @@ func ImageOptimization(cfg ImageOptConfig, docRoot string) Middleware {
 				}
 
 				if converted := convertImage(srcPath, dstPath, c.format); converted {
-					if f, err := os.Open(dstPath); err == nil {
-						if info, err := f.Stat(); err == nil {
-							w.Header().Set("Content-Type", c.accept)
-							http.ServeContent(w, r, filepath.Base(dstPath), info.ModTime(), f)
-							f.Close()
-							return
-						}
+					if f, info, err := openVariantNoFollow(dstPath); err == nil {
+						w.Header().Set("Content-Type", c.accept)
+						http.ServeContent(w, r, filepath.Base(dstPath), info.ModTime(), f)
 						f.Close()
+						return
 					}
 				}
 			}
@@ -165,6 +168,9 @@ var (
 	convertLookPathFn = exec.LookPath
 	convertExecFn     = exec.Command
 )
+
+// convertTimeout bounds one converter run; it is a variable so tests can shorten it.
+var convertTimeout = 60 * time.Second
 
 // convertImage converts src to dst using cwebp or avifenc.
 // Returns true if conversion succeeded. Thread-safe via file lock.
@@ -216,22 +222,36 @@ func convertImageReal(src, dst, format string) bool {
 	// The temp file is created exclusively under an unpredictable name: the
 	// converter runs as the server user, and a tenant-planted symlink at a
 	// predictable dst+".tmp" would redirect its write onto any file (F1570).
+	//
+	// The name is unpredictable but the directory is the tenant's, and it can
+	// list it: it could swap the temp file for a symlink before the converter
+	// opens it, and the converter (running as the server user) would write its
+	// output through the link onto any host file (F45303). So the converter
+	// writes into a private directory the tenant cannot reach, and the result is
+	// copied through the descriptor of the file created here; the mode is set
+	// through that descriptor too.
 	tf, err := os.CreateTemp(filepath.Dir(dst), ".uwas-img-*.tmp")
 	if err != nil {
 		return false
 	}
 	dstTmp := tf.Name()
-	tf.Close()
-	_ = os.Chmod(dstTmp, 0o644)
 	// Every exit before the rename must drop the temp file, including the
 	// missing-converter and unknown-format returns: each image request would
 	// otherwise leave another empty file in the tenant's directory (F1630).
 	published := false
 	defer func() {
+		tf.Close()
 		if !published {
 			os.Remove(dstTmp)
 		}
 	}()
+	_ = tf.Chmod(0o644)
+	privDir, err := os.MkdirTemp("", "uwas-img-*")
+	if err != nil {
+		return false
+	}
+	defer os.RemoveAll(privDir)
+	out := filepath.Join(privDir, "variant")
 
 	var cmd *exec.Cmd
 	switch format {
@@ -240,18 +260,48 @@ func convertImageReal(src, dst, format string) bool {
 		if err != nil {
 			return false
 		}
-		cmd = convertExecFn(bin, "-q", "80", "-m", "4", src, "-o", dstTmp)
+		cmd = convertExecFn(bin, "-q", "80", "-m", "4", src, "-o", out)
 	case "avif":
 		bin, err := convertLookPathFn("avifenc")
 		if err != nil {
 			return false
 		}
-		cmd = convertExecFn(bin, "-s", "6", "--min", "20", "--max", "40", src, dstTmp)
+		cmd = convertExecFn(bin, "-s", "6", "--min", "20", "--max", "40", src, out)
 	default:
 		return false
 	}
 
-	if err := cmd.Run(); err != nil {
+	// The converter decodes a tenant's file while this goroutine holds
+	// convertMu: one that never finishes (a pathological image) would stall every
+	// tenant's conversions, so it is killed after convertTimeout (F57300).
+	if err := cmd.Start(); err != nil {
+		return false
+	}
+	timer := time.AfterFunc(convertTimeout, func() { _ = cmd.Process.Kill() })
+	err = cmd.Wait()
+	timer.Stop()
+	if err != nil {
+		return false
+	}
+	res, err := os.Open(out)
+	if err != nil {
+		return false
+	}
+	_, err = io.Copy(tf, res)
+	res.Close()
+	if err != nil {
+		return false
+	}
+	// Publish only the file created above: if the name now leads somewhere else
+	// the tenant swapped it, and renaming it would publish its link.
+	created, err := tf.Stat()
+	if err != nil {
+		return false
+	}
+	if linked, lerr := os.Lstat(dstTmp); lerr != nil || !os.SameFile(created, linked) {
+		return false
+	}
+	if err := tf.Close(); err != nil {
 		return false
 	}
 	if err := os.Rename(dstTmp, dst); err != nil {
@@ -259,4 +309,25 @@ func convertImageReal(src, dst, format string) bool {
 	}
 	published = true
 	return true
+}
+
+// openVariantNoFollow opens an optimized variant for serving. The variant lives
+// in a tenant-writable directory and the server (often root) opens it after
+// path checks that a swap can outrun, so a final-component symlink is refused,
+// the open never blocks on a FIFO and only a regular file is served.
+func openVariantNoFollow(path string) (*os.File, os.FileInfo, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|noFollowFlag|nonBlockFlag, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	if !info.Mode().IsRegular() {
+		f.Close()
+		return nil, nil, fmt.Errorf("%s: not a regular file", filepath.Base(path))
+	}
+	return f, info, nil
 }

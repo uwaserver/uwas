@@ -107,8 +107,17 @@ func New(deps Deps, next http.Handler) http.Handler {
 				(r.Method == "GET" && IsExpensiveGET(r.URL.Path)) {
 				// Browsers attach Origin to every cross-origin write; a client
 				// that sends none (curl, scripts) is not a page.
-				if origin := r.Header.Get("Origin"); origin != "" && !IsAllowedOrigin(origin, r) {
+				origin := r.Header.Get("Origin")
+				if origin != "" && !IsAllowedOrigin(origin, r) {
 					respond.Error(w, http.StatusForbidden, "csrf: invalid origin")
+					return
+				}
+				// A sub-resource GET (<img>, <script>, a prefetch) carries no
+				// Origin, so the expensive-GET case above never saw a page's
+				// request. Browsers label every such request Sec-Fetch-Site and
+				// a curl-style client sends none (F45000).
+				if origin == "" && strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") {
+					respond.Error(w, http.StatusForbidden, "csrf: cross-site request")
 					return
 				}
 			}

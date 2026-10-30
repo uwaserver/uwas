@@ -1086,9 +1086,8 @@ func (s *Server) Start() error {
 	// Apply sane timeout defaults to prevent resource exhaustion
 	s.applyTimeoutDefaults()
 
-	if err := s.writePID(); err != nil {
-		s.logger.Warn("failed to write pid file", "error", err)
-	}
+	// The PID file is written once the listeners are up (below): an instance
+	// that fails to bind must not overwrite the running one's PID (F56301).
 
 	// Start every registered app from /etc/uwas/apps.d/, then re-resolve
 	// the proxy pools that reference them.
@@ -1147,6 +1146,12 @@ func (s *Server) Start() error {
 				s.httpsSrv.Close()
 			}
 			s.wg.Wait()
+			// The apps were launched above, before any listener. They run in
+			// their own process group, so without this they outlive the failed
+			// start and keep their ports (F57000).
+			if s.appsMgr != nil {
+				s.appsMgr.StopAll()
+			}
 		}
 		return err
 	}
@@ -1173,6 +1178,10 @@ func (s *Server) Start() error {
 				s.logger.Warn("http/3 start failed", "error", err)
 			}
 		}
+	}
+
+	if err := s.writePID(); err != nil {
+		s.logger.Warn("failed to write pid file", "error", err)
 	}
 
 	// Uptime monitor
@@ -1422,7 +1431,14 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		// to prevent an attacker redirecting victims to an arbitrary domain via
 		// a crafted Host header on a server that hosts multiple domains.
 		targetHost := domain.Host
-		if ch, ok := canonicalHostname(domain, domain.Host); ok {
+		if strings.HasPrefix(targetHost, "*.") {
+			// A wildcard domain has no single configured host: its host is
+			// the pattern, and "https://*.example.com/" is not a URL anyone
+			// can follow (F47600). The request host is inside the domain's
+			// suffix (the wildcard match above proved it), so it is the one
+			// name that cannot aim the redirect elsewhere.
+			targetHost = config.CanonicalHost(cache.NormalizeHost(r.Host))
+		} else if ch, ok := canonicalHostname(domain, domain.Host); ok {
 			targetHost = ch
 		}
 		target := "https://" + targetHost + r.URL.RequestURI()
@@ -1971,10 +1987,18 @@ func (s *Server) writePID() error {
 	return os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644)
 }
 
+// removePID deletes the PID file only while it still names this process, so a
+// server that lost a start race never removes the live instance's file.
 func (s *Server) removePID() {
-	if s.config.Global.PIDFile != "" {
-		os.Remove(s.config.Global.PIDFile)
+	pidFile := s.config.Global.PIDFile
+	if pidFile == "" {
+		return
 	}
+	data, err := os.ReadFile(pidFile)
+	if err != nil || strings.TrimSpace(string(data)) != strconv.Itoa(os.Getpid()) {
+		return
+	}
+	os.Remove(pidFile)
 }
 
 // matchPath and matchLocation delegate to internal/pathmatch, which owns the
@@ -2118,6 +2142,24 @@ func (s *Server) pruneDomainStats(domains []config.Domain) {
 	s.cacheHosts = current
 	s.cacheSigs = sigs
 	s.pruneMu.Unlock()
+
+	// Per-location rate-limit counters are keyed "<host>|<location>|<client>".
+	// A removed domain's counters would otherwise stay for the whole window and
+	// the hostname's next owner would start with the previous owner's spent
+	// budget (F51200).
+	configured := make(map[string]struct{}, len(domains))
+	for _, d := range domains {
+		configured[d.Host] = struct{}{}
+	}
+	s.locationLimiters.Range(func(k, _ any) bool {
+		key, _ := k.(string)
+		if host, _, ok := strings.Cut(key, "|"); ok {
+			if _, live := configured[host]; !live {
+				s.locationLimiters.Delete(k)
+			}
+		}
+		return true
+	})
 	if s.cache != nil && len(removed) > 0 {
 		s.cache.PurgeByTag(removed...)
 	}
@@ -2187,6 +2229,10 @@ type rateLimitEntry struct {
 	windowStart time.Time
 	count       int64
 	lastAccess  time.Time
+	// window is the limiter's window, so the janitor can tell a live counter
+	// from an idle one (F48000). Zero (an entry nobody has hit yet) means no
+	// live window.
+	window time.Duration
 }
 
 // locationLimiterJanitor periodically evicts idle per-location rate-limit
@@ -2202,18 +2248,31 @@ func (s *Server) locationLimiterJanitor(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
-			s.locationLimiters.Range(func(key, val any) bool {
-				entry := val.(*rateLimitEntry)
-				entry.mu.Lock()
-				idle := now.Sub(entry.windowStart)
-				entry.mu.Unlock()
-				if idle > idleTTL {
-					s.locationLimiters.Delete(key)
-				}
-				return true
-			})
+			s.sweepLocationLimiters(now, idleTTL)
 		}
 	}
+}
+
+// sweepLocationLimiters evicts the entries nobody has touched for longer than
+// idleTTL and whose window is over. A counter whose window is still running is
+// kept however old the window is: a limit such as "5 per hour" must not get a
+// fresh quota in the middle of the hour just because the janitor ran (F48000).
+func (s *Server) sweepLocationLimiters(now time.Time, idleTTL time.Duration) {
+	s.locationLimiters.Range(func(key, val any) bool {
+		entry := val.(*rateLimitEntry)
+		entry.mu.Lock()
+		live := entry.window > 0 && now.Sub(entry.windowStart) <= entry.window
+		last := entry.lastAccess
+		if last.IsZero() {
+			last = entry.windowStart
+		}
+		idle := now.Sub(last)
+		entry.mu.Unlock()
+		if !live && idle > idleTTL {
+			s.locationLimiters.Delete(key)
+		}
+		return true
+	})
 }
 
 func enforceBasicAuth(w http.ResponseWriter, r *http.Request, host string, cfg config.BasicAuthConfig) bool {

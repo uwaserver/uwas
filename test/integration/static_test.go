@@ -13,18 +13,13 @@ import (
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/server"
+	"github.com/uwaserver/uwas/internal/testport"
 )
 
 // getFreePort finds an available TCP port.
 func getFreePort(t *testing.T) int {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	ln.Close()
-	return port
+	return testport.Free(t)
 }
 
 // TestStaticSiteE2E starts a real UWAS server on a random port and tests static serving.

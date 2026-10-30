@@ -45,6 +45,10 @@ func NewS3Provider(endpoint, bucket, accessKey, secretKey, region string) *S3Pro
 	}
 }
 
+// maxS3ListBytes caps one ListObjectsV2 page (1000 keys is well under 1 MiB);
+// a larger reply is an error, not something to hold in memory (F58002).
+const maxS3ListBytes = 16 << 20
+
 func (p *S3Provider) Name() string { return "s3" }
 
 func (p *S3Provider) Upload(ctx context.Context, filename string, data io.Reader) error {
@@ -152,7 +156,7 @@ func (p *S3Provider) listBucketPage(ctx context.Context, token string) (listBuck
 	}
 
 	var result listBucketResult
-	if err := xml.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := xml.NewDecoder(io.LimitReader(resp.Body, maxS3ListBytes)).Decode(&result); err != nil {
 		return listBucketResult{}, fmt.Errorf("parse s3 list: %w", err)
 	}
 

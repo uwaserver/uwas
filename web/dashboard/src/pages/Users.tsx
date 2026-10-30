@@ -146,15 +146,20 @@ export default function Users() {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [expandedUser, setExpandedUser] = useState<string | null>(null);
   const [copyError, setCopyError] = useState('');
+  const [loadError, setLoadError] = useState('');
 
   const load = useCallback(() => {
-    Promise.all([fetchUsers(), fetchDomains(), fetchApps()])
+    // allSettled: a failing apps (or domains) request must not blank the
+    // users list, and a failing load must say so instead of rendering the
+    // empty "no SFTP users" state (F53600).
+    Promise.allSettled([fetchUsers(), fetchDomains(), fetchApps()])
       .then(([u, d, a]) => {
-        setUsers(u ?? []);
-        setDomains(d ?? []);
-        setApps(a ?? []);
+        if (u.status === 'fulfilled') setUsers(u.value ?? []);
+        if (d.status === 'fulfilled') setDomains(d.value ?? []);
+        if (a.status === 'fulfilled') setApps(a.value ?? []);
+        const failed = [u, d, a].find(r => r.status === 'rejected') as PromiseRejectedResult | undefined;
+        setLoadError(failed ? `Could not load SFTP users: ${(failed.reason as Error).message}` : '');
       })
-      .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
@@ -242,6 +247,9 @@ export default function Users() {
 
       {error && (
         <div className="rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>
+      )}
+      {loadError && (
+        <div className="rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">{loadError}</div>
       )}
       {copyError && (
         <div className="rounded-md bg-amber-500/10 px-4 py-3 text-sm text-amber-300">{copyError}</div>
@@ -342,7 +350,7 @@ export default function Users() {
       {/* User list */}
       {loading ? (
         <div className="text-center text-sm text-muted-foreground py-12">Loading...</div>
-      ) : users.length === 0 ? (
+      ) : users.length === 0 && loadError ? null : users.length === 0 ? (
         <div className="rounded-lg border border-border bg-card px-6 py-12 text-center">
           <UserPlus size={40} className="mx-auto mb-3 text-muted-foreground" />
           <p className="text-card-foreground font-medium">No SFTP users configured</p>

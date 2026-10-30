@@ -1266,8 +1266,9 @@ func TestFixPermissions_ExecFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Should mention chmod output when it fails
-	if !strings.Contains(out, "chmod dirs") {
+	// The 755/644 normalization runs in Go now (F46001), so the failing exec
+	// steps are the ones that must be reported, never silently counted as set.
+	if !strings.Contains(out, "warning: chmod -R 775 wp-content failed") || !strings.Contains(out, "permission step(s) failed") {
 		t.Errorf("should report chmod failure: %s", out)
 	}
 }

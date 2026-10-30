@@ -1,21 +1,17 @@
 package notify
 
 import (
-	"net"
 	"strings"
 	"testing"
+
+	"github.com/uwaserver/uwas/internal/testport"
 )
 
 // Channel URLs are credentials (Telegram /bot<TOKEN>/, Slack hook path,
 // ?token= on webhooks). A transport failure must not echo them: callers log
 // the error and the admin notify test returns it to the client.
 func TestChannelErrorsDoNotLeakURL(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	closed := "http://" + ln.Addr().String()
-	ln.Close()
+	closed := testport.DeadURL(t)
 
 	oldBase := telegramAPIBase
 	defer func() { telegramAPIBase = oldBase }()

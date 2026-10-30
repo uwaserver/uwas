@@ -17,6 +17,7 @@ import (
 // existing file is removed first; the brief gap is unavoidable on that
 // platform but the window between Remove and Rename is microseconds.
 func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	path = resolveWriteTarget(path)
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
 	if err != nil {
@@ -57,4 +58,26 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	}
 	cleanup = false
 	return nil
+}
+
+// resolveWriteTarget follows a symlinked path (also a dangling one) to the file
+// it names, so the rename below replaces the target instead of swapping the
+// link for a regular file and leaving the real file stale (F56300). A chain
+// longer than a few hops is written as is.
+func resolveWriteTarget(path string) string {
+	for i := 0; i < 8; i++ {
+		fi, err := os.Lstat(path)
+		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			return path
+		}
+		dest, err := os.Readlink(path)
+		if err != nil {
+			return path
+		}
+		if !filepath.IsAbs(dest) {
+			dest = filepath.Join(filepath.Dir(path), dest)
+		}
+		path = dest
+	}
+	return path
 }

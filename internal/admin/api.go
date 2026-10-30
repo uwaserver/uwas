@@ -1386,6 +1386,11 @@ func (s *Server) persistConfig() error {
 		s.logger.Error("failed to marshal config", "error", err)
 		return fmt.Errorf("marshal config: %w", err)
 	}
+	// Keep the ${VAR} references the operator wrote instead of the secrets
+	// they expanded to on load.
+	if prev, rerr := os.ReadFile(s.configPath); rerr == nil {
+		mainData = config.PreserveEnvReferences(prev, mainData)
+	}
 	// Crash-safe write: unique temp file + fsync + rename.
 	if err := atomicWriteFile(s.configPath, mainData, 0600); err != nil {
 		s.logger.Error("failed to persist config", "path", s.configPath, "error", err)
@@ -1402,15 +1407,62 @@ func (s *Server) persistConfig() error {
 		return fmt.Errorf("create domains dir: %w", err)
 	}
 
+	// A domain that already lives in a file of its own under another name
+	// (site1.yaml, a .yml file) is saved there. Writing <host>.yaml as well
+	// defined the host twice and the next start refused the configuration.
+	// The same goes for a domain defined in a file the main config pulls in
+	// with `include:`: it is in memory like the others, and a copy under
+	// domains.d would define the host twice. A single-domain include file is
+	// rewritten in place; one entry of an included list file is replaced in
+	// that file.
+	existing := scanDomainSources(domainsDir, filepath.Dir(s.configPath), cfg.Include)
+	ownFile := make(map[string]string)
+	type listEntry struct {
+		path      string
+		idx, want int
+	}
+	includedEntry := make(map[string]listEntry)
+	for _, f := range existing {
+		if len(f.hosts) == 1 {
+			if _, dup := ownFile[strings.ToLower(f.hosts[0])]; !dup {
+				ownFile[strings.ToLower(f.hosts[0])] = f.path
+			}
+		} else if f.include {
+			for i, h := range f.hosts {
+				if _, dup := includedEntry[strings.ToLower(h)]; !dup {
+					includedEntry[strings.ToLower(h)] = listEntry{path: f.path, idx: i, want: len(f.hosts)}
+				}
+			}
+		}
+	}
+
 	// Track which files should exist
 	activeFiles := make(map[string]bool)
+	written := make(map[string]bool)
+	live := make(map[string]bool, len(domains))
 	var firstErr error
 	for _, d := range domains {
+		if e, ok := includedEntry[strings.ToLower(d.Host)]; ok {
+			written[e.path] = true
+			live[strings.ToLower(d.Host)] = true
+			if err := replaceDomainInListFile(e.path, e.idx, e.want, d); err != nil {
+				s.logger.Error("failed to write included domain", "path", e.path, "domain", d.Host, "error", err)
+				if firstErr == nil {
+					firstErr = fmt.Errorf("write domain %s: %w", d.Host, err)
+				}
+			}
+			continue
+		}
 		clean := strings.ReplaceAll(d.Host, ":", "_")
 		clean = filepath.Base(clean)
 		fname := clean + ".yaml"
 		fpath := filepath.Join(domainsDir, fname)
+		if p, ok := ownFile[strings.ToLower(d.Host)]; ok {
+			fpath = p
+		}
 		activeFiles[fname] = true
+		written[fpath] = true
+		live[strings.ToLower(d.Host)] = true
 
 		domData, err := yaml.Marshal(&d)
 		if err != nil {
@@ -1419,6 +1471,9 @@ func (s *Server) persistConfig() error {
 				firstErr = fmt.Errorf("marshal domain %s: %w", d.Host, err)
 			}
 			continue
+		}
+		if prev, rerr := os.ReadFile(fpath); rerr == nil {
+			domData = config.PreserveEnvReferences(prev, domData)
 		}
 		if err := atomicWriteFile(fpath, domData, 0600); err != nil {
 			s.logger.Error("failed to write domain file", "path", fpath, "error", err)
@@ -1439,6 +1494,9 @@ func (s *Server) persistConfig() error {
 	// explicit delete handler via removeDomainFile(); persistConfig only
 	// WRITES, never destroys.
 	_ = activeFiles // kept above so future "soft cleanup" features can use it
+	if firstErr == nil {
+		s.supersedeDomainFiles(existing, written, live)
+	}
 	return firstErr
 }
 
@@ -1449,6 +1507,7 @@ func (s *Server) persistConfig() error {
 // build a private buffer (silently dropping entries) or publish it without
 // a sync edge for the readers in handleLogs/handleSSELogs.
 func (s *Server) RecordLog(e LogEntry) {
+	e = e.clipped()
 	s.logMu.Lock()
 	if s.logBuf == nil {
 		s.logBuf = newRingBuffer[LogEntry](maxLogEntries)

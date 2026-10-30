@@ -9,6 +9,9 @@ export default function AdminUsers() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Separate from `error` (shared with action failures): the empty-list hint
+  // is hidden only while the list itself is unknown.
+  const [loadFailed, setLoadFailed] = useState(false);
   const [status, setStatus] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ username: '', password: '', role: 'user', email: '' });
@@ -26,6 +29,10 @@ export default function AdminUsers() {
   const [newPw, setNewPw] = useState('');
   // Required by the server only when changing your OWN password.
   const [curPw, setCurPw] = useState('');
+  // Same for replacing your OWN API key: the row asks for the password only
+  // after the server says it needs one.
+  const [keyUser, setKeyUser] = useState<string | null>(null);
+  const [keyPw, setKeyPw] = useState('');
   const [actionLoading, setActionLoading] = useState('');
 
   const load = useCallback(async () => {
@@ -33,7 +40,8 @@ export default function AdminUsers() {
       const data = await fetchAdminUsers();
       setUsers(data ?? []);
       setError('');
-    } catch (e) { setError((e as Error).message); }
+      setLoadFailed(false);
+    } catch (e) { setError((e as Error).message); setLoadFailed(true); }
     finally { setLoading(false); }
   }, []);
 
@@ -93,6 +101,25 @@ export default function AdminUsers() {
     finally { setActionLoading(''); }
   };
 
+  const runRegenKey = async (username: string, currentPassword?: string) => {
+    setActionLoading('key-' + username);
+    try {
+      const res = await regenAdminApiKey(username, currentPassword);
+      setRegenResult({ username, api_key: res.api_key });
+      setKeyUser(null); setKeyPw('');
+      showStatus(`API key regenerated for ${username}. Copy it now — it won't be shown again.`);
+      await load();
+    } catch (e) {
+      const msg = (e as Error).message;
+      // Replacing your own key proves the password: ask for it in the row.
+      if (msg === 'current_password required') {
+        setKeyUser(username);
+      } else {
+        setError(msg);
+      }
+    } finally { setActionLoading(''); }
+  };
+
   const handleRegenKey = async (username: string) => {
     // Regenerating invalidates any external script/integration using the old
     // key. No undo, no way to recover the previous key.
@@ -103,14 +130,7 @@ export default function AdminUsers() {
       variant: 'warning',
     });
     if (!ok) return;
-    setActionLoading('key-' + username);
-    try {
-      const res = await regenAdminApiKey(username);
-      setRegenResult({ username, api_key: res.api_key });
-      showStatus(`API key regenerated for ${username}. Copy it now — it won't be shown again.`);
-      await load();
-    } catch (e) { setError((e as Error).message); }
-    finally { setActionLoading(''); }
+    await runRegenKey(username);
   };
 
   const roleBadge = (role: string) => {
@@ -230,7 +250,7 @@ export default function AdminUsers() {
       {/* User list */}
       {loading ? (
         <div className="text-center text-sm text-muted-foreground py-12">Loading...</div>
-      ) : users.length === 0 ? (
+      ) : users.length === 0 && loadFailed ? null : users.length === 0 ? (
         <div className="rounded-lg border border-border bg-card px-6 py-12 text-center">
           <Shield size={40} className="mx-auto mb-3 text-muted-foreground" />
           <p className="text-card-foreground font-medium">No admin users</p>
@@ -257,7 +277,15 @@ export default function AdminUsers() {
                   <td className="px-4 py-3 text-muted-foreground text-xs">{u.domains?.length ? u.domains.join(', ') : 'all'}</td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">
-                      {pwUser === u.username ? (
+                      {keyUser === u.username ? (
+                        <div className="flex items-center gap-1">
+                          <input type="password" value={keyPw} onChange={e => setKeyPw(e.target.value)} placeholder="Current password"
+                            className="w-36 rounded border border-border bg-background px-2 py-1 text-xs text-foreground outline-none" />
+                          <button disabled={!keyPw || actionLoading === 'key-' + u.username} onClick={() => runRegenKey(u.username, keyPw)}
+                            className="rounded bg-blue-600 px-2 py-1 text-xs text-white disabled:opacity-50">Regenerate</button>
+                          <button onClick={() => { setKeyUser(null); setKeyPw(''); }} className="text-xs text-muted-foreground">X</button>
+                        </div>
+                      ) : pwUser === u.username ? (
                         <div className="flex items-center gap-1">
                           <input type="password" value={curPw} onChange={e => setCurPw(e.target.value)} placeholder="Current (own account)"
                             className="w-36 rounded border border-border bg-background px-2 py-1 text-xs text-foreground outline-none" />

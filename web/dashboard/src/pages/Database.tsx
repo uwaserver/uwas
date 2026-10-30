@@ -36,6 +36,7 @@ import {
   exportDatabase,
   importDatabase,
   getAuthHeaders,
+  checkAuthFailure,
   startDB,
   stopDB,
   restartDB,
@@ -282,6 +283,7 @@ export default function Database() {
       const res = await fetch(exportDatabase(dbName), {
         headers: { 'X-Requested-With': 'XMLHttpRequest', ...getAuthHeaders() },
       });
+      await checkAuthFailure(res);
       if (!res.ok) {
         const body = await res.json().catch(() => ({ error: res.statusText }));
         throw new Error(body.error || res.statusText);

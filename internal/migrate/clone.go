@@ -278,8 +278,11 @@ var wpRequireABSPATH = regexp.MustCompile(`require(?:_once)?\s*\(?\s*ABSPATH`)
 
 // updateWPConfigURLs adds/updates WP_HOME and WP_SITEURL in wp-config.php.
 func updateWPConfigURLs(path, domain string, log *strings.Builder) {
-	data, err := os.ReadFile(path)
+	data, err := readWPConfigNoFollow(path)
 	if err != nil {
+		if isSymlink(path) {
+			log.WriteString("wp-config.php is a symlink — WP_HOME/WP_SITEURL not set\n")
+		}
 		return
 	}
 	content := string(data)
@@ -318,11 +321,10 @@ func updateWPConfigURLs(path, domain string, log *strings.Builder) {
 
 	// 0600: wp-config.php holds DB credentials; keep it owner-only like the
 	// installer writes it, and surface a write failure instead of dropping it.
-	if err := os.Chmod(path, 0600); err != nil {
-		log.WriteString(fmt.Sprintf("chmod wp-config: %s\n", err))
-		return
-	}
-	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+	// Mode and contents go through one no-follow descriptor: os.Chmod and
+	// os.WriteFile follow a symlink the source site planted (rsync -a copies it
+	// as a link) and would rewrite whatever it points at (F45300).
+	if err := writeWPConfigNoFollow(path, []byte(content), 0600); err != nil {
 		log.WriteString(fmt.Sprintf("write wp-config: %s\n", err))
 		return
 	}

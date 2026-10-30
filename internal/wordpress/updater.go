@@ -126,6 +126,17 @@ func UpdateCore(webRoot string) (string, error) {
 	skipDirs := map[string]bool{"wp-content": true}
 	skipFiles := map[string]bool{"wp-config.php": true, ".htaccess": true, "wp-config-sample.php": true}
 
+	// Every write goes through an os.Root on the docroot: the symlink check
+	// below only sees the directory as it is now, and the tenant's own code can
+	// replace a directory with a link before root writes into it (F58302). A
+	// root-relative path that leaves the docroot is refused by the kernel-side
+	// resolution instead.
+	dstRoot, err := os.OpenRoot(webRoot)
+	if err != nil {
+		return log.String(), fmt.Errorf("open web root: %w", err)
+	}
+	defer dstRoot.Close()
+
 	err = filepathWalkFn(wpDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -163,24 +174,53 @@ func UpdateCore(webRoot string) (string, error) {
 			return fmt.Errorf("refusing to write through symlink: %s", dst)
 		}
 		if info.IsDir() {
-			return osMkdirAllFn(dst, 0755)
+			return dstRoot.MkdirAll(rel, 0755)
 		}
 		data, readErr := osReadFileFn(path)
 		if readErr != nil {
 			return readErr
 		}
-		return osWriteFileFn(dst, data, info.Mode())
+		return writeFileInRoot(dstRoot, rel, data, info.Mode().Perm())
 	})
 
 	if err != nil {
 		return log.String(), fmt.Errorf("copy failed: %w", err)
 	}
 
-	// Fix ownership
-	execCommandFn("chown", "-R", "www-data:www-data", webRoot).Run()
+	// Fix ownership. The result used to be dropped, so a host where chown fails
+	// (UWAS unprivileged, or no www-data account) reported a clean update while
+	// the new core files kept the extracting user's ownership.
+	if out, err := execCommandFn("chown", "-R", "www-data:www-data", webRoot).CombinedOutput(); err != nil {
+		log.WriteString(fmt.Sprintf("warning: chown -R www-data:www-data failed: %v %s\n", err, strings.TrimSpace(string(out))))
+		log.WriteString("WordPress core updated (wp-content preserved), but file ownership was not changed — fix it manually or run Fix Permissions as a privileged user\n")
+		return log.String(), nil
+	}
 	log.WriteString("WordPress core updated (wp-content preserved)\n")
 
 	return log.String(), nil
+}
+
+// writeFileInRoot writes data to rel inside root, refusing a final-component
+// symlink and anything that is not a regular file; the open never blocks on a
+// FIFO planted at that name.
+func writeFileInRoot(root *os.Root, rel string, data []byte, perm os.FileMode) error {
+	f, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|noFollowFlag|nonBlockFlag, perm)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s: not a regular file", rel)
+	}
+	if err := f.Truncate(0); err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	return err
 }
 
 // ReinstallWordPress re-downloads WordPress core files without touching
@@ -253,17 +293,22 @@ func FixPermissions(webRoot string) (string, error) {
 	// told the operator the permissions were fixed. Say what actually happened,
 	// as setWordPressPermissions does for the installer.
 	var failed int
-	step := func(label, okMsg string, c *exec.Cmd) {
-		if out, err := c.CombinedOutput(); err != nil {
+	report := func(label, okMsg string, err error, out string) {
+		if err != nil {
 			failed++
-			log.WriteString(fmt.Sprintf("warning: %s failed: %v %s\n", label, err, strings.TrimSpace(string(out))))
+			log.WriteString(fmt.Sprintf("warning: %s failed: %v %s\n", label, err, strings.TrimSpace(out)))
 		} else if okMsg != "" {
 			log.WriteString(okMsg + "\n")
 		}
 	}
-	// Directories: 755, files: 644
-	step("chmod dirs 755", "Directories set to 755", execCommandFn("find", webRoot, "-type", "d", "-exec", "chmod", "755", "{}", ";"))
-	step("chmod files 644", "Files set to 644", execCommandFn("find", webRoot, "-type", "f", "-exec", "chmod", "644", "{}", ";"))
+	step := func(label, okMsg string, c *exec.Cmd) {
+		out, err := c.CombinedOutput()
+		report(label, okMsg, err, string(out))
+	}
+	// Directories: 755, files: 644. Done in Go through an os.Root rather than
+	// `find -exec chmod`, which follows a symlink the tenant swaps in (F46001).
+	report("chmod dirs 755 and files 644", "Directories set to 755\nFiles set to 644",
+		normalizeTreeModes(webRoot, 0o755, 0o644, nil), "")
 	// wp-content writable
 	if pathHasSymlink(webRoot, "wp-content") {
 		log.WriteString("wp-content is a symlink — skipped chmod\n")
@@ -338,7 +383,13 @@ func FixPermissions(webRoot string) (string, error) {
 			log.WriteString(fmt.Sprintf("warning: create %s failed: %v\n", sub, mkErr))
 			continue
 		}
-		step("chown www-data:www-data "+sub, "", execCommandFn("chown", "www-data:www-data", dir))
+		if c, done, cerr := chownDirToWebAccount(webRoot, sub); cerr != nil {
+			failed++
+			log.WriteString(fmt.Sprintf("warning: chown www-data:www-data %s refused: %v\n", sub, cerr))
+		} else {
+			step("chown www-data:www-data "+sub, "", c)
+			done()
+		}
 	}
 	if failed == 0 {
 		log.WriteString("upgrade, uploads, .tmp directories created\n")

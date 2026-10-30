@@ -927,6 +927,37 @@ func (m *Manager) State(name string) State {
 	return StateRunning
 }
 
+// App output (stack traces, startup banners, build output) can carry secrets,
+// and under a root UWAS the other local accounts include the tenant PHP
+// workers: app and build logs are created 0600 in a 0750 directory (F48301).
+const (
+	appLogDirMode  = 0o750
+	appLogFileMode = 0o600
+)
+
+// appLogMaxBytes is the size past which openAppLog moves the existing log
+// aside (to <log>.1, replacing an older one) instead of appending to it. The
+// log was append-only and never rotated, so a noisy app or a crash loop grew
+// it until the disk filled (F57002).
+var appLogMaxBytes int64 = 50 << 20
+
+// openAppLog opens an app or build log for appending, private to UWAS. A file
+// an older release created 0644 is tightened; an existing directory is left
+// alone (with a custom work_dir it is a sibling the operator owns).
+func openAppLog(path string) (*os.File, error) {
+	if st, err := os.Lstat(path); err == nil && st.Mode().IsRegular() && st.Size() > appLogMaxBytes {
+		if os.Rename(path, path+".1") == nil {
+			_ = os.Chmod(path+".1", appLogFileMode)
+		}
+	}
+	f, err := osOpenFileFn(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, appLogFileMode)
+	if err != nil {
+		return nil, err
+	}
+	_ = f.Chmod(appLogFileMode)
+	return f, nil
+}
+
 // startNative spawns a native runtime via /bin/sh -c (or cmd /C on
 // Windows). Mirrors the appmanager flow: ${PORT} substitution, PORT/
 // HOST/NODE_ENV env, log file under <workdir>/../logs/<name>.log,
@@ -987,7 +1018,11 @@ func (m *Manager) startNative(p *process, expectedStopCh <-chan struct{}) error 
 		fmt.Sprintf("PORT=%d", port),
 		fmt.Sprintf("UWAS_ASSIGNED_PORT=%d", port),
 		fmt.Sprintf("UWAS_PORT_FILE=%s", portFile),
-		"HOST=0.0.0.0",
+		// UWAS only ever dials 127.0.0.1 (proxy, WaitListening); an app that
+		// follows HOST must not be reachable around the proxy's WAF, rate
+		// limits and TLS. The operator's own HOST (p.env, added below) wins
+		// when another interface is really wanted (F43300).
+		"HOST=127.0.0.1",
 		"NODE_ENV=production",
 	}
 	for k, v := range p.env {
@@ -996,13 +1031,12 @@ func (m *Manager) startNative(p *process, expectedStopCh <-chan struct{}) error 
 	cmd.Env = childenv.Filtered(extra...)
 
 	logDir := filepath.Join(filepath.Dir(p.workDir), "logs")
-	_ = osMkdirAllFn(logDir, 0755)
+	_ = osMkdirAllFn(logDir, appLogDirMode)
 	if portFile != "" {
 		_ = osMkdirAllFn(filepath.Dir(portFile), 0755)
 		_ = os.Remove(portFile)
 	}
-	logFile, _ := osOpenFileFn(filepath.Join(logDir, p.name+".log"),
-		os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	logFile, _ := openAppLog(filepath.Join(logDir, p.name+".log"))
 	if logFile != nil {
 		cmd.Stdout = logFile
 		cmd.Stderr = logFile
@@ -1248,7 +1282,7 @@ func detectCommand(runtimeName, workDir string) string {
 		}
 	case "python":
 		if _, err := osStatFn(filepath.Join(workDir, "manage.py")); err == nil {
-			return "python manage.py runserver 0.0.0.0:${PORT}"
+			return "python manage.py runserver 127.0.0.1:${PORT}"
 		}
 		for _, f := range []string{"app.py", "main.py", "wsgi.py"} {
 			if _, err := osStatFn(filepath.Join(workDir, f)); err == nil {
@@ -1256,11 +1290,11 @@ func detectCommand(runtimeName, workDir string) string {
 			}
 		}
 		if _, err := osStatFn(filepath.Join(workDir, "requirements.txt")); err == nil {
-			return "gunicorn app:app -b 0.0.0.0:${PORT}"
+			return "gunicorn app:app -b 127.0.0.1:${PORT}"
 		}
 	case "ruby":
 		if _, err := osStatFn(filepath.Join(workDir, "config.ru")); err == nil {
-			return "bundle exec puma -p ${PORT}"
+			return "bundle exec puma -b tcp://127.0.0.1:${PORT}"
 		}
 	case "go":
 		return "./main"
@@ -1283,7 +1317,7 @@ func detectNodePackageCommand(workDir string) string {
 		return "npm start"
 	}
 	if _, ok := pkg.Scripts["preview"]; ok {
-		return "npm run preview -- --host 0.0.0.0 --port ${PORT}"
+		return "npm run preview -- --host 127.0.0.1 --port ${PORT}"
 	}
 	return ""
 }

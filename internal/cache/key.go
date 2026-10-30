@@ -114,6 +114,10 @@ func generateKey(r *http.Request, varyHeaders []string, varyByQuery bool) string
 	// Vary headers
 	for _, name := range varyHeaders {
 		writeKeyPart(name)
+		if strings.EqualFold(name, "Accept-Encoding") {
+			writeKeyPart(acceptEncodingClass(r.Header.Get(name)))
+			continue
+		}
 		writeKeyPart(r.Header.Get(name))
 	}
 
@@ -124,6 +128,53 @@ func generateKey(r *http.Request, varyHeaders []string, varyByQuery bool) string
 	result := strings.Clone(b.String())
 	builderPool.Put(b)
 	return result
+}
+
+// acceptEncodingClass reduces an Accept-Encoding value to the coding the
+// compression middleware would pick ("br", "gzip", or "" for identity).
+// Cached bodies are stored uncompressed and encoded per hit, so the spelling
+// of the header cannot change what is stored; keying on it verbatim let one
+// client mint an unbounded number of copies of a page ("gzip, x1", "gzip,
+// x2", ...), each a miss, evicting everyone else's entries (F60300).
+func acceptEncodingClass(header string) string {
+	if header == "" {
+		return ""
+	}
+	if codingAccepted(header, "br") {
+		return "br"
+	}
+	if codingAccepted(header, "gzip") {
+		return "gzip"
+	}
+	return ""
+}
+
+// codingAccepted reports whether header accepts coding with a non-zero
+// q-value, the same rule the compression middleware applies.
+func codingAccepted(header, coding string) bool {
+	for _, part := range strings.Split(header, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		name := part
+		q := 1.0
+		if i := strings.IndexByte(part, ';'); i != -1 {
+			name = strings.TrimSpace(part[:i])
+			for _, p := range strings.Split(part[i+1:], ";") {
+				p = strings.TrimSpace(p)
+				if len(p) >= 2 && (p[0] == 'q' || p[0] == 'Q') && p[1] == '=' {
+					if f, err := strconv.ParseFloat(strings.TrimSpace(p[2:]), 64); err == nil {
+						q = f
+					}
+				}
+			}
+		}
+		if strings.EqualFold(name, coding) {
+			return q > 0
+		}
+	}
+	return false
 }
 
 // paramName is the part of a "name=value" query parameter before the '='.

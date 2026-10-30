@@ -12,6 +12,7 @@ import (
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/testport"
 )
 
 // F8700: global.timeouts.write is http.Server.WriteTimeout, an absolute
@@ -35,9 +36,7 @@ func TestWriteTimeoutIsPerWriteProgress(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	probe, _ := net.Listen("tcp", "127.0.0.1:0")
-	addr := probe.Addr().String()
-	probe.Close()
+	addr := testport.FreeAddr(t)
 
 	cfg := &config.Config{
 		Global: config.GlobalConfig{WorkerCount: "1", LogLevel: "error", LogFormat: "text",

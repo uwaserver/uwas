@@ -216,7 +216,7 @@ export default function Analytics() {
             </tr></thead>
             <tbody>
               {domains.map(d => <DomainRow key={d.host} d={d} />)}
-              {domains.length === 0 && (
+              {domains.length === 0 && !error && (
                 <tr><td colSpan={5} className="px-5 py-8 text-center text-muted-foreground">No analytics data yet</td></tr>
               )}
             </tbody>

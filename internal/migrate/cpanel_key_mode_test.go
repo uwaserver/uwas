@@ -4,19 +4,23 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestImportCPanelBackupKeyOwnerOnly(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "backup.tar.gz")
 	target := t.TempDir()
+	// A certificate that does not parse is no longer imported, so the fixture
+	// carries a real pair.
+	certPEM, keyPEM := selfSignedPair(t, []string{"alice.com"}, time.Now().Add(90*24*time.Hour))
 	writeCPanelBackup(t, p, map[string]string{
 		"cpmove-alice/":                           "",
 		"cpmove-alice/homedir/":                   "",
 		"cpmove-alice/homedir/public_html/":       "",
 		"cpmove-alice/homedir/public_html/i.html": "<html></html>",
 		"cpmove-alice/userdata/main":              "main_domain: alice.com\n",
-		"cpmove-alice/ssl/alice.com.crt":          "CERTDATA",
-		"cpmove-alice/ssl/alice.com.key":          "KEYDATA",
+		"cpmove-alice/ssl/alice.com.crt":          certPEM,
+		"cpmove-alice/ssl/alice.com.key":          keyPEM,
 	})
 	// operator pre-created .certs world-readable (MkdirAll won't tighten it)
 	if err := os.MkdirAll(filepath.Join(target, ".certs"), 0755); err != nil {

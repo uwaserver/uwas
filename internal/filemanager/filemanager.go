@@ -136,9 +136,14 @@ func ReadFile(baseDir, relPath string) ([]byte, error) {
 // openWritable opens fullPath for writing without blocking on a FIFO and
 // refuses anything but a regular file.
 func openWritable(root *os.Root, rel string) (*os.File, error) {
+	_, statErr := root.Lstat(rel)
+	created := os.IsNotExist(statErr)
 	f, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|nonBlockFlag|noFollowFlag, 0600)
 	if err != nil {
 		return nil, err
+	}
+	if created {
+		ownNewFile(root, f)
 	}
 	info, err := f.Stat()
 	if err != nil {
@@ -168,7 +173,7 @@ func WriteFile(baseDir, relPath string, content []byte) error {
 	}
 	defer root.Close()
 	if dir := filepath.Dir(rel); dir != "." {
-		root.MkdirAll(dir, 0755)
+		mkdirAllOwned(root, dir, 0755)
 	}
 	f, err := openWritable(root, rel)
 	if err != nil {
@@ -256,7 +261,7 @@ func CreateDir(baseDir, relPath string) error {
 	if rel == "." {
 		return nil
 	}
-	return root.MkdirAll(rel, 0755)
+	return mkdirAllOwned(root, rel, 0755)
 }
 
 // SaveUpload writes an uploaded file.
@@ -272,7 +277,7 @@ func SaveUpload(baseDir, relPath string, src io.Reader) (int64, error) {
 	defer root.Close()
 	dir := filepath.Dir(rel)
 	if dir != "." {
-		if err := root.MkdirAll(dir, 0755); err != nil {
+		if err := mkdirAllOwned(root, dir, 0755); err != nil {
 			return 0, fmt.Errorf("create directory for upload: %w", err)
 		}
 	}

@@ -135,6 +135,28 @@ func filterDNSRecordsToDomain(records []dnsmanager.Record, zone, domain string) 
 	return out
 }
 
+// validateDNSRecord rejects a record the provider could only refuse: a missing
+// type, name or content, a type that is not a plain token, or a negative TTL
+// or priority. TTL 0 and 1 (provider default / automatic) and priority 0 stay
+// valid.
+func validateDNSRecord(rec dnsmanager.Record) string {
+	if strings.TrimSpace(rec.Type) == "" || strings.TrimSpace(rec.Name) == "" || strings.TrimSpace(rec.Content) == "" {
+		return "type, name and content are required"
+	}
+	for _, c := range rec.Type {
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9') {
+			return "invalid record type"
+		}
+	}
+	if rec.TTL < 0 {
+		return "ttl must not be negative"
+	}
+	if rec.Priority < 0 {
+		return "priority must not be negative"
+	}
+	return ""
+}
+
 func (s *Server) handleDNSRecordCreate(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
@@ -152,6 +174,10 @@ func (s *Server) handleDNSRecordCreate(w http.ResponseWriter, r *http.Request) {
 	var rec dnsmanager.Record
 	if err := json.NewDecoder(r.Body).Decode(&rec); err != nil {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if msg := validateDNSRecord(rec); msg != "" {
+		jsonError(w, msg, http.StatusBadRequest)
 		return
 	}
 	zone, err := cf.FindZoneByDomain(domain)
@@ -216,6 +242,10 @@ func (s *Server) handleDNSRecordUpdate(w http.ResponseWriter, r *http.Request) {
 	var rec dnsmanager.Record
 	if err := json.NewDecoder(r.Body).Decode(&rec); err != nil {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if msg := validateDNSRecord(rec); msg != "" {
+		jsonError(w, msg, http.StatusBadRequest)
 		return
 	}
 	zone, err := prov.FindZoneByDomain(domain)

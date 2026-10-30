@@ -71,6 +71,20 @@ func readAuthKeys(path string) ([]byte, error) {
 	return data, nil
 }
 
+// ErrInvalidInput marks an error caused by what the caller passed (a malformed
+// public key, an empty key identifier, an invalid hostname), as opposed to a
+// failure of the host. Match it with errors.Is; the message text is unchanged.
+var ErrInvalidInput = errors.New("invalid input")
+
+type inputError struct{ msg string }
+
+func (e *inputError) Error() string        { return e.msg }
+func (e *inputError) Is(target error) bool { return target == ErrInvalidInput }
+
+func invalidInputf(format string, args ...any) error {
+	return &inputError{msg: fmt.Sprintf(format, args...)}
+}
+
 // AddSSHKeyForWebDir adds a public SSH key for a domain whose writable
 // directory has already been resolved.
 func AddSSHKeyForWebDir(webDir, hostname, pubKey string) error {
@@ -81,6 +95,16 @@ func AddSSHKeyForWebDir(webDir, hostname, pubKey string) error {
 		return err
 	}
 
+	// Parse and canonicalize the key. This rejects malformed input and, by
+	// storing only the marshaled single key (type + base64, no options), defeats
+	// authorized_keys injection via embedded newlines or forced-command options.
+	// It runs before anything is created so a rejected key leaves no .ssh behind.
+	parsed, _, _, _, err := ssh.ParseAuthorizedKey([]byte(pubKey))
+	if err != nil {
+		return invalidInputf("invalid SSH public key: %v", err)
+	}
+	canonical := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(parsed)))
+
 	domainDir := filepath.Dir(webDir)
 	username := accountName(hostname, domainDir)
 	sshDir := filepath.Join(domainDir, ".ssh")
@@ -89,15 +113,6 @@ func AddSSHKeyForWebDir(webDir, hostname, pubKey string) error {
 	if err := osMkdirAllFn(sshDir, 0700); err != nil {
 		return fmt.Errorf("create .ssh: %w", err)
 	}
-
-	// Parse and canonicalize the key. This rejects malformed input and, by
-	// storing only the marshaled single key (type + base64, no options), defeats
-	// authorized_keys injection via embedded newlines or forced-command options.
-	parsed, _, _, _, err := ssh.ParseAuthorizedKey([]byte(pubKey))
-	if err != nil {
-		return fmt.Errorf("invalid SSH public key: %w", err)
-	}
-	canonical := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(parsed)))
 
 	authKeysMu.Lock()
 	defer authKeysMu.Unlock()
@@ -149,7 +164,7 @@ func RemoveSSHKeyForWebDir(webDir, hostname, pubKeyFingerprint string) error {
 	}
 	target := strings.TrimSpace(pubKeyFingerprint)
 	if target == "" {
-		return fmt.Errorf("empty key identifier")
+		return invalidInputf("empty key identifier")
 	}
 	domainDir := filepath.Dir(webDir)
 	authKeys := filepath.Join(domainDir, ".ssh", "authorized_keys")

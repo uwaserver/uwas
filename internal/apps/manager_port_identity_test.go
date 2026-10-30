@@ -9,7 +9,7 @@ func portIdentityManager(t *testing.T) *Manager {
 	t.Helper()
 	s := NewStore(t.TempDir())
 	s.DataRoot = s.Dir
-	m := NewManager(s, nil)
+	m := testManager(t, s, nil)
 	if err := m.Register(&App{Name: "adopt", Runtime: RuntimeCustom, Port: 43210}); err != nil {
 		t.Fatal(err)
 	}

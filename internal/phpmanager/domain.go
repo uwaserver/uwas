@@ -8,7 +8,9 @@
 package phpmanager
 
 import (
+	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -92,26 +94,11 @@ func (m *Manager) AssignDomain(domain, version string) (*DomainPHP, error) {
 	// Try system php-fpm socket first (best performance, shared workers)
 	addr := m.detectSystemFPMSocket(version)
 	if addr == "" {
-		// Fallback to per-domain TCP port (for php-cgi). Skip ports already
-		// held by another domain, e.g. one registered from config, or by a
-		// shared pool started with StartFPM, so a domain never shares a
-		// FastCGI address.
-		inUse := make(map[string]bool, len(m.domainMap))
-		for _, other := range m.domainMap {
-			inUse[other.listenAddr] = true
-		}
-		m.processes.Range(func(_, v any) bool {
-			if p, ok := v.(*processInfo); ok {
-				inUse[p.listenAddr] = true
-			}
-			return true
-		})
-		for {
-			addr = fmt.Sprintf("127.0.0.1:%d", m.nextPort)
-			m.nextPort++
-			if !inUse[addr] {
-				break
-			}
+		// Fallback to per-domain TCP port (for php-cgi), never one already held
+		// by another domain, a shared pool or any other process on the machine.
+		var perr error
+		if addr, perr = m.pickFreeTCPAddrLocked(); perr != nil {
+			return nil, perr
 		}
 	}
 
@@ -126,6 +113,46 @@ func (m *Manager) AssignDomain(domain, version string) (*DomainPHP, error) {
 	m.logger.Info("assigned PHP to domain", "domain", domain, "version", version, "listen", addr)
 
 	return m.domainPHPFromInstance(inst), nil
+}
+
+// domainPortFreeFn reports whether nothing listens on the loopback address
+// right now. Replaceable in tests.
+var domainPortFreeFn = loopbackPortFree
+
+func loopbackPortFree(addr string) bool {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return false
+	}
+	_ = ln.Close()
+	return true
+}
+
+// pickFreeTCPAddrLocked returns the next 127.0.0.1:port that no other domain
+// or shared pool uses and that nothing on the machine listens on. UWAS sends
+// every request for a domain (headers, cookies, bodies) to this port, so a
+// port another process already holds - another tenant's script, an app, a
+// database container - must never be chosen (F43301). Caller holds domainMu.
+func (m *Manager) pickFreeTCPAddrLocked() (string, error) {
+	inUse := make(map[string]bool, len(m.domainMap))
+	for _, other := range m.domainMap {
+		inUse[other.listenAddr] = true
+	}
+	m.processes.Range(func(_, v any) bool {
+		if p, ok := v.(*processInfo); ok {
+			inUse[p.listenAddr] = true
+		}
+		return true
+	})
+	const maxAttempts = 1000
+	for i := 0; i < maxAttempts && m.nextPort <= 65535; i++ {
+		addr := fmt.Sprintf("127.0.0.1:%d", m.nextPort)
+		m.nextPort++
+		if !inUse[addr] && domainPortFreeFn(addr) {
+			return addr, nil
+		}
+	}
+	return "", fmt.Errorf("no free local port for a PHP pool")
 }
 
 // detectSystemFPMSocket checks if system php-fpm is running and returns its socket path.
@@ -229,6 +256,28 @@ func (m *Manager) StartDomain(domain string) error {
 		return fmt.Errorf("PHP %s binary %s is %s, not cgi-fcgi — install php-cgi or php-fpm", inst.version, phpInst.Binary, phpInst.SAPI)
 	}
 
+	// Resolve the account the worker runs as before anything is written for it.
+	ident, identErr := workerIdentityFor()
+	if identErr != nil {
+		m.domainMu.Unlock()
+		return identErr
+	}
+
+	// The address may have been persisted long ago. If something else listens
+	// there now, php-cgi would fail to bind while UWAS kept routing the
+	// domain's requests to that other process; move to a free port instead and
+	// let the change callback below publish it (F43301).
+	if _, _, splitErr := net.SplitHostPort(inst.listenAddr); splitErr == nil && !domainPortFreeFn(inst.listenAddr) {
+		moved, perr := m.pickFreeTCPAddrLocked()
+		if perr != nil {
+			m.domainMu.Unlock()
+			return fmt.Errorf("PHP pool address %s for domain %s is held by another process: %w", inst.listenAddr, domain, perr)
+		}
+		m.logger.Warn("PHP pool address is held by another process; using another port",
+			"domain", domain, "was", inst.listenAddr, "now", moved)
+		inst.listenAddr = moved
+	}
+
 	// Build command args.
 	args := []string{"-b", inst.listenAddr}
 
@@ -244,6 +293,8 @@ func (m *Manager) StartDomain(domain string) error {
 	}
 
 	cmd := m.execCommand(phpInst.Binary, args...)
+	// Tenant PHP must not run as UWAS's own (root) identity (F42700).
+	applyWorkerIdentity(cmd, ident)
 	// Spawn worker children for parallel request handling
 	cmd.Env = phpWorkerEnv(
 		"PHP_FCGI_CHILDREN=8",
@@ -561,6 +612,16 @@ var blockedPHPDirectives = map[string]bool{
 	"sqlite3.extension_dir": true,
 }
 
+// Sentinels the admin API maps to 400 and 404 instead of one catch-all status.
+var (
+	// ErrInvalidDirective: the directive name or value is malformed or blocked.
+	ErrInvalidDirective = errors.New("invalid php.ini directive")
+	// ErrDomainNotAssigned: the domain has no PHP assignment.
+	ErrDomainNotAssigned = errors.New("domain has no PHP assignment")
+	// ErrVersionNotFound: the PHP version is not installed.
+	ErrVersionNotFound = errors.New("PHP version not found")
+)
+
 // validPHPINIDirective reports whether key is a syntactically valid php.ini
 // directive name (letters, digits, '.', '_', '-'). Rejecting anything else —
 // notably newlines — stops a crafted key from slipping past the exact-match
@@ -682,18 +743,18 @@ func (m *Manager) DomainLimits(domain string) (rlimit.Limits, bool) {
 // SetDomainConfig sets a per-domain php.ini override with security validation.
 func (m *Manager) SetDomainConfig(domain, key, value string) error {
 	if key == "" {
-		return fmt.Errorf("key is required")
+		return fmt.Errorf("%w: key is required", ErrInvalidDirective)
 	}
 	if !validPHPINIDirective(key) {
-		return fmt.Errorf("invalid directive name %q — only letters, digits, '.', '_' and '-' are allowed", key)
+		return fmt.Errorf("%w: invalid directive name %q — only letters, digits, '.', '_' and '-' are allowed", ErrInvalidDirective, key)
 	}
 	if !phpINIValueSafe(value) {
-		return fmt.Errorf("invalid value for %q — newlines and control characters are not allowed", key)
+		return fmt.Errorf("%w: invalid value for %q — newlines and control characters are not allowed", ErrInvalidDirective, key)
 	}
 
 	// Security: block dangerous directives
 	if blockedPHPDirectives[key] {
-		return fmt.Errorf("directive %q is blocked for security — can only be set in global php.ini", key)
+		return fmt.Errorf("%w: directive %q is blocked for security — can only be set in global php.ini", ErrInvalidDirective, key)
 	}
 
 	m.domainMu.Lock()
@@ -701,7 +762,7 @@ func (m *Manager) SetDomainConfig(domain, key, value string) error {
 
 	inst, exists := m.domainMap[domain]
 	if !exists {
-		return fmt.Errorf("domain %s has no PHP assignment", domain)
+		return fmt.Errorf("%w: domain %s has no PHP assignment", ErrDomainNotAssigned, domain)
 	}
 
 	inst.configOverrides[key] = value
@@ -804,9 +865,25 @@ func (m *Manager) buildDomainINI(domain string, inst PHPInstall, overrides map[s
 		return "", nil
 	}
 
+	ident, err := workerIdentityFor()
+	if err != nil {
+		return "", err
+	}
+
 	tmpFile, err := osCreateTempHook("", fmt.Sprintf("uwas-php-%s-*.ini", domain))
 	if err != nil {
 		return "", err
+	}
+	if ident != nil {
+		// The worker reads this file after dropping to the web account. A file
+		// it cannot read is skipped with a warning and PHP starts with its
+		// defaults, without the sandbox directives, so failing here is the
+		// only safe outcome (F42700).
+		if err := osChownHook(tmpFile.Name(), ident.uid, ident.gid); err != nil {
+			tmpFile.Close()
+			os.Remove(tmpFile.Name())
+			return "", fmt.Errorf("give the PHP worker account its ini file: %w", err)
+		}
 	}
 
 	var lines []string
@@ -865,7 +942,19 @@ func (m *Manager) buildDomainINI(domain string, inst PHPInstall, overrides map[s
 				m.logger.Info("isolating PHP sessions and uploads for this domain; existing sessions elsewhere will not be visible and users will be signed out once",
 					"domain", domain, "dir", domainTmp)
 			}
-			if err := os.MkdirAll(domainTmp, 0770); err != nil {
+			mkErr := requirePlainDir(domainTmp)
+			if mkErr == nil {
+				mkErr = os.MkdirAll(domainTmp, 0770)
+			}
+			if mkErr == nil && ident != nil {
+				// Created by UWAS (root); the worker has to be able to write
+				// sessions and uploads here after it drops privileges.
+				if err := osChownHook(domainTmp, ident.uid, ident.gid); err != nil {
+					m.logger.Error("per-domain session directory could not be given to the PHP worker account; PHP sessions and uploads will fail for this domain",
+						"domain", domain, "dir", domainTmp, "error", err)
+				}
+			}
+			if err := mkErr; err != nil {
 				// Without a writable directory PHP cannot write sessions at
 				// all, which is worse than sharing one — the ini below points
 				// session.save_path at it regardless, so this must be loud.

@@ -149,13 +149,18 @@ func (h *HelpCommand) Run(args []string) error {
 }
 
 // loadDotEnv reads .env from the UWAS config directory and sets env vars.
-// Looks in ~/.uwas/.env and /etc/uwas/.env.
+// Looks in ~/.uwas/.env and /etc/uwas/.env. Every file found is loaded, the
+// earlier one winning per variable: stopping at the first meant a per-user
+// .env that lacked UWAS_ADMIN_PIN hid the one `uwas init` wrote to /etc/uwas.
 func loadDotEnv() {
 	home, _ := os.UserHomeDir()
-	paths := []string{
+	loadDotEnvFiles([]string{
 		filepath.Join(home, ".uwas", ".env"),
 		"/etc/uwas/.env",
-	}
+	})
+}
+
+func loadDotEnvFiles(paths []string) {
 	for _, p := range paths {
 		f, err := os.Open(p)
 		if err != nil {
@@ -177,6 +182,5 @@ func loadDotEnv() {
 			}
 		}
 		f.Close()
-		return // use first found
 	}
 }

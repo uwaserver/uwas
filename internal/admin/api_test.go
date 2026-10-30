@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,6 +23,7 @@ import (
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/mcp"
 	"github.com/uwaserver/uwas/internal/metrics"
+	"github.com/uwaserver/uwas/internal/testport"
 )
 
 // testMux wraps http.ServeMux to inject a virtual admin user for tests.
@@ -936,13 +936,7 @@ func TestAppGetRedactsGitToken(t *testing.T) {
 // collide on the same host port (EADDRINUSE).
 func freeTestPort(t *testing.T) int {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-	return port
+	return testport.Free(t)
 }
 
 func TestAppDeployPrivateRepoRefreshesCommandAndStartsClonedNodeApp(t *testing.T) {

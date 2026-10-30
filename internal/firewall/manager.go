@@ -62,6 +62,15 @@ type Status struct {
 
 // GetStatus returns the current firewall status.
 func GetStatus() Status {
+	st := getStatus()
+	if st.Rules == nil {
+		// Serialise as [] so API consumers can iterate without a null guard.
+		st.Rules = []Rule{}
+	}
+	return st
+}
+
+func getStatus() Status {
 	if runtimeGOOS == "windows" {
 		return Status{Backend: "none"}
 	}

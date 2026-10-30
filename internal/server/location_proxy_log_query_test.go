@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,17 +10,13 @@ import (
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/testport"
 )
 
 // Location proxy failure logs must carry the cause but never the visitor's
 // query string (F2110).
 func TestLocationProxyLogsOmitQuery(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	dead := "http://" + ln.Addr().String()
-	ln.Close()
+	dead := testport.DeadURL(t)
 
 	cases := []struct {
 		name     string

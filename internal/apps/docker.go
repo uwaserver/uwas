@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -233,6 +234,28 @@ func dockerEnvArgs(env map[string]string) (args, cliEnv []string) {
 	return args, cliEnv
 }
 
+// dockerBuildArgFlags is dockerEnvArgs for `docker buildx build --build-arg`:
+// a bare `--build-arg KEY` makes the CLI read the value from its own
+// environment, so the value stays off argv. Keys the CLI would itself react to
+// keep the inline form (F48300).
+func dockerBuildArgFlags(args map[string]string) (flags, cliEnv []string) {
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := args[k]
+		if dockerCLIEnvKey(k) {
+			flags = append(flags, "--build-arg", k+"="+v)
+			continue
+		}
+		flags = append(flags, "--build-arg", k)
+		cliEnv = append(cliEnv, k+"="+v)
+	}
+	return flags, cliEnv
+}
+
 func dockerCLIEnvKey(k string) bool {
 	if _, inherited := os.LookupEnv(k); inherited {
 		return true
@@ -349,20 +372,23 @@ func (m *Manager) buildImage(p *process, image string) error {
 	if bld.Dockerfile != "" {
 		args = append(args, "--file", filepath.Join(ctxDir, bld.Dockerfile))
 	}
-	for k, v := range bld.Args {
-		args = append(args, "--build-arg", fmt.Sprintf("%s=%s", k, v))
-	}
+	// Build-arg values (registry and package tokens are the usual ones) must
+	// not sit on the CLI's argv: a build runs for minutes and
+	// /proc/<pid>/cmdline is world-readable. Pass each by name and give the
+	// value to the CLI through its environment, as `docker run` does (F48300).
+	buildArgFlags, cliEnv := dockerBuildArgFlags(bld.Args)
+	args = append(args, buildArgFlags...)
 	if bld.Target != "" {
 		args = append(args, "--target", bld.Target)
 	}
 	args = append(args, ctxDir)
 
 	logDir := filepath.Join(filepath.Dir(p.workDir), "logs")
-	_ = osMkdirAllFn(logDir, 0755)
+	_ = osMkdirAllFn(logDir, appLogDirMode)
 	logPath := filepath.Join(logDir, p.name+"-build.log")
 	var logFile io.WriteCloser
 	openLogFile := func() {
-		f, err := osOpenFileFn(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		f, err := openAppLog(logPath)
 		if err != nil {
 			if m.logger != nil {
 				m.logger.Warn("apps: could not open build log file", "app", p.name, "path", logPath, "err", err)
@@ -379,6 +405,9 @@ func (m *Manager) buildImage(p *process, image string) error {
 
 	cmd := execCommandFn("docker", args...)
 	cmd.Dir = ctxDir
+	if len(cliEnv) > 0 {
+		cmd.Env = append(os.Environ(), cliEnv...)
+	}
 	if logFile != nil {
 		cmd.Stdout = logFile
 		cmd.Stderr = logFile

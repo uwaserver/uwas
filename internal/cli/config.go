@@ -17,9 +17,10 @@ func (c *ConfigCommand) Description() string { return "Validate configuration fi
 func (c *ConfigCommand) Run(args []string) error {
 	fs := flag.NewFlagSet("config", flag.ContinueOnError)
 	configPath := fs.String("c", "", "path to config file (default: found the way 'uwas serve' finds it)")
+	fs.StringVar(configPath, "config", "", "path to config file (same as -c)")
 
 	subcommand := "validate"
-	if len(args) > 0 && args[0] != "-c" {
+	if len(args) > 0 && args[0] != "-c" && args[0] != "--config" {
 		subcommand = args[0]
 		args = args[1:]
 	}

@@ -5,6 +5,19 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.40
+
+Security release; drop-in binary, no config or data migration. Behavior changes worth knowing:
+
+- **PHP workers and wp-cli** run as the site user instead of root; make sure site files and `wp-config.php` stay group-readable for the web server.
+- **Database import and API-key regeneration** require the PIN / current password.
+- **`.phtml` and other PHP variant sources, `vendor/`, `node_modules/` and lock files** are no longer served as static files.
+- **`include:` domains** edited from the panel are rewritten in the file they came from; `domains.d` files starting with `.` are ignored.
+- **`uwas stop`** waits `shutdown_grace` plus 10 s before SIGKILL; a second instance that cannot bind leaves the running PID file alone.
+- **Dashboard assets** answer 404 for missing files, and the dashboard mount accepts only GET/HEAD.
+
+---
+
 ## Upgrading to v0.11.39
 
 Drop-in binary; no config or data migration. Behavior changes worth knowing:

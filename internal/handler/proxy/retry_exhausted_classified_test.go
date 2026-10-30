@@ -2,24 +2,19 @@ package proxy
 
 import (
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/uwaserver/uwas/internal/testport"
 )
 
 // deadUpstream returns the address of a listener that was just closed, so a
 // dial to it is refused.
 func deadUpstream(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
-	return "http://" + addr
+	return testport.DeadURL(t)
 }
 
 // TestRetriesExhaustedKeepsUpstreamClassification pins that when every backend

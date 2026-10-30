@@ -428,19 +428,37 @@ func (s *Server) registerDashboardUI() {
 	}
 	s.mux.Handle("/_uwas/dashboard/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setDashboardSecurityHeaders(w)
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		path := strings.TrimPrefix(r.URL.Path, "/_uwas/dashboard/")
+		isAsset := path == "assets" || strings.HasPrefix(path, "assets/")
 		if path != "" {
-			if _, err := fs.Stat(distFS, path); err == nil {
+			if fi, err := fs.Stat(distFS, path); err == nil && !fi.IsDir() {
+				if isAsset {
+					// Vite content-hashes everything under assets/.
+					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				}
 				http.StripPrefix("/_uwas/dashboard/", http.FileServer(http.FS(distFS))).ServeHTTP(w, r)
 				return
 			}
 		}
-		// SPA fallback: serve index.html for all other routes
+		// A missing build asset (stale shell after an upgrade) is a 404, not
+		// the HTML shell with a 200 that the browser then fails to parse as JS.
+		if isAsset {
+			http.NotFound(w, r)
+			return
+		}
+		// SPA fallback: serve index.html for all other routes. The shell names
+		// the hashed assets, so it must be revalidated on every load.
 		indexData, err := fs.ReadFile(distFS, "index.html")
 		if err != nil {
 			http.Error(w, "dashboard not found", 500)
 			return
 		}
+		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(indexData)
 	}))

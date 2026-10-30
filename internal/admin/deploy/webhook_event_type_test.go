@@ -47,7 +47,7 @@ func untrackedBranchHandler(t *testing.T, secret string) (*Handler, *branchFilte
 				return
 			}
 			accepted := false
-			for _, a := range d.audited {
+			for _, a := range d.auditedSnapshot() {
 				accepted = accepted || a == "app.webhook.accept"
 			}
 			if !accepted {
@@ -104,7 +104,7 @@ func TestWebhookNonPushEventDoesNotDeploy(t *testing.T) {
 			}
 			t.Logf("EXPECTED: %s\nACTUAL: %s", c.want, got)
 			if got != c.want {
-				t.Fatalf("PROBLEM CONFIRMED: %s delivery answered %q, want %q (audit: %v)", c.value, got, c.want, d.audited)
+				t.Fatalf("PROBLEM CONFIRMED: %s delivery answered %q, want %q (audit: %v)", c.value, got, c.want, d.auditedSnapshot())
 			}
 		})
 	}

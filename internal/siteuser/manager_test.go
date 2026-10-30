@@ -853,7 +853,7 @@ func TestAddSSHKey_MkdirFail(t *testing.T) {
 		return fmt.Errorf("mkdir fail")
 	}
 
-	err := AddSSHKeyForWebDir(filepath.Join("/var/www", "example.com", "public_html"), "example.com", "ssh-rsa AAAA...")
+	err := AddSSHKeyForWebDir(filepath.Join("/var/www", "example.com", "public_html"), "example.com", testSSHKey1)
 	if err == nil {
 		t.Fatal("expected error")
 	}

@@ -16,6 +16,7 @@ export default function Migration() {
   const [cpFile, setCpFile] = useState<File | null>(null);
   const [cpImportDB, setCpImportDB] = useState(true);
   const [cpImporting, setCpImporting] = useState(false);
+  const [cpRequestedDB, setCpRequestedDB] = useState(false); // whether the shown result was asked to import databases
   const [cpResult, setCpResult] = useState<CPanelImportResult | null>(null);
   const cpFileRef = useRef<HTMLInputElement>(null);
 
@@ -140,6 +141,7 @@ export default function Migration() {
               setError('');
               try {
                 const res = await migrateCPanel(cpFile, cpImportDB);
+                setCpRequestedDB(cpImportDB);
                 setCpResult(res);
                 // Clear the file selection so a stray double-click doesn't
                 // re-upload the same archive (each cPanel backup is heavy
@@ -174,10 +176,15 @@ export default function Migration() {
               )}
               {(cpResult.databases ?? []).length > 0 && (
                 <div>
-                  <p className="text-xs font-medium text-muted-foreground mb-1">Databases found:</p>
+                  <p className="text-xs font-medium text-muted-foreground mb-1">Databases:</p>
                   {(cpResult.databases ?? []).map(db => (
                     <div key={db.name} className="flex items-center gap-2 text-xs text-card-foreground">
                       <Database size={11} /> {db.name} ({db.size_mb.toFixed(1)} MB)
+                      {db.imported
+                        ? <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-400">imported</span>
+                        : cpRequestedDB
+                          ? <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-400">not imported, see warnings</span>
+                          : <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">not imported</span>}
                     </div>
                   ))}
                 </div>

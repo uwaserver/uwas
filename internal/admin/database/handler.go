@@ -71,6 +71,15 @@ func New(deps Deps) *Handler {
 
 // ── Helpers ──
 
+// dbErrStatus maps an error from the database layer to a status: input the
+// validators refuse is the caller's fault (400), anything else a server fault.
+func dbErrStatus(err error) int {
+	if errors.Is(err, dbpkg.ErrInvalidInput) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
+}
+
 
 // jsonEncode writes v as JSON to w, logging on write failure so truncated
 // responses never silently corrupt client state.
@@ -179,6 +188,11 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "database user already exists; choose a different user name", http.StatusConflict)
 			return
 		}
+		if errors.Is(err, dbpkg.ErrInvalidInput) {
+			h.deps.RecordAudit(r, "database.create", "db: "+req.Name+": "+err.Error(), false)
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		h.deps.RecordAudit(r, "database.create", "db: "+req.Name+": "+err.Error(), false)
 		h.deps.LogError("database create failed", "name", req.Name, "error", err)
 		jsonError(w, "database creation failed", http.StatusInternalServerError)
@@ -275,7 +289,7 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := dbpkg.ChangePassword(req.User, req.Host, req.Password); err != nil {
 		code := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "refusing") {
+		if strings.Contains(err.Error(), "refusing") || errors.Is(err, dbpkg.ErrInvalidInput) {
 			code = http.StatusBadRequest
 		}
 		jsonError(w, err.Error(), code)
@@ -357,6 +371,10 @@ func (h *Handler) Export(w http.ResponseWriter, r *http.Request) {
 	data, err := dbpkg.ExportDatabase(name)
 	if err != nil {
 		h.deps.LogError("database export failed", "name", name, "error", err)
+		if errors.Is(err, dbpkg.ErrInvalidInput) {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		jsonError(w, "database export failed", http.StatusInternalServerError)
 		return
 	}
@@ -371,8 +389,35 @@ func (h *Handler) Export(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
+// Largest SQL dump the import endpoints accept (vars so tests can lower them).
+var (
+	importMaxBytes       int64 = 256 << 20
+	dockerImportMaxBytes int64 = 100 << 20
+)
+
+// readImportBody reads the dump from a body already wrapped in MaxBytesReader.
+// A dump over the limit is refused (413) rather than cut at the limit: an
+// io.LimitReader of the same size would stop with a clean EOF before
+// MaxBytesReader saw the excess, and the truncated SQL would be executed. On
+// error the response has been written.
+func readImportBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
+	data, err := io.ReadAll(r.Body)
+	if err == nil {
+		return data, nil
+	}
+	var tooBig *http.MaxBytesError
+	if errors.As(err, &tooBig) {
+		jsonError(w, fmt.Sprintf("dump larger than %d bytes", tooBig.Limit), http.StatusRequestEntityTooLarge)
+	} else {
+		jsonError(w, "read body: "+err.Error(), http.StatusBadRequest)
+	}
+	return nil, err
+}
+
 func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
-	if !h.deps.RequireAdmin(w, r) {
+	// An import executes the uploaded SQL as the database administrator, so it
+	// can DROP DATABASE; its sibling Drop requires the PIN and so does this.
+	if !h.deps.RequireAdmin(w, r) || !h.deps.RequirePin(w, r) {
 		return
 	}
 	name := r.PathValue("name")
@@ -380,14 +425,17 @@ func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, msg, http.StatusBadRequest)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 256<<20)
-	data, err := io.ReadAll(io.LimitReader(r.Body, 256<<20))
+	r.Body = http.MaxBytesReader(w, r.Body, importMaxBytes)
+	data, err := readImportBody(w, r)
 	if err != nil {
-		jsonError(w, "read body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	if err := dbpkg.ImportDatabase(name, data); err != nil {
 		h.deps.LogError("database import failed", "name", name, "error", err)
+		if errors.Is(err, dbpkg.ErrInvalidInput) {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		jsonError(w, "database import failed", http.StatusInternalServerError)
 		return
 	}
@@ -535,6 +583,14 @@ func (h *Handler) DockerCreate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "name, engine, port, and root_pass are required", http.StatusBadRequest)
 		return
 	}
+	if req.Port < 1 || req.Port > 65535 {
+		jsonError(w, "port must be between 1 and 65535", http.StatusBadRequest)
+		return
+	}
+	if !dbpkg.SupportedDockerEngine(dbpkg.DockerDBEngine(req.Engine)) {
+		jsonError(w, "unsupported engine: "+req.Engine, http.StatusBadRequest)
+		return
+	}
 	if !dbpkg.DockerAvailable() {
 		jsonError(w, "Docker is not installed or not running", http.StatusServiceUnavailable)
 		return
@@ -542,7 +598,14 @@ func (h *Handler) DockerCreate(w http.ResponseWriter, r *http.Request) {
 	engine := dbpkg.DockerDBEngine(req.Engine)
 	container, err := dbpkg.CreateDockerDB(engine, req.Name, req.Port, req.RootPass, req.DataDir)
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		code := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, dbpkg.ErrContainerExists):
+			code = http.StatusConflict
+		case errors.Is(err, dbpkg.ErrInvalidInput):
+			code = http.StatusBadRequest
+		}
+		jsonError(w, err.Error(), code)
 		return
 	}
 	h.deps.RecordAudit(r, "docker_db.create", fmt.Sprintf("engine: %s, name: %s, port: %d", req.Engine, req.Name, req.Port), true)
@@ -639,7 +702,7 @@ func (h *Handler) DockerCreateDatabase(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "database user already exists; choose a different user name", http.StatusConflict)
 			return
 		}
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		jsonError(w, err.Error(), dbErrStatus(err))
 		return
 	}
 	h.deps.RecordAudit(r, "docker_db.create_database", name+"/"+req.DBName, true)
@@ -660,7 +723,7 @@ func (h *Handler) DockerDropDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := dbpkg.DockerDBDropDatabase(name, db); err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		jsonError(w, err.Error(), dbErrStatus(err))
 		return
 	}
 	h.deps.RecordAudit(r, "docker_db.drop_database", name+"/"+db, true)
@@ -675,7 +738,7 @@ func (h *Handler) DockerExport(w http.ResponseWriter, r *http.Request) {
 	db := r.PathValue("db")
 	dump, err := dbpkg.DockerDBExport(name, db)
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		jsonError(w, err.Error(), dbErrStatus(err))
 		return
 	}
 	w.Header().Set("Content-Type", "application/sql")
@@ -690,7 +753,9 @@ func (h *Handler) DockerExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DockerImport(w http.ResponseWriter, r *http.Request) {
-	if !h.deps.RequireAdmin(w, r) {
+	// Same as Import: uploaded SQL runs as the container's root user, and
+	// DockerDropDatabase requires the PIN.
+	if !h.deps.RequireAdmin(w, r) || !h.deps.RequirePin(w, r) {
 		return
 	}
 	name := r.PathValue("name")
@@ -699,14 +764,13 @@ func (h *Handler) DockerImport(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, msg, http.StatusBadRequest)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 100<<20)
-	data, err := io.ReadAll(io.LimitReader(r.Body, 100<<20))
+	r.Body = http.MaxBytesReader(w, r.Body, dockerImportMaxBytes)
+	data, err := readImportBody(w, r)
 	if err != nil {
-		jsonError(w, "read body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	if err := dbpkg.DockerDBImport(name, db, string(data)); err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		jsonError(w, err.Error(), dbErrStatus(err))
 		return
 	}
 	h.deps.RecordAudit(r, "docker_db.import", name+"/"+db, true)

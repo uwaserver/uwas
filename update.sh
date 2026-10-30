@@ -46,6 +46,18 @@ verify_release_checksum() {
     fi
 }
 
+# Run a privileged command directly when already root, through sudo otherwise.
+# Minimal server images ship no sudo, and an unconditional `sudo` aborted the
+# update (set -e) after the binary was already replaced, leaving the old
+# process running without a restart.
+as_root() {
+    if [ "$(id -u)" = "0" ]; then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
+
 # Find current binary
 BIN_PATH=$(which $BINARY 2>/dev/null || echo "/usr/local/bin/$BINARY")
 if [ ! -f "$BIN_PATH" ]; then
@@ -123,8 +135,8 @@ info "Installing ${NEW_VER}..."
 if [ -w "$(dirname "$BIN_PATH")" ]; then
     mv "$TMPFILE" "$BIN_PATH"
 else
-    sudo mv "$TMPFILE" "$BIN_PATH"
-    sudo chmod +x "$BIN_PATH"
+    as_root mv "$TMPFILE" "$BIN_PATH"
+    as_root chmod +x "$BIN_PATH"
 fi
 rm -rf "$TMPDIR"
 
@@ -133,7 +145,7 @@ ok "Updated to ${NEW_VER}"
 # Restart service if running under systemd
 if systemctl is-active uwas >/dev/null 2>&1; then
     info "Restarting UWAS service..."
-    sudo systemctl restart uwas
+    as_root systemctl restart uwas
     ok "Service restarted"
 elif pgrep -x uwas >/dev/null 2>&1; then
     printf '%b%b▸%b UWAS is running but not as a systemd service.\n' "$CYAN" "$BOLD" "$NC"

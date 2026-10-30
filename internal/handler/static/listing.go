@@ -88,8 +88,10 @@ a:hover{text-decoration:underline}
 	for _, entry := range entries {
 		name := entry.Name()
 
-		// Skip dotfiles
-		if strings.HasPrefix(name, ".") {
+		// Skip dotfiles, and the PHP source copies the static handler refuses
+		// to serve: a link that answers 403 only advertises that the file
+		// exists (F48602).
+		if strings.HasPrefix(name, ".") || IsPHPSourceLeftover(name) {
 			continue
 		}
 

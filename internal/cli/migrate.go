@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
 	nginxmigrate "github.com/uwaserver/uwas/internal/migrate"
@@ -82,11 +83,81 @@ type apacheVHost struct {
 	aliases      []string
 	listen       string
 	warnings     []string // access rules that are not migrated (F8901)
+	notes        []string // other directives with no translation (F41003)
+	php          bool     // a PHP handler is configured (F41000)
+	phpFPM       string   // FPM address from SetHandler "proxy:...fcgi" (F41000)
 }
 
 type apacheProxy struct {
 	path   string
 	target string
+	weight int // BalancerMember loadfactor (F42005); 0 = default
+}
+
+// apacheBalancerBlock matches `<Proxy balancer://name>`; other <Proxy ...>
+// sections are access-control containers.
+var apacheBalancerBlock = regexp.MustCompile(`(?i)^<proxy\s+"?balancer://([^\s/>"]+)[^\s>"]*"?\s*>$`)
+
+type apacheMember struct {
+	address string
+	weight  int
+}
+
+// expandApacheBalancers replaces ProxyPass targets that name a
+// <Proxy balancer://name> cluster with the cluster's members. A cluster used
+// as a path-scoped target can only name one backend, so its first member is
+// used and the vhost is annotated. Config validation rejects a literal
+// balancer:// upstream, which used to make the whole converted file unloadable
+// (F42005).
+func expandApacheBalancers(vhosts []apacheVHost, balancers map[string][]apacheMember) {
+	name := func(target string) (string, bool) {
+		if !hasPrefixFold(target, "balancer://") {
+			return "", false
+		}
+		n := target[len("balancer://"):]
+		if i := strings.Index(n, "/"); i >= 0 {
+			n = n[:i]
+		}
+		return n, true
+	}
+	for i := range vhosts {
+		vh := &vhosts[i]
+		var expanded []apacheProxy
+		for _, p := range vh.proxyPass {
+			n, ok := name(p.target)
+			if !ok {
+				expanded = append(expanded, p)
+				continue
+			}
+			members := balancers[strings.ToLower(n)]
+			if len(members) == 0 {
+				vh.notes = append(vh.notes, "ProxyPass "+p.path+" "+p.target+" (no <Proxy balancer://"+n+"> block with BalancerMember found; not migrated)")
+				continue
+			}
+			for _, m := range members {
+				expanded = append(expanded, apacheProxy{path: p.path, target: m.address, weight: m.weight})
+			}
+		}
+		vh.proxyPass = expanded
+		var locs []apacheProxy
+		for _, l := range vh.locations {
+			n, ok := name(l.target)
+			if !ok {
+				locs = append(locs, l)
+				continue
+			}
+			members := balancers[strings.ToLower(n)]
+			if len(members) == 0 {
+				vh.notes = append(vh.notes, "ProxyPass "+l.path+" "+l.target+" (no <Proxy balancer://"+n+"> block with BalancerMember found; not migrated)")
+				continue
+			}
+			if len(members) > 1 {
+				vh.notes = append(vh.notes, "ProxyPass "+l.path+" "+l.target+" (a path-scoped proxy takes one backend; only "+members[0].address+" was kept)")
+			}
+			locs = append(locs, apacheProxy{path: l.path, target: members[0].address})
+		}
+		vh.locations = locs
+	}
 }
 
 func migrateApache(file string) error {
@@ -104,7 +175,7 @@ func migrateApache(file string) error {
 	yaml := convertApacheToYAML(vhosts)
 	fmt.Print(yaml)
 	if n := strings.Count(yaml, "# WARNING:"); n > 0 {
-		fmt.Fprintf(os.Stderr, "uwas: %d access/redirect directive(s) were NOT migrated; see the # WARNING lines at the top of the output\n", n)
+		fmt.Fprintf(os.Stderr, "uwas: %d directive(s) were NOT migrated or need review; see the # WARNING lines at the top of the output\n", n)
 	}
 	return nil
 }
@@ -115,16 +186,55 @@ func parseApacheConfig(f *os.File) []apacheVHost {
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // 64KB initial, 1MB max
 	inVHost := false
 	var current apacheVHost
+	var global []string // directives outside any vhost that are not migrated
+	balancers := map[string][]apacheMember{}
+	curBalancer := ""
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
+
+		// A trailing backslash continues the directive on the next line
+		// ("ServerAlias a.test \\\n b.test"); without joining, the "\\" became
+		// an alias and the continued names were lost (F41001).
+		for strings.HasSuffix(line, "\\") && !strings.HasPrefix(line, "#") && scanner.Scan() {
+			line = strings.TrimSpace(strings.TrimSuffix(line, "\\")) + " " + strings.TrimSpace(scanner.Text())
+		}
 
 		// Skip comments and empty lines
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 
-		if strings.HasPrefix(line, "<VirtualHost") {
+		// <Proxy balancer://name> ... BalancerMember ... </Proxy> (F42005); the
+		// cluster may sit inside or outside a VirtualHost and be defined after
+		// the ProxyPass that names it, so members are collected here and
+		// ProxyPass targets are resolved once the file has been read.
+		if m := apacheBalancerBlock.FindStringSubmatch(line); m != nil {
+			curBalancer = strings.ToLower(m[1])
+			continue
+		}
+		if curBalancer != "" {
+			if hasPrefixFold(line, "</proxy") {
+				curBalancer = ""
+			} else if hasPrefixFold(line, "balancermember") {
+				parts := splitApacheArgs(line)
+				if len(parts) >= 2 {
+					mem := apacheMember{address: parts[1]}
+					for _, kv := range parts[2:] {
+						if v, ok := strings.CutPrefix(strings.ToLower(kv), "loadfactor="); ok {
+							if w, err := strconv.Atoi(v); err == nil && w > 0 {
+								mem.weight = w
+							}
+						}
+					}
+					balancers[curBalancer] = append(balancers[curBalancer], mem)
+				}
+			}
+			continue
+		}
+
+		// Apache directive and section names are case-insensitive (F41002).
+		if hasPrefixFold(line, "<virtualhost") {
 			inVHost = true
 			current = apacheVHost{}
 			// Extract listen address from <VirtualHost *:443>
@@ -134,13 +244,19 @@ func parseApacheConfig(f *os.File) []apacheVHost {
 			continue
 		}
 
-		if strings.HasPrefix(line, "</VirtualHost") {
+		if hasPrefixFold(line, "</virtualhost") {
 			inVHost = false
+			if len(vhosts) == 0 && len(global) > 0 {
+				current.notes = append(append([]string(nil), global...), current.notes...)
+			}
 			vhosts = append(vhosts, current)
 			continue
 		}
 
 		if !inVHost {
+			if apacheUnmigratedDirective(strings.ToLower(line)) {
+				global = append(global, "[outside any VirtualHost] "+line)
+			}
 			continue
 		}
 
@@ -149,6 +265,15 @@ func parseApacheConfig(f *os.File) []apacheVHost {
 
 		if apacheAccessDirective(lower) {
 			current.warnings = append(current.warnings, line)
+		}
+		if apacheUnmigratedDirective(lower) {
+			current.notes = append(current.notes, line)
+		}
+		if isPHP, fpm := apachePHPHandler(line, lower); isPHP {
+			current.php = true
+			if fpm != "" && current.phpFPM == "" {
+				current.phpFPM = fpm
+			}
 		}
 
 		if strings.HasPrefix(lower, "servername") {
@@ -189,6 +314,7 @@ func parseApacheConfig(f *os.File) []apacheVHost {
 		}
 	}
 
+	expandApacheBalancers(vhosts, balancers)
 	return vhosts
 }
 
@@ -233,6 +359,11 @@ func mergeApacheVHosts(vhosts []apacheVHost) []apacheVHost {
 		m.locations = append(m.locations, vh.locations...)
 		m.aliases = append(m.aliases, vh.aliases...)
 		m.warnings = append(m.warnings, vh.warnings...)
+		m.notes = append(m.notes, vh.notes...)
+		m.php = m.php || vh.php
+		if m.phpFPM == "" {
+			m.phpFPM = vh.phpFPM
+		}
 	}
 	return out
 }
@@ -256,7 +387,65 @@ func apacheAccessDirective(lower string) bool {
 	return false
 }
 
-var apacheVHostAddrRegexp = regexp.MustCompile(`<VirtualHost\s+([^>]+)>`)
+func hasPrefixFold(s, prefix string) bool {
+	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
+}
+
+// apacheUnmigratedDirective reports a directive that changes what the site
+// serves and has no translation: a path mapped outside the document root, a
+// regex ProxyPass, another file's vhosts, or the intermediate certificate chain
+// (F41003). lower is the lower-cased, trimmed line.
+func apacheUnmigratedDirective(lower string) bool {
+	for _, p := range []string{
+		"proxypassmatch", "alias ", "aliasmatch", "scriptalias",
+		"include ", "includeoptional ", "sslcertificatechainfile",
+	} {
+		if strings.HasPrefix(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// apachePHPHandler reports whether a directive makes PHP run for the vhost and,
+// for SetHandler "proxy:...fcgi://", the FPM address UWAS should use (F41000).
+// Source viewers (x-httpd-php-source, .phps) and "SetHandler none" are not PHP.
+func apachePHPHandler(line, lower string) (bool, string) {
+	switch {
+	case strings.HasPrefix(lower, "php_value ") || strings.HasPrefix(lower, "php_admin_value ") ||
+		strings.HasPrefix(lower, "php_flag ") || strings.HasPrefix(lower, "php_admin_flag "):
+		return true, ""
+	case strings.HasPrefix(lower, "sethandler "):
+		val := strings.ToLower(extractApacheValue(line))
+		if strings.HasPrefix(val, "proxy:") && strings.Contains(val, "fcgi") {
+			return true, apacheFPMAddress(extractApacheValue(line))
+		}
+		return strings.Contains(val, "php") && !strings.Contains(val, "php-source"), ""
+	case strings.HasPrefix(lower, "addhandler ") || strings.HasPrefix(lower, "addtype "):
+		return strings.Contains(lower, "php") && !strings.Contains(lower, "php-source") && !strings.Contains(lower, ".phps"), ""
+	}
+	return false, ""
+}
+
+// apacheFPMAddress turns "proxy:unix:/run/php/fpm.sock|fcgi://localhost" into
+// "unix:/run/php/fpm.sock" and "proxy:fcgi://127.0.0.1:9000/" into
+// "127.0.0.1:9000".
+func apacheFPMAddress(v string) string {
+	v = strings.TrimPrefix(v, "proxy:")
+	if strings.HasPrefix(v, "unix:") {
+		if i := strings.Index(v, "|"); i > 0 {
+			v = v[:i]
+		}
+		return v
+	}
+	v = strings.TrimPrefix(v, "fcgi://")
+	if i := strings.Index(v, "/"); i >= 0 {
+		v = v[:i]
+	}
+	return v
+}
+
+var apacheVHostAddrRegexp = regexp.MustCompile(`(?i)<VirtualHost\s+([^>]+)>`)
 
 func extractApacheVHostAddr(line string) string {
 	m := apacheVHostAddrRegexp.FindStringSubmatch(line)
@@ -334,23 +523,38 @@ func extractApacheValue(line string) string {
 func convertApacheToYAML(vhosts []apacheVHost) string {
 	var b strings.Builder
 	merged := mergeApacheVHosts(vhosts)
-	for _, vh := range merged {
-		host := vh.serverName
-		if host == "" {
-			host = "example.com"
+	// A vhost without ServerName gets a placeholder host; two of them used to
+	// share "example.com", which config validation rejects for the whole file
+	// (F41004).
+	hosts := make([]string, len(merged))
+	placeholders := 0
+	for i, vh := range merged {
+		hosts[i] = vh.serverName
+		if hosts[i] == "" {
+			placeholders++
+			hosts[i] = "example.com"
+			if placeholders > 1 {
+				hosts[i] = fmt.Sprintf("example-%d.com", placeholders)
+			}
+		}
+	}
+	for i, vh := range merged {
+		host := hosts[i]
+		if vh.serverName == "" {
+			b.WriteString("# WARNING: not migrated, edit the host: " + host + ": the VirtualHost has no ServerName\n")
 		}
 		for _, w := range vh.warnings {
 			b.WriteString("# WARNING: not migrated, the site is NOT protected by it: " + host + ": " + w + "\n")
+		}
+		for _, n := range vh.notes {
+			b.WriteString("# WARNING: not migrated, behaviour differs after migration: " + host + ": " + n + "\n")
 		}
 	}
 	b.WriteString("# Converted from Apache config by UWAS\n")
 	b.WriteString("domains:\n")
 
-	for _, vh := range merged {
-		host := vh.serverName
-		if host == "" {
-			host = "example.com"
-		}
+	for i, vh := range merged {
+		host := hosts[i]
 
 		b.WriteString(fmt.Sprintf("  - host: %s\n", nginxmigrate.YAMLScalar(host)))
 		if aliases := uniqueApacheAliases(host, vh.aliases); len(aliases) > 0 {
@@ -362,9 +566,13 @@ func convertApacheToYAML(vhosts []apacheVHost) string {
 
 		// Determine type
 		hasProxy := len(vh.proxyPass) > 0
-		if hasProxy {
+		switch {
+		case hasProxy:
 			b.WriteString("    type: proxy\n")
-		} else {
+		case vh.php:
+			// A static site answers 403 for every .php file (F41000).
+			b.WriteString("    type: php\n")
+		default:
 			b.WriteString("    type: static\n")
 		}
 
@@ -389,12 +597,20 @@ func convertApacheToYAML(vhosts []apacheVHost) string {
 			b.WriteString("      mode: auto\n")
 		}
 
+		if !hasProxy && vh.php && vh.phpFPM != "" {
+			b.WriteString("    php:\n")
+			b.WriteString(fmt.Sprintf("      fpm_address: %s\n", nginxmigrate.YAMLScalar(vh.phpFPM)))
+		}
+
 		// Proxy config
 		if hasProxy {
 			b.WriteString("    proxy:\n")
 			b.WriteString("      upstreams:\n")
 			for _, p := range vh.proxyPass {
 				b.WriteString(fmt.Sprintf("        - address: %s\n", nginxmigrate.YAMLScalar(p.target)))
+				if p.weight > 0 {
+					b.WriteString(fmt.Sprintf("          weight: %d\n", p.weight))
+				}
 			}
 		}
 

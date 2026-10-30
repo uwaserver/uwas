@@ -23,7 +23,7 @@ func TestStaleStartNativeLeavesLivePortFile(t *testing.T) {
 		AutoRestart: true,
 		WorkDir:     filepath.Join(t.TempDir(), "workdir"),
 	}
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	if err := m.Register(app); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestStartNativePortFileLifecycle(t *testing.T) {
 		AutoRestart: false,
 		WorkDir:     filepath.Join(t.TempDir(), "workdir"),
 	}
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	if err := m.Register(app); err != nil {
 		t.Fatalf("Register: %v", err)
 	}

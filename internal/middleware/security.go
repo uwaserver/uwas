@@ -32,7 +32,43 @@ var defaultBlockedPaths = []string{
 	".DS_Store", "Thumbs.db",
 	"web.config", "composer.json", "composer.lock",
 	"package.json", "package-lock.json",
+	// Lock files and tool config that sit next to the ones above: the same
+	// dependency inventory, listed under another package manager (F49001).
+	"yarn.lock", "pnpm-lock.yaml", "npm-shrinkwrap.json",
+	// A php.ini left in the docroot and PHP's default error log (cPanel and
+	// Plesk write error_log into the script's directory): configuration and
+	// absolute paths, never content (F49001).
+	"php.ini", "error_log",
+	// docs/SPECIFICATION.md §16.2 blocks node_modules/ by default (F49000).
+	// vendor/ is handled by isComposerVendorPath: a front-end theme keeps its
+	// JavaScript in /vendor/ at the root, so blocking the name would break it.
+	"node_modules",
 	".editorconfig", ".gitignore",
+}
+
+// isComposerVendorPath reports whether path points into a Composer vendor
+// directory. §16.2 blocks vendor/, but "vendor" is also where Bootstrap-style
+// static templates (/vendor/bootstrap/, /vendor/jquery/) and theme assets
+// (/assets/vendor/) keep their JavaScript, so the name alone is not enough.
+// What identifies the PHP one is what Composer puts there: autoload.php,
+// composer/ (installed.json lists every dependency and version), bin/ and
+// phpunit/ (eval-stdin.php, CVE-2017-9841, executes the request body). The
+// first two are also the paths scanners probe (F49000).
+func isComposerVendorPath(path string) bool {
+	segs := strings.Split(path, "/")
+	for i, seg := range segs {
+		if !strings.EqualFold(seg, "vendor") || i+1 >= len(segs) {
+			continue
+		}
+		next := strings.ToLower(segs[i+1])
+		switch {
+		case next == "composer", next == "phpunit", next == "bin":
+			return true
+		case strings.HasPrefix(next, "autoload") && strings.HasSuffix(next, ".php"):
+			return true
+		}
+	}
+	return false
 }
 
 // WAF rule families. security.waf.rules names these; an empty list means all
@@ -224,8 +260,24 @@ func SecurityGuard(log *logger.Logger, blockedPaths []string, stats *SecuritySta
 				return
 			}
 
+			// The static handler opens files through the cleaned path, so a
+			// name hidden behind dot segments reaches the same file; decide
+			// on both forms (F49000).
+			clean := pathmatch.Clean(path)
+			if isComposerVendorPath(clean) {
+				if stats != nil {
+					stats.Record(r.RemoteAddr, path, "waf", r.UserAgent())
+				}
+				log.Warn("blocked path access",
+					"path", path,
+					"blocked", "composer vendor",
+					"remote", r.RemoteAddr,
+				)
+				http.Error(w, "403 Forbidden", http.StatusForbidden)
+				return
+			}
 			for _, blocked := range allBlocked {
-				if pathSegmentContains(path, blocked) {
+				if pathSegmentContains(path, blocked) || (clean != path && pathSegmentContains(clean, blocked)) {
 					if stats != nil {
 						stats.Record(r.RemoteAddr, path, "waf", r.UserAgent())
 					}

@@ -53,6 +53,10 @@ func setSystemExecCommand(fn func(string, ...string) *exec.Cmd) func() {
 
 // ============ Self-Update ============
 
+// restartSelfFn restarts UWAS after a self-update; replaceable in tests so they
+// never restart the real service.
+var restartSelfFn = selfupdate.RestartSelf
+
 func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	info, err := selfupdate.CheckUpdateFn(build.Version)
 	if err != nil {
@@ -76,9 +80,11 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := selfupdate.UpdateFn(info.DownloadURL); err != nil {
+		s.recordAuditR(r, "system.update", info.LatestVersion+": "+err.Error(), false)
 		jsonErrorCause(w, "update failed", err, http.StatusInternalServerError)
 		return
 	}
+	s.recordAuditR(r, "system.update", info.CurrentVersion+" -> "+info.LatestVersion, true)
 	s.logger.Info("UWAS updated", "from", info.CurrentVersion, "to", info.LatestVersion)
 	jsonResponse(w, map[string]string{
 		"status":  "updated",
@@ -92,7 +98,7 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	// process is still the old one, so we log loudly to surface the situation.
 	go func() {
 		time.Sleep(500 * time.Millisecond) // let response flush
-		if err := selfupdate.RestartSelf(); err != nil {
+		if err := restartSelfFn(); err != nil {
 			s.logger.Error("UWAS auto-restart failed after self-update", "error", err.Error(),
 				"hint", "new binary is installed; restart manually: 'sudo systemctl restart uwas' or 'sudo uwas restart'")
 		}

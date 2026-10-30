@@ -719,16 +719,24 @@ func TestConfigReload(t *testing.T) {
 
 	// Wait for admin health endpoint
 	client := &http.Client{Timeout: 2 * time.Second}
-	deadline := time.Now().Add(3 * time.Second)
+	// Start-up under a loaded -race run can take several seconds; the deadline
+	// is only a hang detector, and a server that never became healthy fails
+	// here instead of surfacing as a confusing connection error below.
+	healthy := false
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(adminBase + "/api/v1/health")
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == 200 {
+				healthy = true
 				break
 			}
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+	if !healthy {
+		t.Fatal("admin health endpoint did not become ready")
 	}
 
 	// Verify initial content

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -26,6 +27,7 @@ var (
 	installOsReadFile   = os.ReadFile
 	installOsRename     = os.Rename
 	installOsRemove     = os.Remove
+	installOsRemoveAll  = os.RemoveAll
 	installOsSymlink    = os.Symlink
 	installOsStat       = os.Stat
 	installOsMkdirAll   = os.MkdirAll
@@ -173,7 +175,7 @@ func installUWAS(args []string) error {
 			if err != nil {
 				return fmt.Errorf("install: %w", err)
 			}
-			envContent := fmt.Sprintf("UWAS_ADMIN_KEY=%s\nUWAS_PURGE_KEY=%s\n", apiKey, purgeKey)
+			envContent := fmt.Sprintf("UWAS_ADMIN_KEY=%s\nUWAS_ADMIN_PIN=%s\nUWAS_PURGE_KEY=%s\n", apiKey, pinCode, purgeKey)
 			_ = installOsWriteFile(envPath, []byte(envContent), 0600)
 			fmt.Printf("  ✓ Baseline config: %s\n", cfgPath)
 		} else {
@@ -455,7 +457,7 @@ func (c *UninstallCmd) Run(args []string) error {
 	fmt.Println("This will remove:")
 	fmt.Println("  - /usr/local/bin/uwas (binary)")
 	fmt.Println("  - /usr/bin/uwas (symlink)")
-	fmt.Println("  - /etc/systemd/system/uwas.service")
+	fmt.Println("  - /etc/systemd/system/uwas.service (and its uwas.service.d drop-ins)")
 	fmt.Println()
 	fmt.Println("Config (/etc/uwas/) and data (/var/www/) will be preserved.")
 	fmt.Println()
@@ -473,23 +475,40 @@ func (c *UninstallCmd) Run(args []string) error {
 	installExecCommand("systemctl", "disable", "uwas").Run()
 	fmt.Println("  - Service stopped and disabled")
 
-	// Remove files
-	installOsRemove("/etc/systemd/system/uwas.service")
-	fmt.Println("  - Removed systemd service")
-
-	installOsRemove("/usr/bin/uwas")
-	fmt.Println("  - Removed /usr/bin/uwas symlink")
-
-	self, _ := installOsExecutable()
-	if self != "/usr/local/bin/uwas" {
-		installOsRemove("/usr/local/bin/uwas")
-		fmt.Println("  - Removed /usr/local/bin/uwas")
-	} else {
-		// Can't delete ourselves while running — schedule deletion
-		fmt.Println("  - Binary will be removed on next reboot (currently running)")
+	// Remove files. A file that is already gone is fine; any other failure is
+	// reported and fails the command rather than printing "Removed".
+	var failed []string
+	removeFile := func(path, label string) {
+		switch err := installOsRemove(path); {
+		case err == nil:
+			fmt.Printf("  - Removed %s\n", label)
+		case errors.Is(err, os.ErrNotExist):
+			fmt.Printf("  - %s was not present\n", label)
+		default:
+			failed = append(failed, fmt.Sprintf("%s: %v", path, err))
+			fmt.Printf("  ! Could not remove %s: %v\n", label, err)
+		}
 	}
+	removeFile("/etc/systemd/system/uwas.service", "systemd service")
+	// The resilience drop-in written by scripts/install.sh would otherwise be
+	// left behind and silently re-apply (WatchdogSec, Restart=always) to the
+	// next unit that is installed under this name.
+	if err := installOsRemoveAll("/etc/systemd/system/uwas.service.d"); err != nil {
+		failed = append(failed, fmt.Sprintf("/etc/systemd/system/uwas.service.d: %v", err))
+		fmt.Printf("  ! Could not remove the systemd drop-in directory: %v\n", err)
+	}
+	removeFile("/usr/bin/uwas", "/usr/bin/uwas symlink")
+	// Unlinking a running executable is fine on Linux: the process keeps the
+	// inode until it exits. (This branch used to promise a removal "on next
+	// reboot" that nothing scheduled, so the binary stayed forever.)
+	removeFile("/usr/local/bin/uwas", "/usr/local/bin/uwas")
 
 	installExecCommand("systemctl", "daemon-reload").Run()
+
+	if len(failed) > 0 {
+		fmt.Println()
+		return fmt.Errorf("uninstall incomplete, could not remove: %s", strings.Join(failed, "; "))
+	}
 
 	fmt.Println()
 	fmt.Println("UWAS uninstalled. Config preserved at /etc/uwas/")

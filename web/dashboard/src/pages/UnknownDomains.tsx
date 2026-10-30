@@ -27,6 +27,7 @@ export default function UnknownDomains() {
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState('');
   const [featureStatus, setFeatureStatus] = useState<FeatureStatus | null>(null);
   const [domains, setDomains] = useState<DomainData[]>([]);
   const [redirectHost, setRedirectHost] = useState('');
@@ -35,8 +36,8 @@ export default function UnknownDomains() {
 
   const load = useCallback(() => {
     fetchUnknownDomains()
-      .then(d => setEntries(d ?? []))
-      .catch(() => {})
+      .then(d => { setEntries(d ?? []); setLoadError(''); })
+      .catch(e => setLoadError(`Could not load unknown domains: ${(e as Error).message}`))
       .finally(() => setLoading(false));
   }, []);
 
@@ -111,6 +112,11 @@ export default function UnknownDomains() {
           {error}
         </div>
       )}
+      {loadError && (
+        <div className="rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">
+          {loadError}
+        </div>
+      )}
 
       {redirectHost && (
         <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3">
@@ -159,7 +165,7 @@ export default function UnknownDomains() {
         <div className="text-center text-muted-foreground py-12">Loading...</div>
       )}
 
-      {!loading && entries.length === 0 && (
+      {!loading && !loadError && entries.length === 0 && (
         <div className="rounded-lg border border-border bg-card px-6 py-12 text-center">
           <ShieldCheck size={40} className="mx-auto mb-3 text-green-400" />
           <p className="text-card-foreground font-medium">No unknown domains detected</p>

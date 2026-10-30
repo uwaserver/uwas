@@ -273,7 +273,10 @@ func (s *Server) handleDomainHealth(w http.ResponseWriter, r *http.Request) {
 				hr.Status = "down"
 				hr.Error = err.Error()
 			} else {
-				io.Copy(io.Discard, resp.Body)
+				// Only the status line matters. A tenant page can answer with
+				// an endless body; read a bounded prefix and close so the check
+				// costs the same whatever the page returns.
+				io.Copy(io.Discard, io.LimitReader(resp.Body, healthProbeBodyLimit))
 				resp.Body.Close()
 				hr.Code = resp.StatusCode
 				if resp.StatusCode >= 200 && resp.StatusCode < 400 {
@@ -307,6 +310,9 @@ func (s *Server) handleDomainHealth(w http.ResponseWriter, r *http.Request) {
 // apps:// upstream is configured but not listening, and whether the URL
 // is an internally-resolved loopback address rather than the domain's
 // public hostname. Callers must not run the SSRF guard on internal URLs.
+// healthProbeBodyLimit bounds how much of a domain's page the health check reads.
+const healthProbeBodyLimit = 64 << 10
+
 func (s *Server) domainHealthURL(dom config.Domain) (string, string, bool) {
 	if appURL, appErr := s.appDomainHealthURL(dom); appURL != "" || appErr != "" {
 		return appURL, appErr, appURL != ""

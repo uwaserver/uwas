@@ -157,3 +157,7 @@ var cgnatNet = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32
 func isPublicAddr(ip net.IP) bool {
 	return ip != nil && ip.IsGlobalUnicast() && !ip.IsPrivate() && !cgnatNet.Contains(ip)
 }
+
+// IsPublicAddr reports whether ip is a globally routable address: not
+// loopback, link-local, private (RFC 1918 / ULA) or CGNAT (RFC 6598).
+func IsPublicAddr(ip net.IP) bool { return isPublicAddr(ip) }

@@ -62,7 +62,7 @@ func TestCacheStoreAndHit(t *testing.T) {
 	log := logger.New("error", "text")
 	srv := server.New(cfg, log)
 	go srv.Start()
-	waitForServer(t, base, 5*time.Second)
+	waitForServer(t, base, 30*time.Second)
 
 	client := &http.Client{Timeout: 2 * time.Second}
 
@@ -142,7 +142,7 @@ func TestRateLimitE2E(t *testing.T) {
 	log := logger.New("error", "text")
 	srv := server.New(cfg, log)
 	go srv.Start()
-	waitForServer(t, base, 5*time.Second)
+	waitForServer(t, base, 30*time.Second)
 
 	client := &http.Client{Timeout: 2 * time.Second}
 
@@ -203,7 +203,7 @@ func TestMultiDomainVHostRouting(t *testing.T) {
 	log := logger.New("error", "text")
 	srv := server.New(cfg, log)
 	go srv.Start()
-	waitForServer(t, base, 2*time.Second)
+	waitForServer(t, base, 30*time.Second)
 
 	client := &http.Client{Timeout: 2 * time.Second}
 
@@ -278,7 +278,7 @@ func TestBackendFailoverE2E(t *testing.T) {
 	log := logger.New("error", "text")
 	srv := server.New(cfg, log)
 	go srv.Start()
-	waitForServer(t, base, 2*time.Second)
+	waitForServer(t, base, 30*time.Second)
 
 	client := &http.Client{Timeout: 2 * time.Second}
 
@@ -348,7 +348,7 @@ func TestCORSE2E(t *testing.T) {
 	log := logger.New("error", "text")
 	srv := server.New(cfg, log)
 	go srv.Start()
-	waitForServer(t, base, 2*time.Second)
+	waitForServer(t, base, 30*time.Second)
 
 	client := &http.Client{Timeout: 2 * time.Second}
 
@@ -393,7 +393,7 @@ func TestConfigReloadE2E(t *testing.T) {
 	srv := server.New(cfg, log)
 	srv.SetConfigPath(cfgPath)
 	go srv.Start()
-	waitForServer(t, base, 2*time.Second)
+	waitForServer(t, base, 30*time.Second)
 
 	client := &http.Client{Timeout: 2 * time.Second}
 

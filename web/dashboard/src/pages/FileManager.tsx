@@ -25,6 +25,7 @@ import {
   uploadFile,
   fetchDiskUsage,
   getAuthHeaders,
+  checkAuthFailure,
   BASE,
   type FileEntry,
   type FileWorkspace,
@@ -66,6 +67,7 @@ export default function FileManager() {
   const [currentPath, setCurrentPath] = useState('.');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [workspaceError, setWorkspaceError] = useState('');
   const [diskUsage, setDiskUsage] = useState<{ bytes: number; human: string; root: string } | null>(null);
 
   // Editor state
@@ -92,9 +94,10 @@ export default function FileManager() {
       .then(items => {
         const next = items ?? [];
         setWorkspaces(next);
+        setWorkspaceError('');
         setSelectedWorkspaceID(current => current || next[0]?.id || '');
       })
-      .catch(() => {});
+      .catch((e: Error) => setWorkspaceError(e?.message || 'Failed to load workspaces'));
   }, []);
 
   const selectedWorkspace = useMemo(
@@ -211,6 +214,7 @@ export default function FileManager() {
           `${BASE}/api/v1/files/${encodeURIComponent(selectedWorkspaceID)}/read?path=${encodeURIComponent(entry.path)}`,
           { headers: getAuthHeaders() },
         );
+        await checkAuthFailure(res);
         if (!res.ok) {
           const body = await res.json().catch(() => ({ error: res.statusText }));
           throw new Error(body.error || res.statusText);
@@ -436,7 +440,10 @@ export default function FileManager() {
               </optgroup>
             )}
           </select>
-          {workspaces.length === 0 && (
+          {workspaceError && (
+            <p className="mt-1 text-xs text-red-400">Failed to load workspaces: {workspaceError}</p>
+          )}
+          {workspaces.length === 0 && !workspaceError && (
             <p className="mt-1 text-xs text-muted-foreground">No domain or application workspaces are available.</p>
           )}
           {selectedWorkspace?.root && (

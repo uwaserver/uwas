@@ -106,14 +106,7 @@ func (h *Handler) Serve(ctx *router.RequestContext) {
 	}
 
 	// Set content type with charset for text types
-	ct := h.mime.Lookup(path)
-	if !strings.Contains(ct, "charset") &&
-		(strings.HasPrefix(ct, "text/") || ct == "application/json" ||
-			ct == "application/javascript" || ct == "application/xml" ||
-			ct == "image/svg+xml") {
-		ct += "; charset=utf-8"
-	}
-	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Content-Type", h.contentType(path))
 
 	// Try pre-compressed version
 	if h.servePreCompressed(w, r, path, ctx.DocumentRoot, info, ctx.NoFollowSymlinks) {
@@ -169,6 +162,21 @@ func (h *Handler) Serve(ctx *router.RequestContext) {
 	http.ServeContent(w, r, filepath.Base(path), info.ModTime(), f)
 }
 
+// contentType is the Content-Type of the file at path, with the UTF-8 charset
+// added to a text type whose MIME entry names none. The pre-compressed variants
+// use it too, so a URL answers with one type whatever Accept-Encoding says
+// (F55301).
+func (h *Handler) contentType(path string) string {
+	ct := h.mime.Lookup(path)
+	if !strings.Contains(ct, "charset") &&
+		(strings.HasPrefix(ct, "text/") || ct == "application/json" ||
+			ct == "application/javascript" || ct == "application/xml" ||
+			ct == "image/svg+xml") {
+		ct += "; charset=utf-8"
+	}
+	return ct
+}
+
 // openedWithinRoot confirms that the file just opened is the doc root's own
 // file. ResolveRequest's containment verdict rests on a resolution that
 // pathsafe caches for a few seconds, and Serve opens the path again later: a
@@ -209,15 +217,27 @@ func hasHiddenComponent(path string) bool {
 	return false
 }
 
+// phpVariantExts are PHP script extensions other than ".php" that web servers
+// commonly map to the PHP handler.
+var phpVariantExts = []string{".phtml", ".pht", ".php3", ".php4", ".php5", ".php7", ".php8"}
+
 // IsPHPSourceLeftover reports whether name is a backup or editor copy of a PHP
 // script (wp-config.php.bak, index.php~, config.php.old, source.phps). Only a
 // name ending in ".php" is handed to FastCGI, so these are not executed and a
 // static response would be the script's source; docs/SPECIFICATION.md §16.3
-// blocks them (F18600).
+// blocks them (F18600). The other extensions PHP is routinely mapped to
+// (.phtml, .pht, .php3 to .php8) are treated the same way: Apache and cPanel
+// run them as PHP, UWAS runs nothing, so a static answer would again be the
+// script's source (F48600).
 func IsPHPSourceLeftover(name string) bool {
 	n := strings.ToLower(name)
 	if strings.HasSuffix(n, ".phps") {
 		return true
+	}
+	for _, ext := range phpVariantExts {
+		if strings.HasSuffix(n, ext) {
+			return true
+		}
 	}
 	if strings.HasSuffix(n, "~") && strings.Contains(n, ".php") {
 		return true
@@ -287,7 +307,7 @@ func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, 
 		}
 
 		w.Header().Set("Content-Encoding", c.encoding)
-		w.Header().Set("Content-Type", h.mime.Lookup(path)) // original file's MIME
+		w.Header().Set("Content-Type", h.contentType(path)) // original file's type
 		// Put the encoding discriminator INSIDE the quotes — appending it after
 		// the closing " (W/"<hex>"-gzip) is a malformed entity-tag that
 		// conditional-request matching ignores past the quote.

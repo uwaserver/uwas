@@ -26,6 +26,10 @@ export default function ConfigEditor() {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(null);
   const [validationError, setValidationError] = useState('');
+  // The editor is blanked when a load fails; keep it read-only (and Save off)
+  // until a Reload succeeds, or typing into the "empty" editor and saving would
+  // replace the real configuration file.
+  const [loadFailed, setLoadFailed] = useState(false);
 
   const isDirty = content !== originalContent;
 
@@ -79,6 +83,7 @@ export default function ConfigEditor() {
     setLoading(true);
     setStatus(null);
     setValidationError('');
+    setLoadFailed(false);
     try {
       let result: { content: string };
       if (activeFile === '__main__') {
@@ -95,6 +100,7 @@ export default function ConfigEditor() {
       setStatus({ ok: false, message: (e as Error).message });
       setContent('');
       setOriginalContent('');
+      setLoadFailed(true);
     } finally {
       if (loadSeqRef.current === seq) setLoading(false);
     }
@@ -128,7 +134,7 @@ export default function ConfigEditor() {
   };
 
   const handleSave = async () => {
-    if (validationError) return;
+    if (validationError || loadFailed) return;
     setSaving(true);
     setStatus(null);
     try {
@@ -228,7 +234,7 @@ export default function ConfigEditor() {
               </button>
               <button
                 onClick={handleSave}
-                disabled={saving || !isDirty || !!validationError}
+                disabled={saving || !isDirty || !!validationError || loadFailed}
                 className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Save size={12} /> {saving ? 'Saving...' : 'Save'}
@@ -265,6 +271,7 @@ export default function ConfigEditor() {
             ) : (
               <textarea
                 value={content}
+                readOnly={loadFailed}
                 onChange={(e) => handleContentChange(e.target.value)}
                 spellCheck={false}
                 className="h-full w-full resize-none rounded-b-lg bg-background p-4 font-mono text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"

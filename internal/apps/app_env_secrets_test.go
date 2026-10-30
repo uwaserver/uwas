@@ -23,7 +23,7 @@ func TestNativeAppDoesNotInheritUWASSecrets(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "run.sh"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	app := &App{Name: "env-secrets", Runtime: RuntimeCustom, Command: "sh run.sh", WorkDir: dir,
 		Env: EnvFromPairs("EXPLICIT_APP_TOKEN", "explicit-kept")}
 	if err := m.Register(app); err != nil {

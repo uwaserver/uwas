@@ -25,6 +25,7 @@ import (
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/testport"
 )
 
 var sharedLockT *testing.T
@@ -75,9 +76,7 @@ func sharedLockSetup(t *testing.T, adminOn bool) (s *Server, base, cfgPath, yaml
 	root := filepath.Join(dir, "www")
 	os.MkdirAll(root, 0o755)
 	cfgPath = filepath.Join(dir, "uwas.yaml")
-	ln, _ := net.Listen("tcp", "127.0.0.1:0")
-	addr := ln.Addr().String()
-	ln.Close()
+	addr := testport.FreeAddr(t)
 	yaml = fmt.Sprintf(sharedLockYAML, root, adminOn, addr, root)
 	if err := os.WriteFile(cfgPath, []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)

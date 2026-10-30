@@ -85,6 +85,11 @@ func (s *SecurityStats) Record(ip, path, reason, ua string) {
 	if host, _, err := net.SplitHostPort(ip); err == nil {
 		ip = host
 	}
+	// The path and User-Agent are attacker-supplied and a header block may be
+	// up to max_header_bytes; the ring retains maxRecentBlocked of them and the
+	// dashboard serves them. Bound them as the access log does (F48100).
+	path = clipLogField(path, maxLogURIBytes)
+	ua = clipLogField(ua, maxLogHeaderBytes)
 	s.TotalBlocked.Add(1)
 	switch reason {
 	case "waf":

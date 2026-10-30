@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/uwaserver/uwas/internal/testport"
 )
 
 func TestDetectHintCoversRuntimes(t *testing.T) {
@@ -33,7 +35,7 @@ func TestStartNativeReportsImmediateExit(t *testing.T) {
 
 	dir := t.TempDir()
 	store := NewStore(dir)
-	mgr := NewManager(store, nil)
+	mgr := testManager(t, store, nil)
 
 	// Register an app that will exit immediately with non-zero. The
 	// liveness probe should catch this and return a descriptive error
@@ -60,7 +62,7 @@ func TestStartNativeReportsImmediateExit(t *testing.T) {
 func TestStartNativeMissingCommandHasHint(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)
-	mgr := NewManager(store, nil)
+	mgr := testManager(t, store, nil)
 
 	// Node runtime with no command and an empty workdir → detection
 	// fails, error should include the detect-hint listing the files
@@ -126,7 +128,7 @@ func TestWaitListeningSuccess(t *testing.T) {
 	port := ln.Addr().(*net.TCPAddr).Port
 
 	dir := t.TempDir()
-	mgr := NewManager(NewStore(dir), nil)
+	mgr := testManager(t, NewStore(dir), nil)
 	app := &App{
 		Name:    "listening",
 		Runtime: RuntimeNode,
@@ -179,7 +181,7 @@ func TestWaitListeningAdoptsRuntimePortFile(t *testing.T) {
 	if err := store.Save(app); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	mgr := NewManager(store, nil)
+	mgr := testManager(t, store, nil)
 	mgr.mu.Lock()
 	mgr.procs[app.Name] = &process{
 		name:        app.Name,
@@ -217,14 +219,9 @@ func TestWaitListeningAdoptsRuntimePortFile(t *testing.T) {
 
 func TestWaitListeningTimeout(t *testing.T) {
 	dir := t.TempDir()
-	mgr := NewManager(NewStore(dir), nil)
+	mgr := testManager(t, NewStore(dir), nil)
 	// Pick a port that's almost certainly free and nobody is listening on.
-	freePort := 0
-	{
-		l, _ := net.Listen("tcp", "127.0.0.1:0")
-		freePort = l.Addr().(*net.TCPAddr).Port
-		l.Close() // immediately close so the port is unused
-	}
+	freePort := testport.Free(t)
 
 	app := &App{
 		Name:    "not-listening",
@@ -255,13 +252,8 @@ func TestWaitListeningTimeout(t *testing.T) {
 
 func TestWaitListeningReturnsWhenProcessStops(t *testing.T) {
 	dir := t.TempDir()
-	mgr := NewManager(NewStore(dir), nil)
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	freePort := l.Addr().(*net.TCPAddr).Port
-	_ = l.Close()
+	mgr := testManager(t, NewStore(dir), nil)
+	freePort := testport.Free(t)
 
 	app := &App{
 		Name:    "stops-before-listen",
@@ -291,7 +283,7 @@ func TestWaitListeningReturnsWhenProcessStops(t *testing.T) {
 	mgr.procs[app.Name].dockerID = ""
 	mgr.mu.Unlock()
 
-	err = <-done
+	err := <-done
 	if err == nil {
 		t.Fatal("WaitListening should fail when the process stops")
 	}
@@ -302,7 +294,7 @@ func TestWaitListeningReturnsWhenProcessStops(t *testing.T) {
 
 func TestWaitListeningSkipsCustomRuntime(t *testing.T) {
 	dir := t.TempDir()
-	mgr := NewManager(NewStore(dir), nil)
+	mgr := testManager(t, NewStore(dir), nil)
 	app := &App{
 		Name:    "batch-worker",
 		Runtime: RuntimeCustom,
@@ -335,7 +327,7 @@ func TestEnsureStartPortAvailableReassignsOccupiedPort(t *testing.T) {
 	occupied := ln.Addr().(*net.TCPAddr).Port
 
 	dir := t.TempDir()
-	mgr := NewManager(NewStore(dir), nil)
+	mgr := testManager(t, NewStore(dir), nil)
 	app := &App{
 		Name:    "port-hop",
 		Runtime: RuntimeNode,
@@ -379,7 +371,7 @@ func TestEnsureStartPortAvailableReassignsOccupiedPort(t *testing.T) {
 }
 
 func TestListenAddrForPortUsesDeclaredPorts(t *testing.T) {
-	mgr := NewManager(NewStore(t.TempDir()), nil)
+	mgr := testManager(t, NewStore(t.TempDir()), nil)
 	app := &App{Name: "multi", Runtime: RuntimeDocker, Port: 3000, Ports: []int{5173}, Docker: DockerSpec{ContainerPort: 3000, Image: "example"}}
 	mgr.mu.Lock()
 	mgr.procs["multi"] = &process{
@@ -451,7 +443,7 @@ func TestMonitorNativeUsesStartStopChannelSnapshot(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	mgr := NewManager(NewStore(dir), nil)
+	mgr := testManager(t, NewStore(dir), nil)
 	oldStopCh := make(chan struct{})
 	close(oldStopCh)
 	newStopCh := make(chan struct{})
@@ -506,7 +498,7 @@ func TestStartAllStartsEnabledLoadedAppsOnly(t *testing.T) {
 		t.Fatalf("save disabled app: %v", err)
 	}
 
-	mgr := NewManager(store, nil)
+	mgr := testManager(t, store, nil)
 	if _, _, err := mgr.LoadAll(); err != nil {
 		t.Fatalf("load all: %v", err)
 	}
@@ -528,7 +520,7 @@ var _ = fmt.Sprintf
 
 func TestStatsForUnknownApp(t *testing.T) {
 	dir := t.TempDir()
-	mgr := NewManager(NewStore(dir), nil)
+	mgr := testManager(t, NewStore(dir), nil)
 	if got := mgr.Stats("nobody"); got != nil {
 		t.Errorf("Stats for unregistered app should be nil, got %+v", got)
 	}
@@ -536,7 +528,7 @@ func TestStatsForUnknownApp(t *testing.T) {
 
 func TestStatsForStoppedApp(t *testing.T) {
 	dir := t.TempDir()
-	mgr := NewManager(NewStore(dir), nil)
+	mgr := testManager(t, NewStore(dir), nil)
 	app := &App{Name: "stopped", Runtime: RuntimeCustom, Command: "true"}
 	if err := mgr.Register(app); err != nil {
 		t.Fatal(err)
@@ -560,7 +552,7 @@ func TestStartResetsCrashloopState(t *testing.T) {
 
 	dir := t.TempDir()
 	store := NewStore(dir)
-	mgr := NewManager(store, nil)
+	mgr := testManager(t, store, nil)
 
 	app := &App{
 		Name:    "cl-test",

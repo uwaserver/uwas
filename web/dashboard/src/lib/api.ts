@@ -105,6 +105,28 @@ function handleTotpChallenge(error: unknown): boolean {
   return true;
 }
 
+// Recovery shared by the hand-rolled fetches that cannot go through api() (the
+// config export, the live deploy stream and the pages' file/database downloads):
+// an expired session (401) clears the token and returns to login, a rejected
+// 2FA code (403 "2fa_required"/"invalid 2FA code") is dropped and the operator
+// is sent to the 2FA prompt. Anything else is left for the caller to report;
+// the body is read from a clone so the caller's own error handling still works.
+export async function checkAuthFailure(res: Response): Promise<void> {
+  if (res.status === 401) {
+    clearToken();
+    if (!window.location.pathname.includes('/login')) {
+      window.location.href = '/_uwas/dashboard/login';
+    }
+    throw new Error('Unauthorized');
+  }
+  if (res.status === 403) {
+    const body = await res.clone().json().catch(() => ({ error: '' }));
+    if (handleTotpChallenge(body.error)) {
+      throw new Error(body.error === '2fa_required' ? '2FA required' : body.error);
+    }
+  }
+}
+
 export function setTOTPCode(code: string) {
   totpCode = code;
   safeSessionSet('uwas_totp_verified', 'true');
@@ -152,6 +174,29 @@ function abortWithTimeout(
       externalSignal?.removeEventListener('abort', forwardAbort);
     },
   };
+}
+
+// The list endpoints are paginated server side (default page 50, hard cap 500,
+// oldest first). A single un-parameterised request therefore returned only the
+// FIRST 50 entries: a server with more than 50 domains/backups/apps listed 50,
+// and the audit log never showed the newest entries. Walk the pages until
+// `total` is reached; a server that ignores limit/offset (or omits total) ends
+// the walk after the first page.
+const LIST_PAGE_LIMIT = 500;
+const LIST_MAX_PAGES = 200;
+
+async function fetchAllPages<T>(path: string): Promise<T[]> {
+  const out: T[] = [];
+  const sep = path.includes('?') ? '&' : '?';
+  for (let page = 0; page < LIST_MAX_PAGES; page++) {
+    const r = await api<{ items?: T[] | null; total?: number }>(
+      `${path}${sep}limit=${LIST_PAGE_LIMIT}&offset=${out.length}`,
+    );
+    const items = r?.items ?? [];
+    out.push(...items);
+    if (items.length === 0 || out.length >= (r?.total ?? 0)) break;
+  }
+  return out;
 }
 
 /** Returns true if the error is an AbortError (timeout or caller-cancelled). */
@@ -211,6 +256,15 @@ async function api<T>(path: string, options?: RequestInit & { timeoutMs?: number
   };
 
   if (res.status === 401) {
+    // A wrong current password (or its lockout) on these two routes is also a
+    // 401, but the session is fine: keep it and surface the reason (F57601).
+    if (method === 'POST' && /^\/api\/v1\/auth\/users\/[^/]+\/(password|apikey)$/.test(path)) {
+      const body = await res.clone().json().catch(() => ({ error: '' }));
+      if (typeof body.error === 'string' && /current password|too many failed attempts/i.test(body.error)) {
+        logResponse('warn', `${method} ${path} -> 401 ${body.error}`);
+        throw new Error(body.error);
+      }
+    }
     logResponse('error', `${method} ${path} -> 401 Unauthorized`);
     clearToken();
     // Avoid redirect loop if already on login page
@@ -378,8 +432,7 @@ export const fetchHealth = () => api<HealthData>('/api/v1/health');
 export const fetchSystem = () => api<SystemInfo>('/api/v1/system');
 export const fetchStats = () => api<StatsData>('/api/v1/stats');
 export const fetchDomains = () =>
-  api<{ items: DomainData[]; total: number; limit: number; offset: number }>('/api/v1/domains')
-    .then(r => r.items);
+  fetchAllPages<DomainData>('/api/v1/domains');
 export const fetchMetrics = async () => {
   const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest', ...getAuthHeaders() };
   if (totpCode) headers['X-TOTP-Code'] = totpCode;
@@ -478,6 +531,11 @@ export interface DomainLocationRule {
   strip_prefix?: boolean;
   cache_control?: string;
   basic_auth?: BasicAuthRule;
+  // Not edited in the dashboard, but part of the stored location: the server
+  // replaces the whole locations list on save, so they have to round-trip.
+  headers?: Record<string, string>;
+  request_timeout?: string | number;
+  rate_limit?: { requests: number; window: string | number; by?: string };
 }
 
 export interface DomainDetail {
@@ -502,7 +560,9 @@ export interface DomainDetail {
   basic_auth?: BasicAuthRule;
   locations?: DomainLocationRule[];
   bandwidth?: { enabled: boolean; monthly_limit: string; daily_limit: string; action: string };
-  php?: { fpm_address: string; index_files: string[] | null; timeout: string | number; upload_max_size: string };
+  // timeout is a config.Duration (a Go duration string such as "30s", or 0) and
+  // max_upload a config.ByteSize (a byte count); both are omitted when unset.
+  php?: { fpm_address: string; index_files: string[] | null; timeout?: string | number; max_upload?: number };
   proxy?: { upstreams: { address: string; weight: number }[] | null; algorithm: string; health_check?: { path: string; interval: string } };
   redirect?: { target: string; status: number; preserve_path: boolean };
   app?: { runtime: string; command: string; port: number; auto_restart: boolean };
@@ -553,8 +613,7 @@ export interface AuditEntry {
 }
 
 export const fetchAuditLog = () =>
-  api<{ items: AuditEntry[]; total: number; limit: number; offset: number }>('/api/v1/audit')
-    .then(r => r.items ?? []);
+  fetchAllPages<AuditEntry>('/api/v1/audit');
 
 export const fetchDomainDetail = (host: string) => api<DomainDetail>(`/api/v1/domains/${encodeURIComponent(host)}`);
 export const fetchCerts = () => api<CertInfo[]>('/api/v1/certs').then(r => r ?? []);
@@ -583,8 +642,7 @@ export interface PHPInstall {
 }
 
 export const fetchPHP = () =>
-  api<{ items: PHPInstall[]; total: number; limit: number; offset: number }>('/api/v1/php')
-    .then(r => r.items);
+  fetchAllPages<PHPInstall>('/api/v1/php');
 export const enablePHP = (version: string) => api<{ status: string }>(`/api/v1/php/${version}/enable`, { method: 'POST' });
 export const fetchPHPConfigRaw = (version: string) => api<{ content: string }>(`/api/v1/php/${version}/config/raw`);
 export const savePHPConfigRaw = (version: string, content: string) => api<{ status: string }>(`/api/v1/php/${version}/config/raw`, { method: 'PUT', body: JSON.stringify({ content }) });
@@ -665,8 +723,7 @@ export interface BackupSchedule {
 }
 
 export const fetchBackups = () =>
-  api<{ items: BackupInfo[]; total: number; limit: number; offset: number }>('/api/v1/backups')
-    .then(r => r.items);
+  fetchAllPages<BackupInfo>('/api/v1/backups');
 export const createBackup = (provider?: string) =>
   api<BackupInfo>('/api/v1/backups', { method: 'POST', body: JSON.stringify({ provider: provider || 'local' }) });
 export const restoreBackup = (name: string, provider: string) =>
@@ -716,8 +773,7 @@ export interface SiteUserCreated extends SiteUser {
 }
 
 export const fetchUsers = () =>
-  api<{ items: SiteUser[]; total: number; limit: number; offset: number }>('/api/v1/users')
-    .then(r => r.items);
+  fetchAllPages<SiteUser>('/api/v1/users');
 export const createUser = (domain: string) =>
   api<SiteUserCreated>('/api/v1/users', { method: 'POST', body: JSON.stringify({ domain }) });
 export const deleteUser = (domain: string) =>
@@ -751,8 +807,7 @@ export interface FileWorkspace {
   domains?: string[] | null;
 }
 export const fetchFileWorkspaces = () =>
-  api<{ items: FileWorkspace[]; total: number; limit: number; offset: number }>('/api/v1/files/workspaces')
-    .then(r => r.items ?? []);
+  fetchAllPages<FileWorkspace>('/api/v1/files/workspaces');
 export interface FileListPage {
   items: FileEntry[];
   total: number;
@@ -818,8 +873,7 @@ export async function uploadFile(domain: string, path: string, file: File): Prom
 // Cron
 export interface CronJob { schedule: string; command: string; domain: string; comment: string; }
 export const fetchCronJobs = () =>
-  api<{ items: CronJob[]; total: number; limit: number; offset: number }>('/api/v1/cron')
-    .then(r => r.items);
+  fetchAllPages<CronJob>('/api/v1/cron');
 export const addCronJob = (job: { schedule: string; command: string; domain?: string; comment?: string }) => api<{ status: string }>('/api/v1/cron', { method: 'POST', body: JSON.stringify(job) });
 export const deleteCronJob = (schedule: string, command: string) => api<{ status: string }>('/api/v1/cron', { method: 'DELETE', body: JSON.stringify({ schedule, command }) });
 
@@ -877,8 +931,7 @@ export const deleteSSHKey = (domain: string, fingerprint: string) => api<{ statu
 // System Services
 export interface SystemService { name: string; display: string; running: boolean; enabled: boolean; active: string; }
 export const fetchServices = () =>
-  api<{ items: SystemService[]; total: number; limit: number; offset: number }>('/api/v1/services')
-    .then(r => r.items ?? []);
+  fetchAllPages<SystemService>('/api/v1/services');
 export const startService = (name: string) => api<{ status: string }>(`/api/v1/services/${encodeURIComponent(name)}/start`, { method: 'POST' });
 export const stopService = (name: string) => api<{ status: string }>(`/api/v1/services/${encodeURIComponent(name)}/stop`, { method: 'POST' });
 export const restartService = (name: string) => api<{ status: string }>(`/api/v1/services/${encodeURIComponent(name)}/restart`, { method: 'POST' });
@@ -891,8 +944,7 @@ export const restartDB = () => api<{ status: string }>('/api/v1/database/restart
 export interface DBInfo { name: string; user: string; password?: string; host: string; size?: string; tables?: number; }
 export const fetchDBStatus = () => api<DBStatus>('/api/v1/database/status');
 export const fetchDatabases = () =>
-  api<{ items: DBInfo[]; total: number; limit: number; offset: number }>('/api/v1/database/list')
-    .then(r => r.items);
+  fetchAllPages<DBInfo>('/api/v1/database/list');
 export interface DBCreateResult { name: string; user: string; password: string; host: string; }
 export const createDatabase = (name: string, user?: string, password?: string, host?: string) =>
   api<DBCreateResult>('/api/v1/database/create', { method: 'POST', body: JSON.stringify({ name, user, password, host }) });
@@ -913,10 +965,13 @@ export const configureDBRemoteAccess = (body: { user: string; host?: string; pas
 export const exportDatabase = (name: string) => `${BASE}/api/v1/database/${encodeURIComponent(name)}/export`;
 export const importDatabase = async (name: string, file: File) => {
   const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest', ...getAuthHeaders() };
+  if (pinCode) headers['X-Pin-Code'] = pinCode;
   // Byte-faithful transfer: file.text() would decode as UTF-8, replacing every
   // non-UTF-8 byte (latin1-encoded legacy MySQL dumps are common) with U+FFFD
   // before the request is sent. The server stores the raw bytes as received.
-  const res = await fetch(`${BASE}/api/v1/database/${encodeURIComponent(name)}/import`, { method: 'POST', headers, body: await file.arrayBuffer() });
+  const body = await file.arrayBuffer();
+  const url = `${BASE}/api/v1/database/${encodeURIComponent(name)}/import`;
+  let res = await fetch(url, { method: 'POST', headers, body });
   // 401 = session expired mid-import: recover like every other request
   // (clear the stale token, return to login) instead of surfacing a raw
   // error and stranding the admin on endless identical retries.
@@ -927,6 +982,27 @@ export const importDatabase = async (name: string, file: File) => {
       window.location.href = '/_uwas/dashboard/login';
     }
     throw new Error('Unauthorized');
+  }
+  // The import runs the uploaded SQL as the database administrator, so the
+  // server asks for the PIN like it does for dropping a database. Prompt and
+  // retry once with the same bytes, as api() does for JSON requests.
+  if (res.status === 403) {
+    const err = await res.json().catch(() => ({ error: '' }));
+    if (handleTotpChallenge(err.error)) {
+      throw new Error(err.error === '2fa_required' ? '2FA required' : err.error);
+    }
+    if ((err.error === 'pin_required' || err.error === 'invalid_pin') && pinPromptCallback) {
+      const pin = await new Promise<string>((resolve, reject) => { pinPromptCallback!(resolve, reject); });
+      pinCode = pin;
+      headers['X-Pin-Code'] = pin;
+      try {
+        res = await fetch(url, { method: 'POST', headers, body });
+      } finally {
+        pinCode = '';
+      }
+    } else {
+      throw new Error(err.error || 'Forbidden');
+    }
   }
   if (!res.ok) { const b = await res.json().catch(() => ({ error: res.statusText })); throw new Error(b.error || res.statusText); }
   return res.json();
@@ -958,8 +1034,7 @@ export const bootstrapFirstAdmin = (username: string, password: string, email?: 
 // Webhooks
 export interface WebhookEntry { url: string; events: string[]; headers: Record<string, string>; secret: string; retry: number; timeout: number; enabled: boolean; }
 export const fetchWebhooks = () =>
-  api<{ items: WebhookEntry[]; total: number; limit: number; offset: number }>('/api/v1/webhooks')
-    .then(r => r.items ?? []);
+  fetchAllPages<WebhookEntry>('/api/v1/webhooks');
 export const createWebhook = (wh: Partial<WebhookEntry>) => api<{ success: boolean }>('/api/v1/webhooks', { method: 'POST', body: JSON.stringify(wh) });
 export const deleteWebhook = (id: number) => api<{ success: boolean }>(`/api/v1/webhooks/${id}`, { method: 'DELETE' });
 export const testWebhook = (url: string) => api<{ success: boolean; message: string }>('/api/v1/webhooks/test', { method: 'POST', body: JSON.stringify({ url }) });
@@ -973,8 +1048,12 @@ export const createAdminUser = (user: { username: string; password: string; role
 export const deleteAdminUser = (username: string) => api<{ status: string }>(`/api/v1/auth/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
 export const changeAdminPassword = (username: string, password: string, currentPassword?: string) =>
   api<{ status: string }>(`/api/v1/auth/users/${encodeURIComponent(username)}/password`, { method: 'POST', body: JSON.stringify({ new_password: password, ...(currentPassword ? { current_password: currentPassword } : {}) }) });
-export const regenAdminApiKey = (username: string) =>
-  api<{ api_key: string }>(`/api/v1/auth/users/${encodeURIComponent(username)}/apikey`, { method: 'POST' });
+// currentPassword is required by the server only when replacing your OWN key.
+export const regenAdminApiKey = (username: string, currentPassword?: string) =>
+  api<{ api_key: string }>(`/api/v1/auth/users/${encodeURIComponent(username)}/apikey`, {
+    method: 'POST',
+    ...(currentPassword ? { body: JSON.stringify({ current_password: currentPassword }) } : {}),
+  });
 
 // Bandwidth
 export interface BandwidthStatus { host: string; monthly_bytes: number; daily_bytes: number; monthly_limit: number; daily_limit: number; monthly_pct: number; daily_pct: number; blocked: boolean; throttled: boolean; }
@@ -1050,14 +1129,7 @@ export async function fetchConfigExport(): Promise<void> {
   try {
     const res = await fetch(`${BASE}/api/v1/config/export`, { headers, signal });
 
-    if (res.status === 401) {
-      clearToken();
-      const currentPath = window.location.pathname;
-      if (!currentPath.includes('/login')) {
-        window.location.href = '/_uwas/dashboard/login';
-      }
-      throw new Error('Unauthorized');
-    }
+    await checkAuthFailure(res);
 
     if (!res.ok) {
       const body = await res.json().catch(() => ({ error: res.statusText }));
@@ -1096,8 +1168,7 @@ export interface WPSite {
 }
 
 export const fetchWPSites = () =>
-  api<{ items: WPSite[]; total: number; limit: number; offset: number }>('/api/v1/wordpress/sites')
-    .then(r => r.items);
+  fetchAllPages<WPSite>('/api/v1/wordpress/sites');
 export const fetchWPSiteDetail = (domain: string) => api<WPSite>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/detail`);
 export const wpUpdateCore = (domain: string) =>
   api<{ status: string; output: string }>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/update-core`, { method: 'POST' });
@@ -1184,8 +1255,7 @@ export interface PackageInfo {
 }
 
 export const fetchPackages = () =>
-  api<{ items: PackageInfo[]; total: number; limit: number; offset: number }>('/api/v1/packages')
-    .then(r => r.items ?? []);
+  fetchAllPages<PackageInfo>('/api/v1/packages');
 export const installPackage = (id: string) =>
   api<{ status: string; package: string }>('/api/v1/packages/install', { method: 'POST', body: JSON.stringify({ id }) });
 export const removePackage = (id: string) =>
@@ -1335,8 +1405,7 @@ export interface InstallTask {
 }
 
 export const fetchTasks = () =>
-  api<{ items: InstallTask[]; total: number; limit: number; offset: number }>('/api/v1/tasks')
-    .then(r => r.items ?? []);
+  fetchAllPages<InstallTask>('/api/v1/tasks');
 export const fetchTask = (id: string) => api<InstallTask>(`/api/v1/tasks/${encodeURIComponent(id)}`);
 
 // ── App Process Manager (Node.js, Python, Ruby, Go) ──
@@ -1415,8 +1484,7 @@ export interface AppInstance {
 }
 
 export const fetchApps = () =>
-  api<{ items: AppInstance[]; total: number; limit: number; offset: number }>('/api/v1/apps')
-    .then(r => r.items ?? []);
+  fetchAllPages<AppInstance>('/api/v1/apps');
 
 export const fetchApp = (name: string) =>
   api<{ app: App; instance: AppInstance | null }>(
@@ -1467,7 +1535,7 @@ export interface AppDeployRequest {
 
 export interface AppDeployResult {
   ok: boolean;
-  mode: 'clone' | 'pull';
+  mode?: 'clone' | 'pull'; // not sent by the server today
   commit_sha?: string;
   rolled_back?: boolean;
   rollback_sha?: string;
@@ -1504,6 +1572,7 @@ export async function deployAppLive(
       body: JSON.stringify(body),
       signal,
     });
+    await checkAuthFailure(res);
     if (!res.ok) {
       const text = await res.text();
       let msg = text;
@@ -1555,10 +1624,14 @@ export async function deployAppLive(
   }
 }
 
+// Shape of internal/admin/deploy AppPreflightCheck. `message` is the older
+// name for `detail` and is still accepted when present.
 export interface AppPreflightCheck {
-  name: string;
+  name?: string;
+  label?: string;
   ok: boolean;
-  required: boolean;
+  required?: boolean;
+  detail?: string;
   message?: string;
 }
 
@@ -1571,7 +1644,7 @@ export interface AppDeployPreflight {
 export interface AppDeployHistoryEntry {
   source: string;
   started_at: string;
-  finished?: string;
+  finished_at?: string;
   ok: boolean;
   mode?: 'clone' | 'pull';
   commit_sha?: string;
@@ -1712,11 +1785,9 @@ export interface SoftwareMonitorSummary {
 }
 
 export const fetchSoftwareTemplates = () =>
-  api<{ items: SoftwareTemplate[]; total: number; limit: number; offset: number }>('/api/v1/software/templates')
-    .then(r => r.items ?? []);
+  fetchAllPages<SoftwareTemplate>('/api/v1/software/templates');
 export const fetchSoftwareInstances = () =>
-  api<{ items: SoftwareInstance[]; total: number; limit: number; offset: number }>('/api/v1/software/instances')
-    .then(r => r.items ?? []);
+  fetchAllPages<SoftwareInstance>('/api/v1/software/instances');
 export const checkSoftwarePort = (port?: number, defaultPort?: number) => {
   const params = new URLSearchParams();
   if (port) params.set('port', String(port));

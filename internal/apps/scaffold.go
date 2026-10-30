@@ -54,12 +54,13 @@ func demoFiles(a *App) (map[string]string, string) {
 			"index.js": `const http = require('http');
 
 const port = Number(process.env.PORT || 3000);
+const host = process.env.HOST || '127.0.0.1';
 const appName = process.env.APP_NAME || '` + a.Name + `';
 
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
   res.end(appName + ' is running on UWAS\n');
-}).listen(port, '0.0.0.0', () => {
+}).listen(port, host, () => {
   console.log(appName + ' listening on port ' + port);
 });
 `,
@@ -83,7 +84,8 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "3000"))
-    HTTPServer(("0.0.0.0", port), Handler).serve_forever()
+    host = os.environ.get("HOST", "127.0.0.1")
+    HTTPServer((host, port), Handler).serve_forever()
 `,
 		}, ""
 	case RuntimeRuby:
@@ -92,7 +94,7 @@ if __name__ == "__main__":
 			"app.rb": `require 'socket'
 
 port = ENV.fetch('PORT', '3000').to_i
-server = TCPServer.new('0.0.0.0', port)
+server = TCPServer.new(ENV.fetch('HOST', '127.0.0.1'), port)
 puts '` + a.Name + ` listening on port ' + port.to_s
 
 loop do
@@ -124,12 +126,16 @@ func main() {
 	if port == "" {
 		port = "3000"
 	}
+	host := os.Getenv("HOST")
+	if host == "" {
+		host = "127.0.0.1"
+	}
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		fmt.Fprintln(w, "` + a.Name + ` is running on UWAS")
 	})
 	log.Printf("` + a.Name + ` listening on port %s", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	log.Fatal(http.ListenAndServe(host+":"+port, nil))
 }
 `,
 		}, "go run main.go"

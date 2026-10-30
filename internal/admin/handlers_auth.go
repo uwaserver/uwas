@@ -5,7 +5,9 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -295,6 +297,10 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 	user, password, err := siteuser.CreateUserForWebDir(root, identity)
 	if err != nil {
 		s.recordAuditR(r, "user.create", req.Domain, false)
+		if errors.Is(err, siteuser.ErrInvalidInput) {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		s.logger.Error("user creation failed", "domain", req.Domain, "error", err)
 		jsonError(w, "user creation failed", http.StatusInternalServerError)
 		return
@@ -330,7 +336,7 @@ func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := siteuser.DeleteUser(identity); err != nil {
-		jsonError(w, "delete user: "+err.Error(), http.StatusInternalServerError)
+		jsonError(w, "delete user: "+err.Error(), siteUserErrStatus(err))
 		return
 	}
 	s.logger.Info("SFTP user deleted", "target", domain, "identity", identity)
@@ -623,7 +629,7 @@ func (s *Server) handleUserChangePasswordAuth(w http.ResponseWriter, r *http.Req
 	if currentUser.Role == auth.RoleAdmin && currentUser.Username != username {
 		updates := &auth.User{Password: req.NewPassword}
 		if err := s.getAuthMgr().UpdateUser(username, updates); err != nil {
-			jsonError(w, err.Error(), http.StatusBadRequest)
+			jsonError(w, err.Error(), userMgmtStatus(err))
 			return
 		}
 	} else {
@@ -710,6 +716,10 @@ func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 
 // ── Multi-User Authentication ───────────────────────────────────────────────
 
+// maxLoginUsernameLen is the longest username handleLogin hands to the failure
+// limiters; an account's name is at most 32 characters (auth.isValidUsername).
+const maxLoginUsernameLen = 64
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if s.getAuthMgr() == nil {
 		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
@@ -728,6 +738,18 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	if req.Username == "" || req.Password == "" {
 		jsonError(w, "username and password required", http.StatusBadRequest)
+		return
+	}
+
+	// No account has a name this long (usernames are 3-32 characters), so it
+	// is refused before it can become a key of the failure limiter or of the
+	// auth manager's lockout table, which would hold request-sized text for
+	// the whole window. It still counts against the client's IP.
+	if len(req.Username) > maxLoginUsernameLen {
+		ip := requestIP(r)
+		s.recordAuthFailure(ip, "")
+		s.recordAuditR(r, "auth.login.failed", "username too long", false)
+		jsonError(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
@@ -767,7 +789,37 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// relayedLoopbackRequest reports whether a request that arrived from the
+// loopback peer was not sent by a program on this machine's own browser or CLI:
+// a page that rebound a name to 127.0.0.1 presents a Host header it chose, and
+// a reverse proxy on this machine forwarding a remote client keeps the public
+// Host or adds a forwarding header. The peer address alone cannot tell them
+// apart from the operator, which is why the no-credentials mode checks the Host
+// as well (F15800, F16101). A peer that is not loopback is not judged here.
+func relayedLoopbackRequest(r *http.Request) bool {
+	if !authmw.IsLoopbackPeer(r.RemoteAddr) {
+		return false
+	}
+	if !authmw.IsLoopbackHost(r.Host) {
+		return true
+	}
+	for _, h := range []string{"X-Forwarded-For", "X-Real-IP", "Forwarded", "CF-Connecting-IP"} {
+		if r.Header.Get(h) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) handleAuthBootstrap(w http.ResponseWriter, r *http.Request) {
+	// Creating the first admin hands out its API key, so the request must be
+	// vetted like a no-credentials request before anything is built or read
+	// (F44600).
+	if relayedLoopbackRequest(r) {
+		jsonError(w, "bootstrap answers to this machine's own browser only; open the dashboard on "+
+			"127.0.0.1 or set global.admin.api_key", http.StatusForbidden)
+		return
+	}
 	s.ensureAuthManagerFromConfig()
 	if s.getAuthMgr() == nil {
 		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
@@ -1069,14 +1121,38 @@ func (s *Server) handleUserUpdateAuth(w http.ResponseWriter, r *http.Request) {
 		updates.Domains = req.Domains
 	}
 
-	if err := s.getAuthMgr().UpdateUser(username, updates); err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+	if err := s.updateUserKeepingAdmin(username, updates); err != nil {
+		jsonError(w, err.Error(), userMgmtStatus(err))
 		return
 	}
 
 	s.recordAuditR(r, "auth.user.update", username, true)
 
 	jsonResponse(w, map[string]string{"status": "updated"})
+}
+
+// userMgmtStatus maps a user-manager error onto an HTTP status: a missing user
+// is a 404, not a generic 400 (a refused last-admin change stays a 400 like the
+// handler pre-check).
+func userMgmtStatus(err error) int {
+	switch {
+	case errors.Is(err, auth.ErrUserNotFound):
+		return http.StatusNotFound
+	}
+	return http.StatusBadRequest
+}
+
+// updateUserKeepingAdmin applies updates through the manager's atomic
+// last-admin guard when it has one; the handler's isLastEnabledAdmin
+// pre-check alone lets two admins disable each other concurrently.
+func (s *Server) updateUserKeepingAdmin(username string, updates *auth.User) error {
+	mgr := s.getAuthMgr()
+	if k, ok := mgr.(interface {
+		UpdateUserKeepAdmin(string, *auth.User) error
+	}); ok {
+		return k.UpdateUserKeepAdmin(username, updates)
+	}
+	return mgr.UpdateUser(username, updates)
 }
 
 // isLastEnabledAdmin reports whether username is an enabled admin and no other
@@ -1125,8 +1201,14 @@ func (s *Server) handleUserDeleteAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.getAuthMgr().DeleteUser(username); err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+	var delErr error
+	if k, ok := s.getAuthMgr().(interface{ DeleteUserKeepAdmin(string) error }); ok {
+		delErr = k.DeleteUserKeepAdmin(username)
+	} else {
+		delErr = s.getAuthMgr().DeleteUser(username)
+	}
+	if delErr != nil {
+		jsonError(w, delErr.Error(), userMgmtStatus(delErr))
 		return
 	}
 
@@ -1155,9 +1237,38 @@ func (s *Server) handleUserRegenerateAPIKeyAuth(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Replacing your own API key mints a credential that outlives every
+	// session (a password change drops sessions, not keys), so it proves the
+	// current password exactly like changing the password does, admins
+	// included. Only an admin replacing ANOTHER user's key skips it.
+	if currentUser.Username == username {
+		if v, ok := s.getAuthMgr().(interface {
+			VerifyPassword(username, password string) error
+		}); ok {
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+			var req struct {
+				CurrentPassword string `json:"current_password"`
+			}
+			// An empty body is a request without a password, not a malformed one.
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+				jsonError(w, "invalid JSON", http.StatusBadRequest)
+				return
+			}
+			if req.CurrentPassword == "" {
+				jsonError(w, "current_password required", http.StatusBadRequest)
+				return
+			}
+			if err := v.VerifyPassword(username, req.CurrentPassword); err != nil {
+				s.recordAuditR(r, "auth.user.apikey", username+" (bad password)", false)
+				jsonError(w, err.Error(), http.StatusUnauthorized)
+				return
+			}
+		}
+	}
+
 	newKey, err := s.getAuthMgr().RegenerateAPIKey(username)
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), userMgmtStatus(err))
 		return
 	}
 

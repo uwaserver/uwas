@@ -152,13 +152,29 @@ func (hc *HealthChecker) Stop() {
 	hc.successes = make(map[*Backend]int)
 }
 
+// maxConcurrentProbes bounds the probes one round runs at once.
+const maxConcurrentProbes = 32
+
+// checkAll probes the backends concurrently: a round that probed them one by
+// one let each unresponsive backend delay the others by a full timeout, so a
+// few dead backends made detection of the rest slower than the interval
+// (F58000). record* serialize on hc.mu.
 func (hc *HealthChecker) checkAll() {
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxConcurrentProbes)
 	for _, b := range hc.pool.All() {
 		if b.GetState() == StateDraining {
 			continue
 		}
-		hc.checkOne(b)
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(b *Backend) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			hc.checkOne(b)
+		}(b)
 	}
+	wg.Wait()
 }
 
 func (hc *HealthChecker) checkOne(b *Backend) {

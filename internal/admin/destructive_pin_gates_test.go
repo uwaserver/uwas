@@ -60,6 +60,12 @@ func TestDestructiveRoutesRequirePin(t *testing.T) {
 		{"package removal", "POST", "/api/v1/packages/install", `{"id":"docker-compose","action":"remove"}`, http.StatusForbidden},
 		{"software restore", "POST", "/api/v1/software/ghost/restore", `{"backup":"x"}`, http.StatusNotFound},
 		{"software backup delete", "DELETE", "/api/v1/software/ghost/backups/x.tar.gz", ``, http.StatusNotFound},
+		// F39000: an import runs the uploaded SQL as the database administrator
+		// (it can DROP DATABASE); DELETE /database/{name} needs the PIN. The
+		// fixture targets the protected "mysql" schema, which the handler itself
+		// rejects with 400 before touching anything.
+		{"database import", "POST", "/api/v1/database/mysql/import", `SELECT 1;`, http.StatusBadRequest},
+		{"docker database import", "POST", "/api/v1/database/docker/c1/databases/mysql/import", `SELECT 1;`, http.StatusBadRequest},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

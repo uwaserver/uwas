@@ -2,7 +2,6 @@ package apps
 
 import (
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/testport"
 )
 
 // ---------------------------------------------------------------------------
@@ -136,7 +136,7 @@ func TestValidateRuntimeAndPortBranches(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNewManagerNilStore(t *testing.T) {
-	m := NewManager(nil, nil)
+	m := testManager(t, nil, nil)
 	if m.store == nil {
 		t.Fatal("NewManager(nil) should construct a default store")
 	}
@@ -146,7 +146,7 @@ func TestNewManagerNilStore(t *testing.T) {
 }
 
 func TestStateTransitions(t *testing.T) {
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	if s := m.State("ghost"); s != StateNotRegistered {
 		t.Fatalf("unknown app state = %v, want NotRegistered", s)
 	}
@@ -167,7 +167,7 @@ func TestStateTransitions(t *testing.T) {
 }
 
 func TestInstancesAndGet(t *testing.T) {
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	if got := m.Get("none"); got != nil {
 		t.Fatalf("Get unknown = %v, want nil", got)
 	}
@@ -189,7 +189,7 @@ func TestInstancesAndGet(t *testing.T) {
 }
 
 func TestInstanceFromProcessDockerRunning(t *testing.T) {
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	app := &App{Name: "d", Runtime: RuntimeDocker, Docker: DockerSpec{Image: "nginx", ContainerPort: 80}}
 	m.mu.Lock()
 	m.procs["d"] = &process{
@@ -220,7 +220,7 @@ func TestInstanceFromProcessDockerRunning(t *testing.T) {
 
 func TestUnregisterRemovesAppAndFile(t *testing.T) {
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), nil)
+	m := testManager(t, NewStore(dir), nil)
 	if err := m.Register(&App{Name: "gone", Runtime: RuntimeCustom, Command: "true"}); err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestUnregisterRemovesAppAndFile(t *testing.T) {
 }
 
 func TestRestartUnregistered(t *testing.T) {
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	// Stop on a missing app is an error swallowed by Restart; Start then
 	// returns the not-registered error.
 	err := m.Restart("nope")
@@ -257,7 +257,7 @@ func TestRestartCustomApp(t *testing.T) {
 		t.Skip("uses /bin/sh")
 	}
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), nil)
+	m := testManager(t, NewStore(dir), nil)
 	if err := m.Register(&App{Name: "r", Runtime: RuntimeCustom, Command: "sleep 2", WorkDir: dir}); err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +278,7 @@ func TestRestartCustomApp(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestStartUnregistered(t *testing.T) {
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	if err := m.Start("nope"); err == nil || !strings.Contains(err.Error(), "not registered") {
 		t.Fatalf("Start unknown = %v", err)
 	}
@@ -286,7 +286,7 @@ func TestStartUnregistered(t *testing.T) {
 
 func TestStartDisabledRejected(t *testing.T) {
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), nil)
+	m := testManager(t, NewStore(dir), nil)
 	if err := m.Register(&App{Name: "off", Runtime: RuntimeCustom, Command: "true", Disabled: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +297,7 @@ func TestStartDisabledRejected(t *testing.T) {
 
 func TestStartAlreadyRunning(t *testing.T) {
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), nil)
+	m := testManager(t, NewStore(dir), nil)
 	if err := m.Register(&App{Name: "dup", Runtime: RuntimeDocker, Docker: DockerSpec{Image: "x", ContainerPort: 80}}); err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +310,7 @@ func TestStartAlreadyRunning(t *testing.T) {
 }
 
 func TestStopUnregistered(t *testing.T) {
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	if err := m.Stop("nope"); err == nil || !strings.Contains(err.Error(), "not registered") {
 		t.Fatalf("Stop unknown = %v", err)
 	}
@@ -318,7 +318,7 @@ func TestStopUnregistered(t *testing.T) {
 
 func TestStopAlreadyDownNative(t *testing.T) {
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), nil)
+	m := testManager(t, NewStore(dir), nil)
 	if err := m.Register(&App{Name: "idle", Runtime: RuntimeCustom, Command: "true", WorkDir: dir}); err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +334,7 @@ func TestStopAlreadyDownNative(t *testing.T) {
 
 func TestRegisterPortConflictAutoAssigns(t *testing.T) {
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), quietLog())
+	m := testManager(t, NewStore(dir), quietLog())
 	if err := m.Register(&App{Name: "first", Runtime: RuntimeCustom, Command: "true", Port: 3500}); err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +357,7 @@ func TestRegisterAutoAssignsWhenPortZero(t *testing.T) {
 	// Force allocateFreePortLocked to accept the first candidate quickly.
 	isPortFreeFn = func(int) bool { return true }
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), nil)
+	m := testManager(t, NewStore(dir), nil)
 	if err := m.Register(&App{Name: "auto", Runtime: RuntimeCustom, Command: "true"}); err != nil {
 		t.Fatal(err)
 	}
@@ -369,7 +369,7 @@ func TestRegisterAutoAssignsWhenPortZero(t *testing.T) {
 func TestAllocateFreePortSkipsTakenAndBound(t *testing.T) {
 	restoreHooks(t)
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), nil)
+	m := testManager(t, NewStore(dir), nil)
 	m.nextPort = 4000
 	// 4000 is "taken" by an existing managed proc; 4001 is "bound";
 	// 4002 is free.
@@ -388,7 +388,7 @@ func TestAllocateFreePortSkipsTakenAndBound(t *testing.T) {
 func TestAllocateFreePortExhaustsAttempts(t *testing.T) {
 	restoreHooks(t)
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), nil)
+	m := testManager(t, NewStore(dir), nil)
 	m.nextPort = 5000
 	// Never free → loop exhausts maxAttempts and returns the final port.
 	isPortFreeFn = func(int) bool { return false }
@@ -555,7 +555,7 @@ func TestReadRuntimePortFile(t *testing.T) {
 
 func TestAdoptDiscoveredPortBranches(t *testing.T) {
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), quietLog())
+	m := testManager(t, NewStore(dir), quietLog())
 
 	// nil process.
 	if err := m.adoptDiscoveredPort(nil, 9000); err == nil {
@@ -598,7 +598,7 @@ func TestAdoptDiscoveredPortBranches(t *testing.T) {
 func TestAdoptDiscoveredPortSaveFailureRollsBack(t *testing.T) {
 	restoreHooks(t)
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), nil)
+	m := testManager(t, NewStore(dir), nil)
 	app := &App{Name: "rb", Runtime: RuntimeNode, Port: 3001, WorkDir: dir}
 	if err := m.Store().Save(app); err != nil {
 		t.Fatal(err)
@@ -627,7 +627,7 @@ func TestAdoptDiscoveredPortSaveFailureRollsBack(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEnsureStartPortAvailableNoPort(t *testing.T) {
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	p := &process{name: "np", port: 0, stopCh: make(chan struct{})}
 	if err := m.ensureStartPortAvailable(p); err != nil {
 		t.Fatalf("port 0 should be a no-op: %v", err)
@@ -637,7 +637,7 @@ func TestEnsureStartPortAvailableNoPort(t *testing.T) {
 func TestEnsureStartPortAvailableAlreadyFree(t *testing.T) {
 	restoreHooks(t)
 	isPortFreeFn = func(int) bool { return true }
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	p := &process{name: "ok", port: 3001, stopCh: make(chan struct{})}
 	if err := m.ensureStartPortAvailable(p); err != nil {
 		t.Fatalf("free port should pass fast: %v", err)
@@ -650,7 +650,7 @@ func TestEnsureStartPortAvailableAlreadyFree(t *testing.T) {
 func TestEnsureStartPortAvailableSaveFailureRollsBack(t *testing.T) {
 	restoreHooks(t)
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), nil)
+	m := testManager(t, NewStore(dir), nil)
 	app := &App{Name: "es", Runtime: RuntimeNode, Port: 3001, WorkDir: dir}
 	if err := m.Store().Save(app); err != nil {
 		t.Fatal(err)
@@ -679,14 +679,14 @@ func TestEnsureStartPortAvailableSaveFailureRollsBack(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWaitListeningUnregistered(t *testing.T) {
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	if err := m.WaitListening("nope", time.Second); err == nil || !strings.Contains(err.Error(), "not registered") {
 		t.Fatalf("WaitListening unknown = %v", err)
 	}
 }
 
 func TestWaitListeningNoPort(t *testing.T) {
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	m.mu.Lock()
 	m.procs["np"] = &process{name: "np", runtimeKind: RuntimeNode, port: 0, dockerID: "x", stopCh: make(chan struct{})}
 	m.procs["np"].runtimeKind = RuntimeDocker // running via dockerID, but port 0
@@ -720,7 +720,7 @@ func TestStatsDockerRunning(t *testing.T) {
 	// readDockerStats uses the real `docker` binary (not execCommandFn);
 	// with a bogus container ID it returns zeroes. We assert the path is
 	// exercised and Running/Uptime get set.
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	m.mu.Lock()
 	m.procs["d"] = &process{
 		name:        "d",
@@ -922,7 +922,7 @@ func TestStoreSaveRenameFailure(t *testing.T) {
 func TestLoadAllRefreshesExistingSnapshot(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
-	m := NewManager(s, nil)
+	m := testManager(t, s, nil)
 	if err := s.Save(&App{Name: "ld", Runtime: RuntimeCustom, Command: "v1", WorkDir: dir}); err != nil {
 		t.Fatal(err)
 	}
@@ -949,7 +949,7 @@ func TestLoadAllPropagatesStoreError(t *testing.T) {
 	f := filepath.Join(dir, "afile")
 	os.WriteFile(f, []byte("x"), 0644)
 	s := NewStore(filepath.Join(f, "sub"))
-	m := NewManager(s, nil)
+	m := testManager(t, s, nil)
 	if _, _, err := m.LoadAll(); err == nil {
 		t.Fatal("LoadAll should propagate store error")
 	}
@@ -960,7 +960,7 @@ func TestLoadAllPropagatesStoreError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestStartDockerNoApp(t *testing.T) {
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	p := &process{name: "x", runtimeKind: RuntimeDocker, stopCh: make(chan struct{})}
 	if err := m.startDocker(p, p.stopCh); err == nil || !strings.Contains(err.Error(), "no app definition") {
 		t.Fatalf("startDocker no app = %v", err)
@@ -972,7 +972,7 @@ func TestStartDockerMissingContainerPort(t *testing.T) {
 	var mu sync.Mutex
 	var calls [][]string
 	execCommandFn = mockExecCommand(&mu, &calls)
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	// Hand-edited file slips past Validate: container_port 0.
 	app := &App{Name: "noport", Runtime: RuntimeDocker, Docker: DockerSpec{Image: "nginx"}}
 	p := &process{name: "noport", app: app, runtimeKind: RuntimeDocker, port: 9000, stopCh: make(chan struct{})}
@@ -996,7 +996,7 @@ func TestBuildImageFailure(t *testing.T) {
 	var calls [][]string
 	execCommandFn = mockExecCommand(&mu, &calls, "GO_APPS_HELPER_EXIT=1")
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), nil)
+	m := testManager(t, NewStore(dir), nil)
 	app := &App{Name: "bf", Runtime: RuntimeDocker, WorkDir: filepath.Join(dir, "src"),
 		Docker: DockerSpec{ContainerPort: 80, Build: DockerBuild{Context: "/abs/ctx"}}}
 	p := &process{name: "bf", app: app, runtimeKind: RuntimeDocker, port: 9300, workDir: app.WorkDir, stopCh: make(chan struct{})}
@@ -1011,7 +1011,7 @@ func TestBuildImageSuccess(t *testing.T) {
 	var calls [][]string
 	execCommandFn = mockExecCommand(&mu, &calls)
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), quietLog())
+	m := testManager(t, NewStore(dir), quietLog())
 	app := &App{Name: "bs", Runtime: RuntimeDocker, WorkDir: filepath.Join(dir, "src"),
 		Docker: DockerSpec{ContainerPort: 80, Build: DockerBuild{Context: "rel", Dockerfile: "Containerfile", Args: map[string]string{"A": "1"}, Target: "final"}}}
 	// buildImage sets cmd.Dir to the resolved context; it must exist.
@@ -1028,16 +1028,21 @@ func TestBuildImageSuccess(t *testing.T) {
 		t.Fatal("expected a buildx call")
 	}
 	joined := strings.Join(calls[0], " ")
-	for _, want := range []string{"buildx", "build", "--tag img:tag", "--file", "--build-arg A=1", "--target final"} {
+	// A build arg is passed by name; its value travels in the CLI's
+	// environment, not on argv (F48300, see docker_build_args_argv_test.go).
+	for _, want := range []string{"buildx", "build", "--tag img:tag", "--file", "--build-arg A", "--target final"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("build args missing %q: %v", want, calls[0])
 		}
+	}
+	if strings.Contains(joined, "A=1") {
+		t.Fatalf("build arg value must not be on argv: %v", calls[0])
 	}
 }
 
 func TestStopDockerLocked(t *testing.T) {
 	restoreHooks(t)
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 
 	// No dockerID → no-op.
 	p := &process{name: "s1", runtimeKind: RuntimeDocker, stopCh: make(chan struct{})}
@@ -1065,7 +1070,7 @@ func TestStopDockerLocked(t *testing.T) {
 
 func TestStopDockerViaStop(t *testing.T) {
 	restoreHooks(t)
-	m := NewManager(NewStore(t.TempDir()), quietLog())
+	m := testManager(t, NewStore(t.TempDir()), quietLog())
 	app := &App{Name: "sd", Runtime: RuntimeDocker, Docker: DockerSpec{Image: "x", ContainerPort: 80}}
 	m.mu.Lock()
 	m.procs["sd"] = &process{name: "sd", app: app, runtimeKind: RuntimeDocker, dockerID: "fake", stopCh: make(chan struct{})}
@@ -1079,7 +1084,7 @@ func TestStopDockerViaStop(t *testing.T) {
 }
 
 func TestWatchDockerEmptyID(t *testing.T) {
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	p := &process{name: "w", runtimeKind: RuntimeDocker, stopCh: make(chan struct{})}
 	// Empty id returns immediately; must not panic or block.
 	m.watchDocker(p, "", p.stopCh)
@@ -1087,7 +1092,7 @@ func TestWatchDockerEmptyID(t *testing.T) {
 
 func TestWatchDockerStopSignalled(t *testing.T) {
 	restoreHooks(t)
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	app := &App{Name: "ws", Runtime: RuntimeDocker, Docker: DockerSpec{Image: "x", ContainerPort: 80}}
 	p := &process{name: "ws", app: app, runtimeKind: RuntimeDocker, dockerID: "nope-xyz",
 		autoRestart: true, startedAt: time.Now(), stopCh: make(chan struct{})}
@@ -1102,7 +1107,7 @@ func TestWatchDockerStopSignalled(t *testing.T) {
 
 func TestWatchDockerGivesUpAfterCrashloop(t *testing.T) {
 	restoreHooks(t)
-	m := NewManager(NewStore(t.TempDir()), quietLog())
+	m := testManager(t, NewStore(t.TempDir()), quietLog())
 	app := &App{Name: "wc", Runtime: RuntimeDocker, Docker: DockerSpec{Image: "x", ContainerPort: 80}}
 	p := &process{
 		name:         "wc",
@@ -1124,7 +1129,7 @@ func TestWatchDockerGivesUpAfterCrashloop(t *testing.T) {
 
 func TestWatchDockerNoRestartWhenDisabled(t *testing.T) {
 	restoreHooks(t)
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	app := &App{Name: "wn", Runtime: RuntimeDocker, Docker: DockerSpec{Image: "x", ContainerPort: 80}}
 	p := &process{name: "wn", app: app, runtimeKind: RuntimeDocker, dockerID: "nope-xyz",
 		autoRestart: false, startedAt: time.Now(), stopCh: make(chan struct{})}
@@ -1220,14 +1225,14 @@ func TestGracefulKillTerminatesShellProcess(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRegisterNil(t *testing.T) {
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	if err := m.Register(nil); err == nil || !strings.Contains(err.Error(), "nil app") {
 		t.Fatalf("Register(nil) = %v", err)
 	}
 }
 
 func TestRegisterInvalidApp(t *testing.T) {
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	if err := m.Register(&App{Name: "bad name", Runtime: RuntimeNode}); err == nil {
 		t.Fatal("Register invalid name should error")
 	}
@@ -1237,7 +1242,7 @@ func TestRegisterSaveFailure(t *testing.T) {
 	dir := t.TempDir()
 	f := filepath.Join(dir, "afile")
 	os.WriteFile(f, []byte("x"), 0644)
-	m := NewManager(NewStore(filepath.Join(f, "sub")), nil)
+	m := testManager(t, NewStore(filepath.Join(f, "sub")), nil)
 	if err := m.Register(&App{Name: "x", Runtime: RuntimeCustom, Command: "true"}); err == nil {
 		t.Fatal("Register should fail when store save fails")
 	}
@@ -1246,7 +1251,7 @@ func TestRegisterSaveFailure(t *testing.T) {
 func TestRegisterReplacesExistingRunning(t *testing.T) {
 	restoreHooks(t)
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), quietLog())
+	m := testManager(t, NewStore(dir), quietLog())
 	app := &App{Name: "rep", Runtime: RuntimeDocker, Docker: DockerSpec{Image: "x", ContainerPort: 80}}
 	if err := m.Register(app); err != nil {
 		t.Fatal(err)
@@ -1276,7 +1281,7 @@ func TestRegisterReplacesExistingRunning(t *testing.T) {
 func TestStartReturnsEnsurePortError(t *testing.T) {
 	restoreHooks(t)
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), nil)
+	m := testManager(t, NewStore(dir), nil)
 	app := &App{Name: "ep", Runtime: RuntimeNode, Port: 3001, WorkDir: dir}
 	if err := m.Register(app); err != nil {
 		t.Fatal(err)
@@ -1297,7 +1302,7 @@ func TestStartReturnsEnsurePortError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestListenAddrForPortNotRoutable(t *testing.T) {
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	// Unregistered.
 	if got := m.ListenAddrForPort("nope", 0); got != "" {
 		t.Fatalf("unregistered ListenAddr = %q, want empty", got)
@@ -1387,7 +1392,7 @@ func runDeadCmd(t *testing.T) *exec.Cmd {
 }
 
 func TestMonitorNativeNilCmd(t *testing.T) {
-	m := NewManager(NewStore(t.TempDir()), quietLog())
+	m := testManager(t, NewStore(t.TempDir()), quietLog())
 	p := &process{name: "nilcmd", runtimeKind: RuntimeCustom, stopCh: make(chan struct{})}
 	// cmd == nil → monitorNative returns immediately without touching state.
 	m.monitorNative(p, nil, nil, p.stopCh)
@@ -1397,7 +1402,7 @@ func TestMonitorNativeNoAutoRestart(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses /bin/sh")
 	}
-	m := NewManager(NewStore(t.TempDir()), quietLog())
+	m := testManager(t, NewStore(t.TempDir()), quietLog())
 	cmd := runDeadCmd(t)
 	p := &process{name: "na", runtimeKind: RuntimeCustom, autoRestart: false,
 		cmd: cmd, startedAt: time.Now(), stopCh: make(chan struct{})}
@@ -1414,7 +1419,7 @@ func TestMonitorNativeGivesUpAfterCrashloop(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses /bin/sh")
 	}
-	m := NewManager(NewStore(t.TempDir()), quietLog())
+	m := testManager(t, NewStore(t.TempDir()), quietLog())
 	cmd := runDeadCmd(t)
 	p := &process{
 		name: "giveup", runtimeKind: RuntimeCustom, autoRestart: true,
@@ -1431,7 +1436,7 @@ func TestMonitorNativeHealthyResetThenStop(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses /bin/sh")
 	}
-	m := NewManager(NewStore(t.TempDir()), quietLog())
+	m := testManager(t, NewStore(t.TempDir()), quietLog())
 	cmd := runDeadCmd(t)
 	p := &process{
 		name: "healthy", runtimeKind: RuntimeCustom, autoRestart: true,
@@ -1465,7 +1470,7 @@ func TestMonitorNativeBackoffInterruptedByStop(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses /bin/sh")
 	}
-	m := NewManager(NewStore(t.TempDir()), quietLog())
+	m := testManager(t, NewStore(t.TempDir()), quietLog())
 	cmd := runDeadCmd(t)
 	p := &process{
 		name: "backoff", runtimeKind: RuntimeCustom, autoRestart: true,
@@ -1493,7 +1498,7 @@ func TestMonitorNativeAutoRestartsAfterBackoff(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(filepath.Join(dir, "apps.d"))
 	store.DataRoot = filepath.Join(dir, "data")
-	m := NewManager(store, quietLog())
+	m := testManager(t, store, quietLog())
 
 	workDir := filepath.Join(store.DataRoot, "ar")
 	if err := os.MkdirAll(workDir, 0755); err != nil {
@@ -1532,7 +1537,7 @@ func TestMonitorNativeAutoRestartsAfterBackoff(t *testing.T) {
 func TestStartNativeCmdStartFailure(t *testing.T) {
 	restoreHooks(t)
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), quietLog())
+	m := testManager(t, NewStore(dir), quietLog())
 	// Return a cmd pointing at a binary that does not exist so cmd.Start()
 	// fails (covers the start-error branch in startNative).
 	execCommandFn = func(name string, arg ...string) *exec.Cmd {
@@ -1583,7 +1588,7 @@ func TestStartNativeWithLoggerAndEnv(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(filepath.Join(dir, "apps.d"))
 	store.DataRoot = filepath.Join(dir, "data")
-	m := NewManager(store, quietLog())
+	m := testManager(t, store, quietLog())
 	app := &App{
 		Name:    "envapp",
 		Runtime: RuntimeCustom,
@@ -1605,7 +1610,7 @@ func TestStartNativeWithLoggerAndEnv(t *testing.T) {
 
 func TestStartNativeInvalidCommandAfterPortSub(t *testing.T) {
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), nil)
+	m := testManager(t, NewStore(dir), nil)
 	p := &process{
 		name: "bad", runtimeKind: RuntimeCustom,
 		command: "node app.js | tee out.log", // pipe → validateShellCommand rejects
@@ -1630,7 +1635,7 @@ func TestStartNativeInvalidCommandAfterPortSub(t *testing.T) {
 func TestStartAllSkipsRunningAndLogsFailures(t *testing.T) {
 	restoreHooks(t)
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), quietLog())
+	m := testManager(t, NewStore(dir), quietLog())
 
 	// One docker app already "running" → StartAll skips it.
 	running := &App{Name: "running", Runtime: RuntimeDocker, Docker: DockerSpec{Image: "x", ContainerPort: 80}}
@@ -1664,7 +1669,7 @@ func TestStartAllSkipsRunningAndLogsFailures(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestIsSameProcessRunningPointerMismatch(t *testing.T) {
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	current := &process{name: "p", runtimeKind: RuntimeDocker, dockerID: "x", stopCh: make(chan struct{})}
 	m.mu.Lock()
 	m.procs["p"] = current
@@ -1686,13 +1691,11 @@ func TestWaitListeningNativeExitIncludesLogTail(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(filepath.Join(dir, "apps.d"))
 	store.DataRoot = filepath.Join(dir, "data")
-	m := NewManager(store, nil)
+	m := testManager(t, store, nil)
 
 	workDir := filepath.Join(store.DataRoot, "nat")
 	// Pick a free port nobody listens on.
-	l, _ := net.Listen("tcp", "127.0.0.1:0")
-	port := l.Addr().(*net.TCPAddr).Port
-	_ = l.Close()
+	port := testport.Free(t)
 
 	app := &App{Name: "nat", Runtime: RuntimeNode, Port: port, WorkDir: workDir}
 	// Write a native log file so the exit path's tailLogFile returns content.
@@ -1741,7 +1744,7 @@ func TestWaitListeningAdoptConflictError(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(filepath.Join(dir, "apps.d"))
 	store.DataRoot = filepath.Join(dir, "data")
-	m := NewManager(store, nil)
+	m := testManager(t, store, nil)
 	workDir := filepath.Join(store.DataRoot, "conf")
 
 	app := &App{Name: "conf", Runtime: RuntimeNode, Port: 41100, WorkDir: workDir}
@@ -1789,7 +1792,7 @@ func TestExposedPortsForProcessDedup(t *testing.T) {
 func TestEnsureStartPortAvailableRecheckFree(t *testing.T) {
 	restoreHooks(t)
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), quietLog())
+	m := testManager(t, NewStore(dir), quietLog())
 	p := &process{name: "recheck", runtimeKind: RuntimeNode, port: 3001, workDir: dir, stopCh: make(chan struct{})}
 	m.mu.Lock()
 	m.procs["recheck"] = p
@@ -1816,7 +1819,7 @@ func TestEnsureStartPortAvailableRecheckFree(t *testing.T) {
 func TestEnsureStartPortAvailableReassignsWithLogger(t *testing.T) {
 	restoreHooks(t)
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), quietLog())
+	m := testManager(t, NewStore(dir), quietLog())
 	app := &App{Name: "warn", Runtime: RuntimeNode, Port: 3001, WorkDir: dir}
 	if err := m.Store().Save(app); err != nil {
 		t.Fatal(err)
@@ -1935,7 +1938,7 @@ func TestStatsNativeRunningSelf(t *testing.T) {
 		t.Skip("uses /bin/sh")
 	}
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), nil)
+	m := testManager(t, NewStore(dir), nil)
 	if err := m.Register(&App{Name: "live", Runtime: RuntimeCustom, Command: "sleep 2", WorkDir: dir}); err != nil {
 		t.Fatal(err)
 	}
@@ -1984,7 +1987,7 @@ func TestValidateShellCommandAllMetas(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestStateNotRegistered(t *testing.T) {
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	if s := m.State("nobody"); s != StateNotRegistered {
 		t.Fatalf("State = %d, want %d (StateNotRegistered)", s, StateNotRegistered)
 	}
@@ -1992,7 +1995,7 @@ func TestStateNotRegistered(t *testing.T) {
 
 func TestStateStopped(t *testing.T) {
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), nil)
+	m := testManager(t, NewStore(dir), nil)
 	if err := m.Register(&App{Name: "idle", Runtime: RuntimeCustom, Command: "true", WorkDir: dir}); err != nil {
 		t.Fatal(err)
 	}
@@ -2006,7 +2009,7 @@ func TestStateRunning(t *testing.T) {
 		t.Skip("uses /bin/sh")
 	}
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), nil)
+	m := testManager(t, NewStore(dir), nil)
 	if err := m.Register(&App{Name: "up", Runtime: RuntimeCustom, Command: "sleep 2", WorkDir: dir}); err != nil {
 		t.Fatal(err)
 	}
@@ -2035,7 +2038,7 @@ func TestContainerName(t *testing.T) {
 
 func TestUnregisterRemovesProcessAndFile(t *testing.T) {
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), nil)
+	m := testManager(t, NewStore(dir), nil)
 	app := &App{Name: "gone", Runtime: RuntimeCustom, Command: "true", WorkDir: dir}
 	if err := m.Register(app); err != nil {
 		t.Fatal(err)
@@ -2055,7 +2058,7 @@ func TestUnregisterRemovesProcessAndFile(t *testing.T) {
 }
 
 func TestUnregisterIdempotent(t *testing.T) {
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	if err := m.Unregister("never-existed"); err != nil {
 		t.Fatalf("unregister never-registered app should succeed: %v", err)
 	}
@@ -2067,7 +2070,7 @@ func TestUnregisterIdempotent(t *testing.T) {
 
 func TestInstancesReturnsAllRegistered(t *testing.T) {
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), nil)
+	m := testManager(t, NewStore(dir), nil)
 	if err := m.Register(&App{Name: "a", Runtime: RuntimeCustom, Command: "true", WorkDir: dir}); err != nil {
 		t.Fatal(err)
 	}
@@ -2102,7 +2105,7 @@ func TestStopAllStopsAllRunning(t *testing.T) {
 		t.Skip("uses /bin/sh")
 	}
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), nil)
+	m := testManager(t, NewStore(dir), nil)
 	for _, name := range []string{"s1", "s2"} {
 		if err := m.Register(&App{Name: name, Runtime: RuntimeCustom, Command: "sleep 5", WorkDir: dir}); err != nil {
 			t.Fatal(err)
@@ -2124,7 +2127,7 @@ func TestStopAllStopsAllRunning(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestIsSameProcessRunningUnregistered(t *testing.T) {
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	if m.isSameProcessRunning("nobody", nil) {
 		t.Fatal("unregistered app should not be running")
 	}
@@ -2132,7 +2135,7 @@ func TestIsSameProcessRunningUnregistered(t *testing.T) {
 
 func TestIsSameProcessRunningMismatchedPtr(t *testing.T) {
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), nil)
+	m := testManager(t, NewStore(dir), nil)
 	app := &App{Name: "same", Runtime: RuntimeCustom, Command: "true", WorkDir: dir}
 	if err := m.Register(app); err != nil {
 		t.Fatal(err)
@@ -2148,7 +2151,7 @@ func TestIsSameProcessRunningMismatchedPtr(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestInstanceFromDockerIncludesImage(t *testing.T) {
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	now := time.Now()
 	p := &process{
 		name:        "dock",
@@ -2179,7 +2182,7 @@ func TestRestartStopsAndStarts(t *testing.T) {
 		t.Skip("uses /bin/sh")
 	}
 	dir := t.TempDir()
-	m := NewManager(NewStore(dir), nil)
+	m := testManager(t, NewStore(dir), nil)
 	app := &App{Name: "cycle", Runtime: RuntimeCustom, Command: "sleep 5", WorkDir: dir}
 	if err := m.Register(app); err != nil {
 		t.Fatal(err)

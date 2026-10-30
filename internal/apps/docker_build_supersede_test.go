@@ -75,7 +75,7 @@ func newBuildGateDocker(t *testing.T) *buildGateDocker {
 	isPortFreeFn = func(int) bool { return true }
 	t.Cleanup(func() { isPortFreeFn = prev })
 	return &buildGateDocker{t: t, dir: state, ctx: ctx,
-		m: NewManager(NewStore(filepath.Join(root, "apps.d")), nil)}
+		m: testManager(t, NewStore(filepath.Join(root, "apps.d")), nil)}
 }
 
 func (d *buildGateDocker) register(name string, port int) {

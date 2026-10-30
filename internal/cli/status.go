@@ -37,10 +37,20 @@ func (s *StatusCommand) Run(args []string) error {
 	}
 
 	// Stats
-	statsData, _ := apiRequest("GET", *apiURL+"/api/v1/stats", *apiKey, nil)
+	// /health is public, so a missing or wrong API key got this far and then
+	// printed "Status: ok, Domains: 0" with exit code 0 (the stats error was
+	// dropped and the empty body reported as "malformed stats response").
 	var stats map[string]any
-	if err := json.Unmarshal(statsData, &stats); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: malformed stats response: %v\n", err)
+	statsData, statsErr := apiRequest("GET", *apiURL+"/api/v1/stats", *apiKey, nil)
+	switch {
+	case isAuthError(statsErr):
+		return fmt.Errorf("server is up but refused the credentials: %w", statsErr)
+	case statsErr != nil:
+		fmt.Fprintf(os.Stderr, "warning: stats unavailable: %v\n", statsErr)
+	default:
+		if err := json.Unmarshal(statsData, &stats); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: malformed stats response: %v\n", err)
+		}
 	}
 
 	// Domains — the API returns a paginated envelope: {"items":[...],"total":...}.

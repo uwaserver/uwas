@@ -1,8 +1,12 @@
 package admin
 
 import (
+	"bytes"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -297,17 +301,27 @@ func saveUploadedFile(r *http.Request, fieldName string) (string, *multipart.Fil
 
 // createDomainsFromMigration creates domain configs from migration result.
 func (s *Server) createDomainsFromMigration(result *migrate.CPanelResult, webRoot string) []string {
+	added, _ := s.createDomainsFromMigrationChecked(result, webRoot)
+	return added
+}
+
+// createDomainsFromMigrationChecked also reports the imported hosts it did not
+// register because the configuration already claims them. Comparing only the
+// exact host let an imported name that an existing site holds as an alias (or
+// that differs only in case) become a second owner, and the persisted
+// configuration then failed to load with "duplicate host".
+func (s *Server) createDomainsFromMigrationChecked(result *migrate.CPanelResult, webRoot string) (added, skipped []string) {
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
 
-	existingHosts := map[string]bool{}
-	for _, d := range s.config.Domains {
-		existingHosts[d.Host] = true
-	}
-
-	var added []string
 	for _, dom := range result.Domains {
-		if dom.Domain == "" || dom.Domain == "unknown" || existingHosts[dom.Domain] {
+		if dom.Domain == "" || dom.Domain == "unknown" {
+			continue
+		}
+		if owner := domainutil.FindDomainHostnameConflict(s.config.Domains, -1, dom.Domain); owner != "" {
+			if !strings.EqualFold(owner, dom.Domain) {
+				skipped = append(skipped, fmt.Sprintf("skipped %s: hostname is already claimed by %s", dom.Domain, owner))
+			}
 			continue
 		}
 		newDomain := config.Domain{
@@ -316,11 +330,27 @@ func (s *Server) createDomainsFromMigration(result *migrate.CPanelResult, webRoo
 			Root: filepath.Join(webRoot, dom.Domain, "public_html"),
 			SSL:  config.SSLConfig{Mode: "auto"},
 		}
+		// A certificate that came with the backup (and passed the import's
+		// checks) is served as manual TLS; with "auto" the copy under
+		// .certs was never used and the site waited for ACME until DNS moved.
+		if dom.CertPath != "" && dom.KeyPath != "" {
+			newDomain.SSL = config.SSLConfig{Mode: "manual", Cert: dom.CertPath, Key: dom.KeyPath}
+		}
+		// Parked domains and server aliases join the site unless another site
+		// already claims the name: a second owner makes the persisted
+		// configuration fail to load.
+		for _, alias := range dom.Aliases {
+			if owner := domainutil.FindDomainHostnameConflict(s.config.Domains, -1, alias); owner != "" {
+				skipped = append(skipped, fmt.Sprintf("skipped alias %s of %s: hostname is already claimed by %s", alias, dom.Domain, owner))
+				continue
+			}
+			newDomain.Aliases = append(newDomain.Aliases, alias)
+		}
 		s.config.Domains = append(s.config.Domains, newDomain)
 		added = append(added, dom.Domain)
 	}
 
-	return added
+	return added, skipped
 }
 
 // handleMigrateCPanel imports a cPanel backup archive (cpmove-*.tar.gz).
@@ -354,11 +384,16 @@ func (s *Server) handleMigrateCPanel(w http.ResponseWriter, r *http.Request) {
 
 	result, err := migrate.ImportCPanelBackup(tmpPath, webRoot, importDB)
 	if err != nil {
-		jsonError(w, "import failed: "+err.Error(), http.StatusInternalServerError)
+		status := http.StatusInternalServerError
+		if errors.Is(err, migrate.ErrInvalidArchive) {
+			status = http.StatusBadRequest // the uploaded file is unusable, not the server
+		}
+		jsonError(w, "import failed: "+err.Error(), status)
 		return
 	}
 
-	added := s.createDomainsFromMigration(result, webRoot)
+	added, skipped := s.createDomainsFromMigrationChecked(result, webRoot)
+	result.Errors = append(result.Errors, skipped...)
 	if len(added) > 0 {
 		if err := s.persistConfig(); err != nil {
 			s.recordAuditR(r, "migrate.cpanel.domains", err.Error(), false)
@@ -438,10 +473,23 @@ func (s *Server) handleCertUpload(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "domain not found", http.StatusNotFound)
 		return
 	}
+	// The manual loader reads only cert.pem, so an intermediate chain sent
+	// separately is appended to it; kept in a file of its own nothing read it
+	// and the leaf was served without its intermediates (F47304).
+	certPEM := []byte(req.Cert)
+	if chain := strings.TrimSpace(req.Chain); chain != "" {
+		if !pemIsCertificates(chain) {
+			jsonError(w, "chain must contain PEM certificates", http.StatusBadRequest)
+			return
+		}
+		certPEM = append(bytes.TrimRight(certPEM, "\r\n"), '\n')
+		certPEM = append(certPEM, chain...)
+		certPEM = append(certPEM, '\n')
+	}
 	// An upload replaces the working pair on disk and switches the domain to
 	// manual TLS; a pair that does not parse or does not match would leave the
 	// domain without usable TLS until someone notices (F12500).
-	if _, err := tls.X509KeyPair([]byte(req.Cert), []byte(req.Key)); err != nil {
+	if _, err := tls.X509KeyPair(certPEM, []byte(req.Key)); err != nil {
 		jsonError(w, "invalid certificate or key: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -462,7 +510,7 @@ func (s *Server) handleCertUpload(w http.ResponseWriter, r *http.Request) {
 	//      disk gives the manager an all-or-nothing view.
 	certPath := filepath.Join(certDir, "cert.pem")
 	prevCert, prevErr := os.ReadFile(certPath)
-	if err := atomicWriteFile(certPath, []byte(req.Cert), 0600); err != nil {
+	if err := atomicWriteFile(certPath, certPEM, 0600); err != nil {
 		jsonError(w, "write cert: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -477,12 +525,11 @@ func (s *Server) handleCertUpload(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "write key: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if req.Chain != "" {
-		// Chain is non-fatal: log but do not fail the upload.
-		if err := atomicWriteFile(filepath.Join(certDir, "chain.pem"), []byte(req.Chain), 0600); err != nil {
-			s.logger.Warn("cert upload: chain write failed", "domain", host, "error", err)
-		}
-	}
+	// This directory is also the ACME store. An earlier order's meta.json would
+	// make the uploaded pair look ACME-issued to it and keep the previous
+	// issuer in the metadata (F47305), and chain.pem is no longer written.
+	_ = os.Remove(filepath.Join(certDir, "meta.json"))
+	_ = os.Remove(filepath.Join(certDir, "chain.pem"))
 
 	// Update domain SSL mode to manual. The mutation happens *after* the
 	// files are committed to disk so notifyDomainChange's reload always
@@ -617,4 +664,26 @@ func bulkImportRejection(d config.Domain, requestedRoot, webRoot string) string 
 		}
 	}
 	return ""
+}
+
+// pemIsCertificates reports whether data is one or more PEM CERTIFICATE blocks
+// that parse as X.509 certificates, with nothing else in it.
+func pemIsCertificates(data string) bool {
+	rest := []byte(data)
+	n := 0
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			return false
+		}
+		if _, err := x509.ParseCertificate(block.Bytes); err != nil {
+			return false
+		}
+		n++
+	}
+	return n > 0 && len(bytes.TrimSpace(rest)) == 0
 }

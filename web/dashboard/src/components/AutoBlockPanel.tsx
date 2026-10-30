@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Ban, RefreshCw, Plus, XCircle, CheckCircle, ShieldOff } from 'lucide-react';
 import {
   fetchAutoBlock,
@@ -28,11 +28,19 @@ export default function AutoBlockPanel() {
   // in render is impure and flagged by react-hooks).
   const [now, setNow] = useState(0);
 
+  // Only the newest load may publish: the 15s poll started before an
+  // unblock can finish after the post-unblock load and would bring the
+  // removed block back until the next tick (F53602).
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    const mine = ++loadSeq.current;
     try {
-      setData(await fetchAutoBlock());
+      const next = await fetchAutoBlock();
+      if (mine !== loadSeq.current) return;
+      setData(next);
       setError('');
     } catch (e) {
+      if (mine !== loadSeq.current) return;
       setError((e as Error).message);
     } finally {
       setLoading(false);

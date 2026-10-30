@@ -105,7 +105,11 @@ func (h *Handler) NotifyTest(w http.ResponseWriter, r *http.Request) {
 		Body: "This is a test notification from your UWAS server.", Source: "uwas_test",
 	}
 	if err := notify.Send(ch, msg); err != nil {
-		jsonError(w, "send failed: "+err.Error(), http.StatusInternalServerError)
+		code := http.StatusInternalServerError
+		if errors.Is(err, notify.ErrInvalidConfig) {
+			code = http.StatusBadRequest // the submitted channel is wrong, not the server
+		}
+		jsonError(w, "send failed: "+err.Error(), code)
 		return
 	}
 	jsonResponse(w, map[string]string{"status": "sent"})
@@ -419,6 +423,9 @@ func (h *Handler) ConfigExport(w http.ResponseWriter, r *http.Request) {
 		copy(webhooks, export.Global.Webhooks)
 		for i := range webhooks {
 			webhooks[i].Secret = ""
+			// Slack, Discord and Teams webhook URLs carry their token in the
+			// path; keep the host so the export still says where it points.
+			webhooks[i].URL = redactWebhookURL(webhooks[i].URL)
 			// Header values are credentials (Authorization, API keys); the
 			// map is shared with the live config, so drop it on the copy.
 			webhooks[i].Headers = nil
@@ -429,6 +436,17 @@ func (h *Handler) ConfigExport(w http.ResponseWriter, r *http.Request) {
 	copy(sanitized, export.Domains)
 	for i := range sanitized {
 		sanitized[i].PHP.Env = nil
+		// The per-domain deploy webhook secret and the headers sent to the
+		// upstream (typically Authorization) are credentials. Headers is a
+		// struct copy, so clearing the map here leaves the live one alone.
+		sanitized[i].WebhookSecret = ""
+		sanitized[i].Headers.RequestAdd = nil
+		// Upstream addresses may embed user:password@; copy before editing.
+		sanitized[i].Proxy.Upstreams = append([]config.Upstream(nil), sanitized[i].Proxy.Upstreams...)
+		for j := range sanitized[i].Proxy.Upstreams {
+			sanitized[i].Proxy.Upstreams[j].Address = stripURLUserinfo(sanitized[i].Proxy.Upstreams[j].Address)
+		}
+		sanitized[i].Proxy.Mirror.Backend = stripURLUserinfo(sanitized[i].Proxy.Mirror.Backend)
 		// BasicAuth.Users is a map[string]string; copy() does a shallow copy so
 		// sanitized and export share the same map. Setting it to nil here redacts
 		// the exported YAML without affecting the original config in memory.
@@ -438,6 +456,7 @@ func (h *Handler) ConfigExport(w http.ResponseWriter, r *http.Request) {
 		// every location has basic auth.
 		sanitized[i].Locations = append([]config.LocationConfig(nil), sanitized[i].Locations...)
 		for j := range sanitized[i].Locations {
+			sanitized[i].Locations[j].ProxyPass = stripURLUserinfo(sanitized[i].Locations[j].ProxyPass)
 			if ba := sanitized[i].Locations[j].BasicAuth; ba != nil {
 				redacted := *ba
 				redacted.Users = nil
@@ -458,6 +477,44 @@ func (h *Handler) ConfigExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-yaml")
 	w.Header().Set("Content-Disposition", "attachment; filename=uwas.yaml")
 	w.Write(out)
+}
+
+// stripURLUserinfo drops user:password@ from an address or URL and leaves the
+// rest (scheme, host, port, path, query) as written. It works on the text so an
+// address without a scheme ("10.0.0.9:8080") is returned untouched.
+func stripURLUserinfo(addr string) string {
+	scheme, rest := "", addr
+	if i := strings.Index(addr, "://"); i >= 0 {
+		scheme, rest = addr[:i+3], addr[i+3:]
+	}
+	authority, tail := rest, ""
+	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
+		authority, tail = rest[:i], rest[i:]
+	}
+	if at := strings.LastIndex(authority, "@"); at >= 0 {
+		authority = authority[at+1:]
+	}
+	return scheme + authority + tail
+}
+
+// redactWebhookURL keeps scheme and host of an outbound webhook URL and hides
+// the rest, which is where the token lives. A URL without a path or query holds
+// nothing to hide and is returned as it is (minus any userinfo).
+func redactWebhookURL(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u := stripURLUserinfo(raw)
+	i := strings.Index(u, "://")
+	if i < 0 {
+		return "********"
+	}
+	rest := u[i+3:]
+	j := strings.IndexAny(rest, "/?#")
+	if j < 0 || rest[j:] == "/" {
+		return u
+	}
+	return u[:i+3] + rest[:j] + "/********"
 }
 
 // ── Raw Config Editor ──

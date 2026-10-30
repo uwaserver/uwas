@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -14,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
@@ -274,6 +276,12 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 	// time spent archiving does not eat the upload's budget (F9810).
 	ctx := context.Background()
 
+	// rootsIncomplete is set when a domain root could not be archived in full.
+	// The archive is still uploaded (best-effort), but retention must not let
+	// it displace an older complete backup. The archive closure may run on the
+	// upload pipe's goroutine, hence atomic.
+	var rootsIncomplete atomic.Bool
+
 	size, err := archiveAndUpload(ctx, p, "uwas-backup-*.tar.gz", filename, func(tw *tar.Writer) error {
 		// Config file (top-level uwas.yaml).
 		if err := addFileToTar(tw, configPath, "config/"+filepath.Base(configPath)); err != nil {
@@ -308,6 +316,7 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 			if info, err := os.Stat(root); err == nil && info.IsDir() {
 				if err := addDirToTarWith(tw, root, "sites/"+siteArchiveDir(siteBase, root), m.logger); err != nil {
 					m.logger.Warn("backup: failed to add domain root", "root", root, "error", err)
+					rootsIncomplete.Store(true)
 				}
 			}
 		}
@@ -370,8 +379,13 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 	m.lastBackup = time.Now().UTC()
 	m.mu.Unlock()
 
-	// Prune old backups.
-	m.pruneOld(provider)
+	// Prune old backups — unless this one is missing site content, in which
+	// case the older complete backups are worth more than the retention count.
+	if rootsIncomplete.Load() {
+		m.logger.Warn("backup: skipping retention because a domain root was not fully archived", "name", filename)
+	} else {
+		m.pruneOld(provider)
+	}
 
 	return &BackupInfo{
 		Name:     filename,
@@ -457,6 +471,8 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 		// Determine output path from the archive entry name.
 		var outPath string
 		var restoreBase string
+		// Site content belongs to the tenants; everything else is UWAS's own.
+		tenantTree := false
 		switch {
 		case strings.HasPrefix(hdr.Name, "config/"):
 			rel := strings.TrimPrefix(hdr.Name, "config/")
@@ -521,6 +537,7 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 				continue
 			}
 			restoreBase = webRoot
+			tenantTree = true
 			var ok bool
 			outPath, ok = safeRestorePath(webRoot, rel)
 			if !ok {
@@ -564,7 +581,11 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 		}
 
 		if hdr.Typeflag == tar.TypeDir {
-			if err := os.MkdirAll(outPath, 0755); err != nil {
+			if tenantTree {
+				if err := mkdirAllOwned(os.MkdirAll, outPath, 0755); err != nil {
+					return err
+				}
+			} else if err := os.MkdirAll(outPath, 0755); err != nil {
 				return err
 			}
 			continue
@@ -580,7 +601,11 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 		}
 
 		// Write file with size limit.
-		if err := osMkdirAllFn(filepath.Dir(outPath), 0755); err != nil {
+		if tenantTree {
+			if err := mkdirAllOwned(osMkdirAllFn, filepath.Dir(outPath), 0755); err != nil {
+				return err
+			}
+		} else if err := osMkdirAllFn(filepath.Dir(outPath), 0755); err != nil {
 			return err
 		}
 		// safeRestorePath validated containment before this directory chain
@@ -606,12 +631,33 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 		// Sanitize file permissions from untrusted archive: strip SUID/SGID, cap at 0755
 		mode := os.FileMode(hdr.Mode) & 0o755
 		mode &^= os.ModeSetuid | os.ModeSetgid | os.ModeSticky
+		// A root UWAS must not turn tenant files into root's: the replaced
+		// file keeps its owner, a new one takes its directory's (F43001).
+		var ownUID, ownGID int
+		var handOver bool
+		if tenantTree {
+			if pinfo, perr := os.Stat(filepath.Dir(outPath)); perr == nil {
+				ownUID, ownGID, handOver = tenantOwner(pinfo)
+			}
+		}
+		// A new file in a handed-over tree is read by the site's PHP account
+		// through the tree's group (F42700); an archived owner-only mode such as
+		// wp-config.php's 0600 would lock that account out of its own config
+		// (F44002). Replaced files keep the mode they have, below.
+		if handOver && ownGID != 0 {
+			mode |= 0o040
+		}
 		// Preserve existing permissions, as OpenFile did when replacing a file.
 		if info, err := os.Stat(outPath); err == nil {
 			if !info.Mode().IsRegular() {
 				return fmt.Errorf("create %s: target is not a regular file", outPath)
 			}
 			mode = info.Mode().Perm()
+			if tenantTree {
+				if u, g, ok := tenantOwner(info); ok {
+					ownUID, ownGID, handOver = u, g, true
+				}
+			}
 		}
 		f, err := os.CreateTemp(filepath.Dir(outPath), ".restore-*")
 		if err != nil {
@@ -625,6 +671,12 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 		if err := f.Chmod(mode); err != nil {
 			discard()
 			return fmt.Errorf("chmod %s: %w", outPath, err)
+		}
+		if handOver {
+			if err := fchownFn(f, ownUID, ownGID); err != nil {
+				m.logger.Warn("backup restore: could not keep the file's owner, it stays root's",
+					"path", outPath, "error", err)
+			}
 		}
 		// Read one byte past the per-file limit so an oversized entry is
 		// detected and rejected rather than silently truncated — the same
@@ -660,11 +712,13 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 	return nil
 }
 
-// ListBackups returns backup info from all registered providers.
-func (m *BackupManager) ListBackups() []BackupInfo {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+// listBackupsTimeout bounds one provider's List call inside ListBackups.
+var listBackupsTimeout = 30 * time.Second
 
+// ListBackups returns backup info from all registered providers. Each
+// provider gets its own deadline: a hung remote target must not use up the
+// budget of the providers listed after it.
+func (m *BackupManager) ListBackups() []BackupInfo {
 	m.mu.Lock()
 	providers := make([]StorageProvider, 0, len(m.providers))
 	for _, p := range m.providers {
@@ -674,7 +728,9 @@ func (m *BackupManager) ListBackups() []BackupInfo {
 
 	var all []BackupInfo
 	for _, p := range providers {
+		ctx, cancel := context.WithTimeout(context.Background(), listBackupsTimeout)
 		items, err := p.List(ctx)
+		cancel()
 		if err != nil {
 			m.logger.Warn("list backups failed", "provider", p.Name(), "error", err)
 			continue
@@ -1103,7 +1159,11 @@ func addFileToTar(tw *tar.Writer, srcPath, archiveName string) error {
 	if err != nil {
 		return err
 	}
+	return writeTarFile(tw, f, info, archiveName)
+}
 
+// writeTarFile writes one regular file, already opened and stat'ed, to tw.
+func writeTarFile(tw *tar.Writer, f *os.File, info fs.FileInfo, archiveName string) error {
 	hdr := &tar.Header{
 		Name:    archiveName,
 		Size:    info.Size(),
@@ -1171,8 +1231,21 @@ func mysqlConnectEnv() []string {
 	return nil
 }
 
+// lookClient finds a MySQL/MariaDB client tool. The mysql-named binary is
+// preferred so existing hosts behave as before; MariaDB 11 hosts that ship only
+// the mariadb-named one are found second (F39601), as the database manager does.
+func lookClient(mysqlName, mariadbName string) (string, error) {
+	if bin, err := exec.LookPath(mysqlName); err == nil {
+		return bin, nil
+	}
+	if bin, err := exec.LookPath(mariadbName); err == nil {
+		return bin, nil
+	}
+	return "", exec.ErrNotFound
+}
+
 func importDatabaseDumpReal(data []byte, log *logger.Logger) error {
-	mysqlBin, err := exec.LookPath("mysql")
+	mysqlBin, err := lookClient("mysql", "mariadb")
 	if err != nil {
 		// Non-fatal: allow a files-only restore on a host without mysql.
 		log.Warn("backup restore: mysql not found, skipping DB import")
@@ -1284,11 +1357,16 @@ func dumpDatabaseReal(dbName string) ([]byte, error) {
 	if !database.ValidDBIdentifier(dbName) {
 		return nil, fmt.Errorf("invalid database name %q", dbName)
 	}
-	mysqldump, err := exec.LookPath("mysqldump")
+	mysqldump, err := lookClient("mysqldump", "mariadb-dump")
 	if err != nil {
 		return nil, err
 	}
-	return exec.Command(mysqldump, "--single-transaction", "--quick", dbName).Output()
+	// The same UWAS_DB_* settings the restore honours: without them a remote or
+	// containerized database is never dumped (F39600).
+	args := append(mysqlConnectArgs(), "--single-transaction", "--quick", dbName)
+	cmd := exec.Command(mysqldump, args...)
+	cmd.Env = mysqlConnectEnv()
+	return cmd.Output()
 }
 
 // dumpAllDatabasesFunc is the function used to dump all databases.
@@ -1311,11 +1389,13 @@ func dumpAllDatabases() ([]byte, error) {
 }
 
 func dumpAllDatabasesReal() ([]byte, error) {
-	mysqldump, err := exec.LookPath("mysqldump")
+	mysqldump, err := lookClient("mysqldump", "mariadb-dump")
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(mysqldump, "--all-databases", "--single-transaction", "--quick", "--lock-tables=false")
+	args := append(mysqlConnectArgs(), "--all-databases", "--single-transaction", "--quick", "--lock-tables=false")
+	cmd := exec.Command(mysqldump, args...)
+	cmd.Env = mysqlConnectEnv() // F39600
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -1349,8 +1429,21 @@ func addDirToTarWith(tw *tar.Writer, srcDir, archivePrefix string, log *logger.L
 	if real, err := filepath.EvalSymlinks(srcDir); err == nil {
 		srcDir = real
 	}
+	// Files are opened through this handle so a tenant swapping an entry for
+	// a symlink after the walk listed it cannot redirect root outside the tree.
+	// A root that cannot be opened (dangling link, missing) is left to the
+	// walk, which skips a link and reports a missing path as it always did.
+	root, rootErr := os.OpenRoot(srcDir)
+	if rootErr == nil {
+		defer func() { _ = root.Close() }()
+	}
 	return filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			// An entry deleted while the walk was running is skipped; the
+			// root itself missing is still reported.
+			if errors.Is(err, fs.ErrNotExist) && path != srcDir {
+				return nil
+			}
 			return err
 		}
 
@@ -1374,6 +1467,9 @@ func addDirToTarWith(tw *tar.Writer, srcDir, archivePrefix string, log *logger.L
 
 		info, err := d.Info()
 		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
 			return err
 		}
 
@@ -1404,7 +1500,10 @@ func addDirToTarWith(tw *tar.Writer, srcDir, archivePrefix string, log *logger.L
 			sparseBudget -= info.Size()
 		}
 
-		return addFileToTar(tw, path, archiveName)
+		if root == nil {
+			return rootErr
+		}
+		return addRootFileToTar(tw, root, rel, archiveName, log)
 	})
 }
 

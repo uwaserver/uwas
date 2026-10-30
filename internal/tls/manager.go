@@ -181,8 +181,20 @@ func (m *Manager) LoadExistingCerts() {
 		dir  string
 		cert *tls.Certificate
 	}
+	// An uploaded pair shares this directory but has no meta.json (the ACME
+	// store always writes one). It belongs to the domain whose ssl.cert and
+	// ssl.key point at it, and LoadManualCerts loads it for that domain only;
+	// reloading it here served a deleted or re-assigned host's previous
+	// owner's certificate after a restart (F47302). With no domains
+	// configured the legacy load-everything behaviour stays.
+	configured := len(m.snapshotDomains()) > 0
 	best := make(map[string]pick, len(certs))
 	for dir, cert := range certs {
+		if configured && !m.storage.HasMeta(dir) {
+			m.logger.Info("ignoring an uploaded certificate pair in the ACME store; ssl.mode manual loads it from its configured path",
+				"directory", dir)
+			continue
+		}
 		key := config.CanonicalHost(dir)
 		cur, ok := best[key]
 		switch {
@@ -1053,6 +1065,14 @@ func (m *Manager) checkRenewals(ctx context.Context) {
 			case "auto":
 			case "":
 				return true
+			case "off":
+				// A host that is not ssl.mode auto only holds a certificate
+				// this manager obtained when on-demand TLS issued it at
+				// the handshake; renew that one like any ACME certificate,
+				// or it expires and a restart keeps serving the expired
+				// pair (F47300). Without on-demand an "off" host's pair is
+				// the operator's own.
+				alertOnly = !m.config.OnDemand
 			default:
 				alertOnly = true
 			}

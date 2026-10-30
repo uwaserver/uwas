@@ -11,6 +11,11 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	// Most tests assume the conventional pool ports (9001, 9002, ...) are
+	// assignable regardless of what the machine running them listens on; the
+	// tests of the port probe itself switch loopbackPortFree back on.
+	domainPortFreeFn = func(string) bool { return true }
+
 	cleanup := func() {}
 	if runtime.GOOS == "windows" {
 		var err error

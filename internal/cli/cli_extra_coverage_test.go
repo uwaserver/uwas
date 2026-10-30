@@ -791,21 +791,26 @@ func TestUninstallCmd_RunningBinaryBranch(t *testing.T) {
 	origGetuid := installOsGetuid
 	origExec := installOsExecutable
 	origRemove := installOsRemove
+	origRemoveAll := installOsRemoveAll
 	origExecCmd := installExecCommand
 	t.Cleanup(func() {
 		installRuntimeGOOS = origGOOS
 		installOsGetuid = origGetuid
 		installOsExecutable = origExec
 		installOsRemove = origRemove
+		installOsRemoveAll = origRemoveAll
 		installExecCommand = origExecCmd
 	})
 
 	installRuntimeGOOS = "linux"
 	installOsGetuid = func() int { return 0 }
-	// Executable IS the install target -> hits the "can't delete ourselves"
-	// else branch.
+	// Executable IS the install target. F49603: it used to be left in place
+	// with a "removed on next reboot" promise nothing kept; unlinking a running
+	// executable is fine on Linux, so it is removed now.
 	installOsExecutable = func() (string, error) { return "/usr/local/bin/uwas", nil }
-	installOsRemove = func(name string) error { return nil }
+	var removed []string
+	installOsRemove = func(name string) error { removed = append(removed, name); return nil }
+	installOsRemoveAll = func(string) error { return nil }
 	installExecCommand = func(name string, arg ...string) *exec.Cmd { return exec.Command("true") }
 
 	var err error
@@ -817,8 +822,11 @@ func TestUninstallCmd_RunningBinaryBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("uninstall error: %v", err)
 	}
-	if !strings.Contains(out, "removed on next reboot") {
-		t.Errorf("expected running-binary branch message, got:\n%s", out)
+	if !contains(removed, "/usr/local/bin/uwas") {
+		t.Errorf("running binary not removed: %v", removed)
+	}
+	if strings.Contains(out, "next reboot") {
+		t.Errorf("output promises a deferred removal:\n%s", out)
 	}
 }
 

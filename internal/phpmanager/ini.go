@@ -134,7 +134,7 @@ func parseINIConfig(path string) (PHPConfig, error) {
 func (m *Manager) GetConfigRaw(version string) (string, error) {
 	inst, ok := m.findInstall(version)
 	if !ok {
-		return "", fmt.Errorf("PHP %s not found", version)
+		return "", fmt.Errorf("%w: PHP %s", ErrVersionNotFound, version)
 	}
 	if inst.ConfigFile == "" {
 		return "; No php.ini found for PHP " + version + "\n; Use the form below to create one, or install php.ini:\n;   sudo apt install php" + version + "-common\n\n[PHP]\nmemory_limit = 128M\nupload_max_filesize = 64M\npost_max_size = 64M\nmax_execution_time = 300\n", nil
@@ -165,7 +165,7 @@ func (m *Manager) SetConfigRaw(version, content string) error {
 func (m *Manager) configFileFor(version string) (string, error) {
 	inst, ok := m.findInstall(version)
 	if !ok {
-		return "", fmt.Errorf("PHP %s not found", version)
+		return "", fmt.Errorf("%w: PHP %s", ErrVersionNotFound, version)
 	}
 	if inst.ConfigFile != "" {
 		return inst.ConfigFile, nil
@@ -189,6 +189,11 @@ func (m *Manager) configFileFor(version string) (string, error) {
 // SetConfig updates a single php.ini directive for the given PHP version.
 // It rewrites the ini file in place.
 func (m *Manager) SetConfig(version, key, value string) error {
+	// The line written is key + " = " + value: a line break in either part
+	// would add directives of the caller's choosing to the global php.ini.
+	if !validPHPINIDirective(key) || !phpINIValueSafe(value) {
+		return fmt.Errorf("%w: %q", ErrInvalidDirective, key)
+	}
 	path, err := m.configFileFor(version)
 	if err != nil {
 		return err

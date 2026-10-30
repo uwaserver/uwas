@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/uwaserver/uwas/internal/childenv"
 )
 
 var (
@@ -213,6 +215,12 @@ func (m *Monitor) Execute(domain, schedule, command string) ExecutionRecord {
 		cmd = monitorExecCommandFn("cmd", "/c", command)
 	} else {
 		cmd = monitorExecCommandFn("sh", "-c", command)
+	}
+
+	// The command's output is returned to the caller and to alert channels; keep
+	// UWAS's own secrets out of its environment (F56002).
+	if cmd.Env == nil {
+		cmd.Env = childenv.Filtered()
 	}
 
 	// Set working directory to domain root if possible.
@@ -453,6 +461,28 @@ func (m *Monitor) ClearHistory(domain, command string) {
 	key := m.jobKey(domain, command)
 	delete(m.history, key)
 	m.saveHistory()
+}
+
+// ClearDomain drops the execution history of every job of a domain. History is
+// kept per domain:command for the life of the process and rewritten whole to
+// cron_history.json on every run, so nothing else ever releases it, and a
+// hostname handed to the next tenant would inherit the previous tenant's
+// captured job output and failure streak (F53603).
+func (m *Monitor) ClearDomain(domain string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	prefix := domain + ":"
+	changed := false
+	for key := range m.history {
+		if strings.HasPrefix(key, prefix) {
+			delete(m.history, key)
+			changed = true
+		}
+	}
+	if changed {
+		m.saveHistory()
+	}
 }
 
 // runWithTimeout runs cmd and kills it if it exceeds timeout, so a hung command

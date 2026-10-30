@@ -122,13 +122,26 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 	h.deps.RecordAudit(r, "wordpress.install", "domain: "+req.Domain, true)
 
 	go func() {
-		result := installFn(req)
+		result := h.runInstall(req)
 		h.mu.Lock()
 		h.result = &result
 		h.mu.Unlock()
 	}()
 
 	jsonResponse(w, map[string]string{"status": "started", "domain": req.Domain})
+}
+
+// runInstall runs the install on its own goroutine, where nothing above it can
+// recover a panic: one would end the whole server for every tenant. It becomes
+// an error result the caller can read through InstallStatus instead (F51300).
+func (h *Handler) runInstall(req wp.InstallRequest) (result wp.InstallResult) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			h.deps.LogInfo("WordPress install panicked", "domain", req.Domain, "panic", fmt.Sprint(rec))
+			result = wp.InstallResult{Status: "error", Domain: req.Domain, WebRoot: req.WebRoot, Error: "install failed unexpectedly"}
+		}
+	}()
+	return installFn(req)
 }
 
 func (h *Handler) InstallStatus(w http.ResponseWriter, r *http.Request) {

@@ -46,6 +46,28 @@ verify_release_checksum() {
   fi
 }
 
+# watchdog_configured FILE succeeds only when global.watchdog.enabled is true.
+# A bare `watchdog:` key is not enough: with `enabled: false`, an empty block
+# or no `enabled` line UWAS never pings systemd, and WatchdogSec would restart
+# a healthy server every 60 seconds. Anything this cannot read as a plain
+# `enabled: true` counts as not configured, which only leaves the watchdog off.
+watchdog_configured() {
+  awk '
+    /^[[:space:]]*#/ { next }
+    {
+      line = $0
+      sub(/[[:space:]]+#.*$/, "", line)
+      match(line, /^[[:space:]]*/)
+      indent = RLENGTH
+    }
+    line ~ /^[[:space:]]*watchdog:[[:space:]]*\{.*enabled:[[:space:]]*(true|True|TRUE)[[:space:]]*[,}]/ { found = 1 }
+    line ~ /^[[:space:]]*watchdog:[[:space:]]*$/ { inwd = 1; wdindent = indent; next }
+    inwd && line ~ /[^[:space:]]/ && indent <= wdindent { inwd = 0 }
+    inwd && line ~ /^[[:space:]]*enabled:[[:space:]]*(true|True|TRUE)[[:space:]]*$/ { found = 1 }
+    END { exit found ? 0 : 1 }
+  ' "$1" 2>/dev/null
+}
+
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║     UWAS — Unified Web Application Server     ║${NC}"
@@ -207,9 +229,9 @@ DROPINEOF
 # The watchdog drop-in is only safe once the config asks for the probe.
 # Enabling WatchdogSec against a binary or config that never pings would
 # restart a perfectly healthy server on a timer.
-if ! grep -qE '^[[:space:]]*watchdog:' /etc/uwas/uwas.yaml 2>/dev/null; then
+if ! watchdog_configured /etc/uwas/uwas.yaml; then
   sed -i 's/^WatchdogSec=/#WatchdogSec=/' "$DROPIN_DIR/10-resilience.conf"
-  warn "watchdog not configured in uwas.yaml — WatchdogSec left commented out."
+  warn "global.watchdog.enabled is not true in uwas.yaml — WatchdogSec left commented out."
   warn "Add global.watchdog.enabled: true, then uncomment it in $DROPIN_DIR/10-resilience.conf"
 fi
 

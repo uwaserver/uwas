@@ -21,8 +21,25 @@ export function usePolling(fn: () => void | Promise<void>, intervalMs: number | 
     if (intervalMs == null) return;
     let id: ReturnType<typeof setInterval> | null = null;
 
+    // A tick is skipped while the previous call is still in flight, so a slow
+    // endpoint is not hit by a pile of overlapping requests whose answers can
+    // arrive out of order. The skip is bounded: a request that never settles
+    // must not stop the poll for good.
+    let pendingSince: number | null = null;
+    const maxPendingMs = Math.max(intervalMs * 3, 30_000);
+
     const tick = () => {
-      void fnRef.current();
+      if (pendingSince !== null && Date.now() - pendingSince < maxPendingMs) return;
+      pendingSince = null;
+      const result = fnRef.current();
+      if (result && typeof (result as Promise<void>).then === 'function') {
+        const startedAt = Date.now();
+        pendingSince = startedAt;
+        const done = () => {
+          if (pendingSince === startedAt) pendingSince = null;
+        };
+        (result as Promise<void>).then(done, done);
+      }
     };
 
     const start = () => {

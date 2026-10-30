@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -17,6 +18,8 @@ type HetznerProvider struct {
 	apiToken string
 	client   *http.Client
 	baseURL  string
+	// zoneNames maps zone id to zone name, filled by ListZones.
+	zoneNames sync.Map
 }
 
 const hetznerBaseURL = "https://dns.hetzner.com/api/v1"
@@ -86,6 +89,7 @@ func (p *HetznerProvider) ListZones() ([]Zone, error) {
 		}
 		for _, z := range resp.Zones {
 			zones = append(zones, Zone{ID: z.ID, Name: z.Name, Status: "active"})
+			p.zoneNames.Store(z.ID, z.Name)
 		}
 		if len(resp.Zones) == 0 || resp.Meta.Pagination.LastPage <= page {
 			return zones, nil
@@ -156,7 +160,7 @@ func (p *HetznerProvider) ListRecords(zoneID string) ([]Record, error) {
 
 func (p *HetznerProvider) CreateRecord(zoneID string, rec Record) (*Record, error) {
 	body := map[string]interface{}{
-		"zone_id": zoneID, "type": rec.Type, "name": rec.Name,
+		"zone_id": zoneID, "type": rec.Type, "name": p.recordName(zoneID, rec.Name),
 		"value": mxValue(rec), "ttl": rec.TTL,
 	}
 	data, err := p.hetznerRequest("POST", "/records", body)
@@ -177,7 +181,7 @@ func (p *HetznerProvider) CreateRecord(zoneID string, rec Record) (*Record, erro
 
 func (p *HetznerProvider) UpdateRecord(zoneID, recordID string, rec Record) (*Record, error) {
 	body := map[string]interface{}{
-		"zone_id": zoneID, "type": rec.Type, "name": rec.Name,
+		"zone_id": zoneID, "type": rec.Type, "name": p.recordName(zoneID, rec.Name),
 		"value": mxValue(rec), "ttl": rec.TTL,
 	}
 	_, err := p.hetznerRequest("PUT", "/records/"+url.PathEscape(recordID), body)
@@ -191,4 +195,13 @@ func (p *HetznerProvider) UpdateRecord(zoneID, recordID string, rec Record) (*Re
 func (p *HetznerProvider) DeleteRecord(zoneID, recordID string) error {
 	_, err := p.hetznerRequest("DELETE", "/records/"+url.PathEscape(recordID), nil)
 	return err
+}
+
+// recordName is name as Hetzner stores it, relative to the zone. The zone name
+// is the one ListZones saw for this id (every caller resolves the zone first);
+// for an id never listed the name is sent as given.
+func (p *HetznerProvider) recordName(zoneID, name string) string {
+	zone, _ := p.zoneNames.Load(zoneID)
+	z, _ := zone.(string)
+	return zoneRelativeName(name, z)
 }

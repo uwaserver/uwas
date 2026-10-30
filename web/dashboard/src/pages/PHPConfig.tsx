@@ -44,9 +44,17 @@ export default function PHPConfig() {
   const [rawSaving, setRawSaving] = useState(false);
   const [applyingPreset, setApplyingPreset] = useState('');
   const [restarting, setRestarting] = useState(false);
+  // A load that failed must say so: rendering it as an empty php.ini / empty
+  // settings invites typing into the "empty" editor and saving, which replaces
+  // the real file. Each failure keeps its message; Retry bumps reloadTick.
+  const [versionsError, setVersionsError] = useState('');
+  const [cfgError, setCfgError] = useState('');
+  const [rawError, setRawError] = useState('');
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     fetchPHP().then(p => {
+      setVersionsError('');
       // Deduplicate versions (same version may appear as CGI + FPM + CLI)
       const seen = new Set<string>();
       const uniqueVers: string[] = [];
@@ -58,9 +66,11 @@ export default function PHPConfig() {
         }
       }
       setVersions(uniqueVers);
-      if (uniqueVers.length > 0) setSelectedVer(uniqueVers[0]);
-    }).catch(() => {});
-  }, []);
+      if (uniqueVers.length > 0) setSelectedVer(prev => prev || uniqueVers[0]);
+    }).catch(e => {
+      setVersionsError(`Could not load PHP versions: ${(e as Error).message}`);
+    });
+  }, [reloadTick]);
 
   // Latest-wins guard for version loads: switching to PHP 8.2 while 8.3's
   // config/raw fetches are still in flight must discard 8.3's late responses
@@ -74,18 +84,22 @@ export default function PHPConfig() {
     fetchPHPConfig(selectedVer).then(cfg => {
       if (verLoadSeqRef.current !== seq) return; // superseded — do not commit
       const c = cfg ?? {}; setFormValues(c); setSavedValues(c);
-    }).catch(() => {
+      setCfgError('');
+    }).catch(e => {
       if (verLoadSeqRef.current !== seq) return; // superseded — do not blank
       setFormValues({}); setSavedValues({});
+      setCfgError(`Could not load PHP ${selectedVer} settings: ${(e as Error).message}`);
     });
     fetchPHPConfigRaw(selectedVer).then(r => {
       if (verLoadSeqRef.current !== seq) return; // superseded — do not commit
       setRawContent(r?.content ?? ''); setRawDirty(false);
-    }).catch(() => {
+      setRawError('');
+    }).catch(e => {
       if (verLoadSeqRef.current !== seq) return; // superseded — do not blank
       setRawContent('');
+      setRawError(`Could not read php.ini for PHP ${selectedVer}: ${(e as Error).message}`);
     });
-  }, [selectedVer]);
+  }, [selectedVer, reloadTick]);
 
   const showStatus = (ok: boolean, msg: string) => {
     setStatus({ ok, msg });
@@ -239,6 +253,8 @@ export default function PHPConfig() {
               e.target.value = selectedVer;
               return;
             }
+            setCfgError('');
+            setRawError('');
             setSelectedVer(next);
           }}
           className="rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500">
@@ -259,6 +275,18 @@ export default function PHPConfig() {
       {status && (
         <div className={`flex items-center gap-2 rounded-md px-4 py-2.5 text-sm ${status.ok ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
           <CheckCircle size={14} /> {status.msg}
+        </div>
+      )}
+
+      {(versionsError || cfgError || rawError) && (
+        <div className="flex items-center justify-between gap-3 rounded-md bg-red-500/10 px-4 py-2.5 text-sm text-red-400">
+          <div className="space-y-0.5">
+            {[versionsError, cfgError, rawError].filter(Boolean).map(m => <p key={m}>{m}</p>)}
+          </div>
+          <button onClick={() => setReloadTick(t => t + 1)}
+            className="shrink-0 rounded-md border border-red-500/40 px-3 py-1 text-xs font-medium hover:bg-red-500/10">
+            Retry
+          </button>
         </div>
       )}
 
@@ -299,6 +327,7 @@ export default function PHPConfig() {
                 <div className="relative">
                   <input
                     value={value}
+                    disabled={!!cfgError}
                     onChange={e => setFormValues(prev => ({ ...prev, [s.key]: e.target.value }))}
                     placeholder={s.placeholder}
                     className={`w-44 rounded-md border px-3 py-1.5 text-sm font-mono text-foreground outline-none ${
@@ -316,7 +345,7 @@ export default function PHPConfig() {
         <div className="flex justify-end">
           <button
             onClick={handleSaveAll}
-            disabled={!hasDirty || savingAll}
+            disabled={!hasDirty || savingAll || !!cfgError}
             className="flex items-center gap-1.5 rounded-md bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40 transition">
             {savingAll ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
             {savingAll ? 'Saving...' : hasDirty ? `Save ${dirtyKeys.length} change${dirtyKeys.length > 1 ? 's' : ''}` : 'No changes'}
@@ -331,7 +360,7 @@ export default function PHPConfig() {
             <p className="text-xs text-muted-foreground">
               Full php.ini — <span className="text-emerald-400">PHP auto-restarts after saving</span>
             </p>
-            <button onClick={handleRawSave} disabled={rawSaving || !rawDirty}
+            <button onClick={handleRawSave} disabled={rawSaving || !rawDirty || !!rawError}
               className="flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
               {rawSaving ? <RefreshCw size={13} className="animate-spin" /> : <Save size={13} />}
               {rawSaving ? 'Saving...' : 'Save php.ini'}
@@ -339,6 +368,7 @@ export default function PHPConfig() {
           </div>
           <textarea
             value={rawContent}
+            readOnly={!!rawError}
             onChange={e => { setRawContent(e.target.value); setRawDirty(true); }}
             spellCheck={false}
             className="w-full h-[60vh] rounded-lg border border-border bg-background px-4 py-3 font-mono text-xs text-foreground outline-none focus:border-blue-500 resize-none leading-relaxed"

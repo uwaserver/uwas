@@ -7,6 +7,311 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.40] - 2026-10-31
+
+### Fixed
+
+- Cache keys no longer carry the raw `Accept-Encoding` spelling (reduced to br/gzip/identity), and requests with an unmatched `Host` no longer mint cache entries for the fallback domain; a client could fragment or flood the cache and evict other tenants' entries (F60300/F60301).
+- Backup walk skips files that vanish mid-walk (live cache/session/log files) instead of aborting the rest of the root, which also kept retention from running on busy sites (F60602). Alert delivery slots are per target, so one hung SMTP target cannot starve healthy channels (F60601).
+- Raw YAML editor non-admin guards, and unknown-host alias cleanup, find the site rather than a `www.` redirect record in front of it (F60000/F60600).
+- Domain lookup prefers an exactly named record over a `www.` redirect record in front of the site: Update, Delete and Detail no longer patch or remove the redirect instead of the site, and an update that removes an implicit www redirect no longer adds the same alias host twice (F59600/F59601).
+- Backup: each provider listing gets its own deadline (F59000); retention is skipped for a run whose domain roots were archived incompletely, so the last restorable backup is not deleted (F59001). Alerter delivery is bounded to 16 concurrent sends (F59002). `NotifyTest` answers 400 for a misconfigured channel (F59003).
+- Test helper `testport` builds on darwin again (F59300).
+- `wordpress.UpdateCore` writes core files through `os.Root` with `O_NOFOLLOW`, closing a root symlink-swap window between the check and the write (F58302). `PUT /php/{v}/config` validates directive keys and values (a newline could inject extra `php.ini` lines) and answers 404 for an uninstalled version; rejected directives answer 400 (F58300/F58301).
+- Backend health checks probe concurrently (max 32), so dead backends no longer delay detection of the rest (F58000). SFTP backup listing reports transport errors instead of an empty list (F58001); S3 list responses are size-limited (F58002).
+- Dashboard assets: a missing `assets/` file answers 404 instead of HTML, shell is `no-cache`, assets are immutable, non-GET/HEAD answers 405 (F58600–F58602). Admin Users keeps the empty hint after a failed create (F58603).
+- `Start` failing to bind a listener now stops apps started from the registry instead of leaving orphaned process groups holding their ports (F57000). `systemctl` start/stop/restart/enable calls have a 2 minute deadline (F57001). Native app and build logs over 50 MiB are rotated to `<log>.1` when opened (F57002).
+- Image conversion (cwebp/avifenc) has a 60 s deadline; a hung converter no longer holds the global convert lock and stalls every tenant's conversions (F57300).
+- Dashboard: a wrong current password on password change or API key regeneration (401) no longer logs the admin out (F57601); resetting a missing user's password answers 404 (F57600).
+- Second instance that fails to bind no longer overwrites or deletes the running server's PID file; `writePID` runs after listeners are up and `removePID` only removes its own PID (F56301). `uwas stop` waits `shutdown_grace` + 10 s before SIGKILL instead of a fixed 15 s (F56304). The CLI `${VAR:-x}` expansion matches the loader for empty values, so `uwas stop` finds the PID file when `RUNTIME_DIRECTORY` is empty (F56303).
+- Config and domain files that are symlinks are written through to their target (F56300); dot-prefixed files such as Emacs lock files in `domains.d` no longer break loading (F56302).
+- Deploy step output is capped (last 2 MiB kept) and a deadline kills the whole process group, so a leftover child can no longer hold the app's deploy lock forever (F56000/F56001). Cron command execution no longer inherits `UWAS_*` and `*_TOKEN` secrets (F56002).
+- Dashboard Cron Jobs, Services, Analytics, Logs, Metrics and Email Guide show load errors instead of empty states (F56600–F56605).
+- Hetzner and DigitalOcean DNS writes send zone-relative record names; DNS sync no longer creates `blog.example.com.example.com` (F55300). Pre-compressed `.gz`/`.br` static variants get the same `Content-Type` charset as the identity response (F55301). `uwas cert list` shows days left for expired certificates (F55000).
+- Dashboard Firewall, Backups, Certificates and Admin Users show a load error instead of an empty state; Firewall disables Enable while its status is unknown (F55600–F55603).
+- Async logger flush no longer races `Write` on a `WaitGroup`; shutdown under log traffic could panic the process (F54001). Location `redirect_code` is validated (loader, admin API) and an invalid code falls back to 301 instead of panicking or answering 2xx/4xx with `Location` (F54000).
+- `PUT /api/v1/apps/{name}` applies `docker.*` patches even when the request has no `runtime` (F54300). WordPress install refuses a symlinked `mu-plugins` directory before writing as root (F54301).
+- nginx migrate: `if (...) { return ... }` blocks no longer become a site-wide redirect, regex `server_name` values are skipped with a warning, unfollowed `include` is reported (F54602/F54603/F54604). Dashboard PHP and File Manager show load errors instead of empty states (F54600/F54601).
+- ACME, Cloudflare, geoip and selfupdate HTTP/JSON responses are read with a size limit (4 MiB ACME, 8 MiB others); an oversized certificate chain is an error instead of unbounded memory (F53000).
+- CLI `.env` loading reads every existing `.env` (`~/.uwas`, `/etc/uwas`, cwd), first file wins per variable, so `UWAS_ADMIN_PIN` written by `uwas init` is found (F53001).
+- Disabling or deleting two admins concurrently can no longer leave zero enabled admins; the last-admin check runs under the user-store lock (F53301). Updating or deleting a missing user answers 404 (F53302). `GET /api/v1/firewall` returns `rules: []` instead of null (F53300).
+- Deleting a cron job clears its output history (memory and `cron_history.json`), so a later tenant on the same hostname no longer sees it; domain delete with `?cleanup=true` does too (F53603).
+- Dashboard: Users and Unknown Domains show load errors instead of an empty state (F53600/F53601); AutoBlock unblock is not undone by a stale poll (F53602).
+- **`include:`-defined domains no longer break the next restart.** Saving from
+  the panel used to write a domain that came from an `include:` file into
+  `domains.d/` as well, so the next start read the host twice and failed with
+  `duplicate host`; edit and delete did not see `include` files either. The
+  domain is now rewritten in the file it comes from (one entry in place for a
+  list file, keeping comments, `${VAR}` references and the other entries) and
+  deletes cover `include` files too.
+- **PIN-protected servers:** `uwas init` and `uwas install` write the generated
+  `UWAS_ADMIN_PIN` to `.env` and `uwas domain remove` accepts `--pin` /
+  `UWAS_ADMIN_PIN` (it could not remove anything on a PIN-protected server);
+  existing installs must add the PIN to `.env` by hand.
+- **CLI:** `uwas backup` finds the configuration like the other commands (from
+  another directory it reported "Backup created (0 files)" with exit 0 — an
+  empty backup is now an error); `uwas status` fails on a wrong or missing API
+  key instead of printing "Status: ok, Domains: 0"; `--config` works next to
+  `-c` for `serve`, `config` and `backup`.
+
+- **WordPress install can no longer crash the server.** A NUL byte in `db_pass`
+  or `db_host` of `POST /wordpress/install` made the SQL escaper panic in a
+  goroutine without recovery, taking down the whole UWAS process (any domain
+  owner could send it for their own domain when a MySQL client was installed).
+  The installer rejects NUL bytes and the handler turns a panic into an error
+  result. Migration `source_host` values starting with `-` are refused.
+- **A domain defined in `domains.d/` under a different file name no longer
+  breaks the next restart.** Saving from the panel wrote the same host into a
+  second `<host>.yaml`, so the next start failed with `duplicate host`, and a
+  deleted domain came back from the other file. The domain is now written to the
+  file it lives in; a file whose domains all live elsewhere is renamed
+  `<name>.superseded` (never deleted); deleting removes the host from every
+  named file (one entry out of a list file, keeping the rest).
+- **Saving the configuration keeps `${VAR}` references** (`api_key:
+  ${UWAS_ADMIN_KEY}` used to be replaced by the expanded secret on the first
+  save, so changing the variable did nothing). Config export masks domain
+  webhook secrets, `request_add` header values (such as `Authorization`),
+  webhook URL tokens and upstream `user:password@`.
+- **CLI `domain add/remove`** (and every other changing command) works against a
+  server with an API key: the CLI now sends the CSRF header, `domain remove`
+  sends the required `confirm=true`, and `--cleanup` maps to the API's
+  `cleanup=true` (worker, cron jobs, SFTP user; never the document root).
+- **Deleting a domain** always stops its PHP worker and drops the PHP assignment
+  (it used to stay assigned and its php.ini settings passed to the next owner of
+  the host), and clears its per-path rate-limit counters.
+
+- **Dashboard lists show everything.** The server pages list endpoints (50 by
+  default, 500 at most) and the dashboard never asked for more: with over 50
+  domains, backups, apps, users, cron jobs, databases, webhooks, WordPress
+  sites, packages or tasks the lists were silently cut at 50, and the audit log
+  page showed the oldest 50 entries instead of the newest. All list calls now
+  page through to the total.
+- **Oversized uploads fail instead of being truncated:** a database dump over
+  the import limit returns 413 (a nested limit used to cut it silently and run
+  the partial SQL); a cPanel archive file over 10 GB is reported instead of
+  imported truncated.
+- **Bounded reads:** the domain health check reads at most 64 KiB of a tenant
+  page, Telegram and alert-webhook responses 4 KiB, and login user names over 64
+  bytes are rejected before they reach the rate limiter tables.
+- **Analytics** keeps recording new popular pages when the per-domain path table
+  is full (one-hit scanner paths are evicted first).
+- **Test reliability:** "dead port" test helpers no longer close a listener and
+  hope nobody takes the port (`internal/testport`).
+
+- **Secret and dependency files are refused:** `node_modules/`, `yarn.lock`,
+  `pnpm-lock.yaml`, `npm-shrinkwrap.json`, `php.ini`, `error_log` and Composer
+  `vendor/{composer,phpunit,bin,autoload*.php}` (previously
+  `/vendor/autoload.php` was served as raw PHP and `/vendor/phpunit/**` was
+  reachable); the block list also applies to the cleaned path, so dot-segment
+  tricks no longer slip through. Plain `/vendor/bootstrap/` style template
+  folders are still served.
+- **Installer and updater:** `scripts/install.sh` only enables the systemd
+  watchdog when `watchdog.enabled: true` (a bare or disabled `watchdog:` block
+  made systemd restart a healthy server every 60 s); `update.sh` restarts the
+  service without `sudo` when run as root; `uwas uninstall` removes the binary
+  and the `uwas.service.d` drop-in and fails visibly when it cannot; the
+  panel's `POST /system/update` is audited.
+- **Memory bounds:** the access-log ring keeps clipped Host/Method/Path/User-Agent
+  (a single request used to pin 4 MiB); the uptime probe reads at most 64 KiB of
+  the tenant's page.
+- **Notifications:** the SMTP connection is checked against private/link-local
+  targets at connect time (DNS rebinding), loopback and private relays still
+  work.
+- **Stable ordering:** MCP `tools/list`, `/api/v1/monitor` and analytics lists
+  return a deterministic order (prompt caches and dashboards no longer reshuffle).
+
+- **PHP source is no longer served as plain text.** `.phtml`, `.pht` and
+  `.php3`–`.php8` files (which Apache and cPanel run as PHP and UWAS does not)
+  used to be delivered raw with a 200, exposing templates and includes with
+  database passwords; they are now refused like `.php.bak`. `.phar` and `.inc`
+  stay downloadable. Directory listings no longer show names the server would
+  refuse.
+- **`X-Accel-Redirect`** is decoded like a URI (query dropped, `%XX` decoded) so
+  files with spaces are served, while `..`, NUL and backslashes still cannot
+  leave the root.
+- **Rate limits:** the per-location limiter keeps a counter for its whole
+  window (a one-hour limit used to reset after 30 minutes, and every long pause
+  let one extra request through); the blocked-request statistics clip paths and
+  User-Agents (a 1 MiB header could pin hundreds of MB in the ring buffer).
+- **Docker app builds** pass `--build-arg` values through the CLI environment
+  instead of the command line (they were visible to every local account in
+  `/proc/<pid>/cmdline` for the whole build); app and build logs are 0600 in a
+  0750 directory.
+- **Git deploy URLs** with a user or host starting with `-` are refused (older
+  git runs it as an ssh option).
+
+- **Certificates:** an uploaded pair of a domain that was deleted or given to
+  someone else is no longer reloaded and served after a restart (ACME
+  certificates keep their `meta.json` and are unaffected); an uploaded pair
+  removes a stale `meta.json`; the `chain` field of a certificate upload is
+  appended to `cert.pem` (it used to be written where nothing reads it, so a
+  CA-issued leaf was served without its intermediate; invalid chain PEM is
+  400); with on-demand TLS an ACME certificate of an `ssl.mode: off` host is
+  renewed instead of expiring and being reloaded expired after a restart;
+  `key.pem.prev` (a private key copy) is removed on save.
+- **HTTP to HTTPS redirect for wildcard domains** (`*.example.com`) uses the
+  request's own host instead of the pattern (`Location: https://*.example.com/…`
+  could not be followed by any browser).
+- **Per-path rate limits** (for example on `/login`) count IPv6 clients by /64
+  like the domain and global limiters.
+- **Dashboard:** saving the Security tab no longer deletes Basic Auth users and
+  realm when Basic Auth is switched off; a stored compression block can be
+  reset to the default from the domain editor.
+
+- **Backups and WordPress permission fixes no longer follow tenant symlinks as
+  root.** The backup tar writer opens each file through a held root with
+  `O_NOFOLLOW|O_NONBLOCK` and a regular-file check (a swapped symlink used to be
+  copied into the archive, a FIFO hung the backup); Fix Permissions normalises
+  modes in Go through `os.Root` instead of `find -exec chmod` (which follows
+  symlinks) and changes directory ownership through an open directory handle
+  (a directory swapped for a symlink between the check and `chown` used to hand
+  a host directory to `www-data`).
+- **DNS check on NAT'd servers** (EC2, GCP, Azure, Oracle): when no interface
+  has a public address, the public address is looked up (3 s limit, cached) so a
+  correctly pointed domain is no longer reported as "does not point here" and
+  the dashboard no longer suggests the private address.
+- **Dashboard edits no longer erase settings the form does not show.** Proxy
+  domains keep `health_check`, `sticky`, `circuit_breaker`, `websocket`, `grpc`,
+  `timeouts`, `canary` and upstream weights, redirects keep `preserve_path`
+  (the config merge replaces whole blocks); saving on the Security page no
+  longer clears the Cloudflare-only lock; Browser Cache keeps `immutable`;
+  Routes keep headers, request timeout, rate limit and non-header cache control;
+  the PHP card shows timeout and upload size; the deploy pre-flight list shows
+  why a check failed; "Add Upstream" adds a row; PHP `install-info` returns
+  `[]` instead of `null` on unsupported distributions.
+
+- **Image optimization no longer writes through tenant symlinks.** With UWAS
+  running as root, the converter's temporary file lived in the tenant's
+  directory: a tenant could swap it for a symlink and make root write the
+  converted image over a host file (and then have the symlink published as a
+  variant, which also read arbitrary files). The output now goes to a private
+  directory, is copied through the already-open handle with a same-file check
+  before the rename, and variants are served with `O_NOFOLLOW`.
+- **Site clone and migration** no longer follow a `wp-config.php` symlink: a
+  symlink in the source site (clone) or in the archive from the old server
+  (migration) used to make root read the target, chmod it and rewrite it —
+  including pointing another tenant's site at the migrated site's database.
+- **Dashboard sessions:** an expired session (401) or rejected 2FA code on
+  config export, live deploy, SQL export and image preview sends the operator
+  to the login/2FA prompt instead of leaving a stale token; php.ini, config
+  editor and Settings no longer present a failed load as an empty, editable
+  document (saving it would have replaced the real file) and Reload only
+  reports success when the re-read worked.
+- **CSRF on expensive GETs** (`/export`, `/backup`, `/download`) in keyless
+  loopback mode also covers sub-resource requests that carry no `Origin`
+  (`Sec-Fetch-Site: cross-site` is refused).
+
+- **First-admin bootstrap** (`POST /api/v1/auth/bootstrap`) now applies the
+  loopback Host and relay checks that keyless mode already had: a non-loopback
+  Host (DNS rebinding) or a forwarding header (`X-Forwarded-For`, `X-Real-IP`,
+  `Forwarded`, `CF-Connecting-IP`) on a loopback peer is refused (403) before
+  anything is written. Bootstrapping through a same-host reverse proxy no longer
+  works: open the panel on `127.0.0.1`/`localhost` (an SSH tunnel is fine) or set
+  `global.admin.api_key`.
+- **cPanel import certificates:** certificates are found under `sslcerts/`,
+  `sslkeys/`, `ssl/` and `apache_tls/`, matched by the names inside the
+  certificate and by key pair; expired, not-yet-valid, mismatched or key-less
+  certificates are reported and not imported; an imported pair is served
+  (`ssl.mode: manual`) instead of being copied where nothing reads it.
+  `parked_domains` and `serveralias` are imported as aliases (lower-cased,
+  invalid names reported, names owned by another site skipped).
+- **File manager:** new files and directories created while UWAS runs as root
+  take the web root's owner (or the web group when the root is root-owned) with
+  mode 0640, so PHP and SFTP users can use them. A restored `wp-config.php`
+  gets group read in a tenant tree.
+- **PHP worker session directory:** the per-site `.tmp` handed to the worker
+  account must be a real directory (a symlink is refused) and is changed with
+  `lchown`.
+
+- **wp-cli no longer runs as root.** With UWAS running as root, wp-cli
+  (`--allow-root`) loaded the site's `wp-config.php`, mu-plugins, plugins and
+  themes as root — anything a WordPress admin or SFTP user placed there ran as
+  root when the operator listed plugins/users or ran update/harden/optimize. It
+  now runs as the web root's owner (or the web account when the root is
+  root-owned) with a private `HOME`/`WP_CLI_CACHE_DIR`. A root-owned WordPress
+  root is no longer writable by wp-cli until Fix Permissions has run.
+- **Backup restore keeps site ownership:** files and directories restored under
+  `sites/` take the owner of the tree they land in instead of becoming root-owned
+  (which stopped PHP and SFTP users from writing to the restored site).
+  `config/`, `certs/` and `domains.d/` stay root-owned.
+- **Native apps** receive `HOST=127.0.0.1` (detected start commands and demo
+  apps used to bind every interface, exposing the app port outside the proxy's
+  WAF, rate limit and TLS). An operator-set `HOST` still wins; already-saved
+  commands are not rewritten.
+- **php-cgi ports** are chosen among ports nobody is listening on, and a saved
+  address that is already taken is replaced, so another tenant's process can no
+  longer receive a domain's FastCGI traffic.
+- **cPanel import:** PHP-FPM account files (`*.php-fpm.yaml`) are no longer
+  treated as domains; addon domains are named from `userdata/main`
+  `addon_domains` (they used to appear as `addon.example.com`); the account name
+  comes from `cp_user`; the Migration page shows per-database import status.
+
+- **PHP workers no longer run as root.** When UWAS runs as root, php-cgi
+  workers (per-domain and the default pool) now drop to the web account like the
+  php-fpm pool does; before, tenant PHP code was root and `open_basedir` /
+  `disable_functions` were not a real boundary. The temporary ini file and the
+  `.tmp` session directory are handed to the worker account; if that fails the
+  worker does not start. Directories that are root-owned and not writable by
+  others (for example `wp-content/uploads`) are no longer writable by PHP, and
+  old session files in `.tmp` owned by root make users log in once more.
+  Container images (non-root `uwas` user) are unaffected.
+- **`open_basedir`** no longer adds a shared web base (`/var/www/`, `/srv`,
+  `/home` …) for a site rooted at `/var/www/html`, `htdocs`, `public` or `web`.
+- **cPanel import:** a host that collides with an existing domain or alias is
+  reported instead of producing a config that fails to load at the next
+  restart; addon-domain files outside `public_html` are copied; a subdomain
+  whose document root is missing from the archive no longer takes the whole
+  main site; databases in the backup are imported (never over a database that
+  already has tables); an unusable archive returns 400.
+- **nginx / Apache migration:** location-level `root`/`alias` are carried over;
+  `ProxyPass balancer://…` with `BalancerMember` becomes a weighted upstream.
+- **Invalid client input returns 400, not 500:** SSH keys, DNS records, user
+  names and migration archives. An unparseable SSH key no longer leaves an
+  empty `.ssh` directory behind.
+
+- **Apache migration:** PHP handlers (`SetHandler proxy:…fcgi`, `AddHandler …php`)
+  produce a `php` site instead of a static one that answered 403 for every
+  `.php`; line continuations, lower-case `<virtualhost>`, `ProxyPassMatch`,
+  `Alias*`, `Include*` and `SSLCertificateChainFile` are handled or reported;
+  vhosts without `ServerName` get unique placeholder hosts.
+- **nginx migration:** a single `location /old/ { return 301 … }` no longer
+  turns the whole site into a redirect (it becomes a path-scoped redirect);
+  regex/`=` proxy locations stay path-scoped on a site with a root;
+  `server_name _` servers get unique placeholder hosts.
+- **Database API:** invalid names, passwords, engines and ports return 400, an
+  existing container 409 (they used to be 500 and the port range was not
+  checked before `docker run`).
+
+- **Proxy:** the canary stickiness cookie is no longer dropped when the
+  upstream sets its own cookies; `Expect: 100-continue` is not forwarded when
+  the body is already buffered (uploads no longer stall up to the write
+  timeout); a backend-absolute `Location` (`http://127.0.0.1:PORT/dir/`) is
+  rewritten to the client's scheme and host.
+- **nginx migration:** quoted `root`/`server_name`/`ssl_certificate` values are
+  unquoted; named `upstream` blocks (servers, weights, `least_conn`/`ip_hash`)
+  are carried over instead of dropped; a static/PHP site with a path-scoped
+  `proxy_pass` location stays a static/PHP site with proxy `locations:`.
+- **WordPress / SFTP users:** creating an SFTP account for a WordPress site
+  keeps `wp-config.php` readable by PHP-FPM (0640); `UpdateCore` reports a
+  failed ownership change instead of claiming success.
+
+- **Cache:** background revalidation keeps ESI pages as templates and the
+  content ETag (it used to serve raw `<!--esi -->` markup after the first
+  refresh); response-header templates such as `$remote_addr` are resolved per
+  request on cache hits instead of replaying the first visitor's value.
+- **Backups:** the database dump uses the same `UWAS_DB_*` connection settings
+  as restore (a remote/container database used to be silently skipped) and
+  passes the password through `MYSQL_PWD`; `mariadb`/`mariadb-dump` client names
+  are found when the `mysql*` names are absent.
+- **PIN required** to import a database (it runs the uploaded SQL as the
+  database admin, like drop does); **regenerating your own API key requires
+  the current password**. Scripts calling `POST /auth/users/{self}/apikey` must
+  send `current_password`; DB import scripts must send `X-Pin-Code` when a PIN
+  is configured.
+- **Audit log** records file deletes and overwrites in the file manager.
+- **Dashboard polling** no longer stacks overlapping requests on a slow
+  endpoint.
+
 ## [0.11.39] - 2026-10-27
 
 ### Fixed

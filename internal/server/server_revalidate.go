@@ -2,8 +2,11 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/cache"
@@ -170,15 +173,40 @@ func (s *Server) runRevalidate(domain *config.Domain, job staleJob) {
 		return
 	}
 
+	isESI := s.prepareCacheEntry(domain, req, hdrs, body)
+
 	s.cache.SetByKey(job.key, &cache.CachedResponse{
-		StatusCode: result.StatusCode,
-		Headers:    hdrs,
-		Body:       body,
-		Created:    time.Now(),
-		TTL:        cache.CapTTL(job.ttl, hdrs),
-		GraceTTL:   job.grace,
-		Tags:       job.tags,
+		StatusCode:  result.StatusCode,
+		Headers:     hdrs,
+		Body:        body,
+		Created:     time.Now(),
+		TTL:         cache.CapTTL(job.ttl, hdrs),
+		GraceTTL:    job.grace,
+		Tags:        job.tags,
+		ESITemplate: isESI,
 	})
+}
+
+// prepareCacheEntry is the part of storing a response that both the request
+// path and the background refresh must do identically: decide whether the body
+// is an ESI template (hits then assemble its includes) and, for anything else
+// without an ETag, add a content ETag so clients can revalidate. The refresh
+// used to skip both, so after its first run every visitor received the raw
+// <!--esi --> markup and no 304s (F39300, F39301).
+func (s *Server) prepareCacheEntry(domain *config.Domain, r *http.Request, hdrs http.Header, body []byte) (isESI bool) {
+	isESI = domain.Cache.ESI && s.esiProcessor != nil &&
+		strings.Contains(hdrs.Get("Content-Type"), "text/html") &&
+		cache.ContainsESI(body) &&
+		r.Header.Get("X-ESI-Subrequest") == ""
+	if !isESI && hdrs.Get("ETag") == "" && len(body) > 0 {
+		hash := sha256.Sum256(body)
+		var etag [34]byte
+		etag[0] = '"'
+		hex.Encode(etag[1:33], hash[:16])
+		etag[33] = '"'
+		hdrs.Set("ETag", string(etag[:]))
+	}
+	return isESI
 }
 
 // staleJobFor snapshots what a refresh of this request would need. Called on

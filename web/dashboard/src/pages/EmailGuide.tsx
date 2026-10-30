@@ -13,9 +13,11 @@ export default function EmailGuide() {
   // this guide into their provider — a check icon on a failed copy sends
   // them away with records that were never copied.
   const [copyError, setCopyError] = useState('');
+  // a failed domain list must not read as "No domains yet"
+  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
-    fetchDomains().then(d => { const list = d ?? []; setDomains(list); if (list.length > 0) setSelectedDomain(list[0].host); }).catch(() => {});
+    fetchDomains().then(d => { const list = d ?? []; setDomains(list); if (list.length > 0) setSelectedDomain(list[0].host); setLoadError(''); }).catch((e: Error) => setLoadError(e.message));
     fetchServerIPs().then(data => setServerIP(data?.public_ip || '')).catch(() => {});
   }, []);
 
@@ -95,8 +97,12 @@ export default function EmailGuide() {
         <div className="rounded-md bg-amber-500/10 px-4 py-3 text-sm text-amber-300">{copyError}</div>
       )}
 
+      {loadError && (
+        <div className="rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">{loadError}</div>
+      )}
+
       {/* Domain selector */}
-      {domains.length === 0 ? (
+      {domains.length === 0 ? loadError ? null : (
         <div className="rounded-lg border border-dashed border-border bg-card px-6 py-12 text-center">
           <Mail size={32} className="mx-auto mb-3 text-muted-foreground/60" />
           <p className="text-sm font-medium text-card-foreground">No domains yet</p>

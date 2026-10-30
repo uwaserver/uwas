@@ -39,7 +39,7 @@ func TestDetectCommandNodePackageScripts(t *testing.T) {
 		{
 			name:        "preview script",
 			packageJSON: `{"scripts":{"build":"vite build","preview":"vite preview"}}`,
-			want:        "npm run preview -- --host 0.0.0.0 --port ${PORT}",
+			want:        "npm run preview -- --host 127.0.0.1 --port ${PORT}",
 		},
 		{
 			name:        "no runnable script",

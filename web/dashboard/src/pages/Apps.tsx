@@ -1612,15 +1612,15 @@ export default function Apps() {
                 </div>
                 <div className="space-y-1">
                   {deployPreflight?.checks?.length ? deployPreflight.checks.map(check => (
-                    <div key={`${check.name}-${check.message}`} className="flex items-start gap-2">
+                    <div key={`${check.name ?? check.label}-${check.detail ?? check.message}`} className="flex items-start gap-2">
                       {check.ok ? (
                         <CheckCircle size={12} className="mt-0.5 shrink-0 text-green-400" />
                       ) : (
                         <AlertCircle size={12} className={`mt-0.5 shrink-0 ${check.required ? 'text-red-400' : 'text-amber-400'}`} />
                       )}
                       <span className="min-w-0 flex-1">
-                        <span className="font-mono">{check.name}</span>
-                        {check.message ? <span className="text-muted-foreground"> · {check.message}</span> : null}
+                        <span className="font-mono">{check.label || check.name}</span>
+                        {check.detail || check.message ? <span className="text-muted-foreground"> · {check.detail || check.message}</span> : null}
                       </span>
                     </div>
                   )) : (

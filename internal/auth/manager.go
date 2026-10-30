@@ -849,8 +849,36 @@ func (m *Manager) ListUsers() []*User {
 	return result
 }
 
+var (
+	// ErrUserNotFound is returned when the named user does not exist.
+	ErrUserNotFound = errors.New("user not found")
+	// ErrLastAdmin is returned for a change that would leave no enabled admin.
+	ErrLastAdmin = errors.New("cannot disable or delete the last enabled admin")
+)
+
+// otherEnabledAdminLocked reports whether an enabled admin other than skip
+// exists. Caller holds m.mu.
+func (m *Manager) otherEnabledAdminLocked(skip *User) bool {
+	for _, u := range m.users {
+		if u != skip && u.Role == RoleAdmin && u.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
 // UpdateUser updates a user.
 func (m *Manager) UpdateUser(username string, updates *User) error {
+	return m.updateUser(username, updates, false)
+}
+
+// UpdateUserKeepAdmin is UpdateUser that refuses, under the manager lock, a
+// change that would disable the last enabled admin.
+func (m *Manager) UpdateUserKeepAdmin(username string, updates *User) error {
+	return m.updateUser(username, updates, true)
+}
+
+func (m *Manager) updateUser(username string, updates *User, keepAdmin bool) error {
 	// bcrypt runs without m.mu (F19200); see CreateUser.
 	var newHash string
 	if updates.Password != "" && m.userExists(username) {
@@ -865,7 +893,11 @@ func (m *Manager) UpdateUser(username string, updates *User) error {
 
 	user, exists := m.users[username]
 	if !exists {
-		return errors.New("user not found")
+		return ErrUserNotFound
+	}
+	if keepAdmin && updates.EnabledSet && !updates.Enabled && user.Role == RoleAdmin && user.Enabled &&
+		!m.otherEnabledAdminLocked(user) {
+		return ErrLastAdmin
 	}
 
 	if updates.Email != "" {
@@ -958,12 +990,25 @@ func cloneUser(user *User) *User {
 
 // DeleteUser deletes a user.
 func (m *Manager) DeleteUser(username string) error {
+	return m.deleteUser(username, false)
+}
+
+// DeleteUserKeepAdmin is DeleteUser that refuses, under the manager lock, to
+// remove the last enabled admin.
+func (m *Manager) DeleteUserKeepAdmin(username string) error {
+	return m.deleteUser(username, true)
+}
+
+func (m *Manager) deleteUser(username string, keepAdmin bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	user, exists := m.users[username]
 	if !exists {
-		return errors.New("user not found")
+		return ErrUserNotFound
+	}
+	if keepAdmin && user.Role == RoleAdmin && user.Enabled && !m.otherEnabledAdminLocked(user) {
+		return ErrLastAdmin
 	}
 
 	delete(m.users, username)
@@ -987,7 +1032,7 @@ func (m *Manager) RegenerateAPIKey(username string) (string, error) {
 
 	user, exists := m.users[username]
 	if !exists {
-		return "", errors.New("user not found")
+		return "", ErrUserNotFound
 	}
 
 	apiKey, err := generateAPIKey()
@@ -1022,6 +1067,39 @@ func (m *Manager) RegenerateAPIKey(username string) (string, error) {
 	}
 
 	return apiKey, nil
+}
+
+// VerifyPassword reports whether password is the user's current password. It
+// is the "prove you still know it" check for sensitive actions on one's own
+// account (replacing the API key), throttled in the same bucket as
+// ChangePassword so the two cannot be used to multiply password guesses, and
+// run outside m.mu like the bcrypt work in ChangePassword (F1871).
+func (m *Manager) VerifyPassword(username, password string) error {
+	lockKey := "\x00chpw|" + username
+	gate := m.authGateFor(lockKey)
+	gate.Lock()
+	defer gate.Unlock()
+	if m.isLockedOut(lockKey) {
+		return errors.New("too many failed attempts; try again later")
+	}
+
+	m.mu.RLock()
+	user, exists := m.users[username]
+	var hash string
+	if exists {
+		hash = user.Password
+	}
+	m.mu.RUnlock()
+	if !exists {
+		return errors.New("user not found")
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)); err != nil {
+		m.recordFailedAttempt(lockKey)
+		return errors.New("invalid current password")
+	}
+	m.clearFailedAttempts(lockKey)
+	return nil
 }
 
 // ChangePassword changes a user's password (requires current password).

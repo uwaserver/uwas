@@ -7,6 +7,7 @@ import (
 	"github.com/uwaserver/uwas/internal/apps"
 	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/cronjob"
 )
 
 // filesDeps adapts admin.Server to the files.Deps interface.
@@ -23,6 +24,8 @@ func (d *filesDeps) RequirePin(w http.ResponseWriter, r *http.Request) bool {
 func (d *filesDeps) RequireDomainAccess(w http.ResponseWriter, r *http.Request, domain, action string) bool {
 	return d.s.requireDomainAccess(w, r, domain, action)
 }
+func (d *filesDeps) CronMonitor() *cronjob.Monitor { return d.s.cronMonitor }
+
 func (d *filesDeps) CanAccessDomain(r *http.Request, domain string) bool {
 	return d.s.canAccessDomain(r, domain)
 }

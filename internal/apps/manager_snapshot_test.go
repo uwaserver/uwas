@@ -5,7 +5,7 @@ import "testing"
 func TestInstanceEnvironmentSnapshotOwnership(t *testing.T) {
 	store := NewStore(t.TempDir())
 	store.DataRoot = store.Dir
-	m := NewManager(store, nil)
+	m := testManager(t, store, nil)
 	if err := m.Register(&App{Name: "snapshot", Runtime: RuntimeCustom, Port: 43210, Env: EnvFromPairs("KEY", "original")}); err != nil {
 		t.Fatal(err)
 	}

@@ -150,6 +150,9 @@ export default function Settings() {
   const [health, setHealth] = useState<HealthData | null>(null);
   const [system, setSystem] = useState<SystemInfo | null>(null);
   const [loading, setLoading] = useState(true);
+  // A failed load used to be swallowed and rendered as all-empty settings with
+  // no explanation; keep the reason visible and offer a Retry.
+  const [loadError, setLoadError] = useState('');
   const [saving, setSaving] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -170,6 +173,7 @@ export default function Settings() {
 
   /** Load structured settings + raw config + health + system info. */
   const load = useCallback(async () => {
+    setLoadError('');
     try {
       const [settings, raw, h, s, tfa] = await Promise.all([
         fetchSettings().catch(() => ({})),
@@ -192,8 +196,8 @@ export default function Settings() {
       setSystem(s);
       setTwoFA(tfa);
       return true;
-    } catch {
-      // ignore
+    } catch (e) {
+      setLoadError(`Could not load settings: ${(e as Error).message}`);
       return false;
     } finally {
       setLoading(false);
@@ -281,10 +285,13 @@ export default function Settings() {
     setReloading(true);
     try {
       await triggerReload();
-      showStatus(true, 'Configuration reloaded successfully');
       // load() replaces the form with the server's values, so edits it
-      // overwrote are no longer pending.
-      if (await load()) setDirtyKeys(new Set());
+      // overwrote are no longer pending. A failed re-fetch is reported by the
+      // load-error banner, not as a successful reload.
+      if (await load()) {
+        setDirtyKeys(new Set());
+        showStatus(true, 'Configuration reloaded successfully');
+      }
     } catch (e) {
       showStatus(false, (e as Error).message);
     } finally {
@@ -418,6 +425,18 @@ export default function Settings() {
           </button>
         </div>
       </div>
+
+      {loadError && (
+        <div className="flex items-center justify-between gap-3 rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">
+          <span className="flex items-center gap-2"><XCircle size={14} />{loadError}</span>
+          <button
+            onClick={() => { void load(); }}
+            className="shrink-0 rounded-md border border-red-500/40 px-3 py-1 text-xs font-medium hover:bg-red-500/10"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Status message */}
       {status && (

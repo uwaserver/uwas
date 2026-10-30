@@ -331,10 +331,25 @@ func frameworkProjectRoot(docRoot string) string {
 		if parent == "" || parent == "." || parent == string(filepath.Separator) {
 			return ""
 		}
+		// A root such as /var/www/html (the Apache default, and what an Apache
+		// import produces) sits directly in the directory every tenant's site
+		// lives in; admitting that parent would open all of them (F42600).
+		if sharedWebBases[filepath.Clean(parent)] {
+			return ""
+		}
 		return parent
 	default:
 		return ""
 	}
+}
+
+// sharedWebBases are directories that hold many sites (or the whole system)
+// rather than one project, so they never count as a framework project root.
+var sharedWebBases = map[string]bool{
+	"/var": true, "/var/www": true, "/srv": true, "/srv/www": true,
+	"/home": true, "/opt": true, "/usr": true, "/usr/share": true,
+	"/usr/share/nginx": true, "/usr/local": true, "/mnt": true, "/media": true,
+	"/etc": true, "/root": true, "/tmp": true,
 }
 
 // filterCustomPHPAdminValue keeps safe custom PHP_ADMIN_VALUE lines and drops

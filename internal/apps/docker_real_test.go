@@ -108,7 +108,7 @@ func TestDockerLifecycleRealDaemon(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(filepath.Join(dir, "apps.d"))
 	store.DataRoot = filepath.Join(dir, "data")
-	m := NewManager(store, quietLog())
+	m := testManager(t, store, quietLog())
 
 	runOut, err := exec.Command("docker", "run", "-d", "--name", cname, img, "sleep", "60").CombinedOutput()
 	if err != nil {
@@ -195,7 +195,7 @@ func TestStartDockerSuccessRealDaemon(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(filepath.Join(dir, "apps.d"))
 	store.DataRoot = filepath.Join(dir, "data")
-	m := NewManager(store, quietLog())
+	m := testManager(t, store, quietLog())
 
 	// Explicit unique host port avoids the fixed-3001 cross-process collision.
 	spec := &App{Name: app, Runtime: RuntimeDocker, Port: freeHostPort(t), Docker: DockerSpec{Image: img, ContainerPort: 54321}}
@@ -278,7 +278,7 @@ func TestStartDockerBuildContextRealDaemon(t *testing.T) {
 		return exec.Command(name, arg...)
 	}
 
-	m := NewManager(store, quietLog())
+	m := testManager(t, store, quietLog())
 	// Image left empty → startDocker defaults the tag to containerName:latest
 	// and the build context drives buildImage to produce it.
 	spec := &App{
@@ -361,7 +361,7 @@ func TestCleanupOrphanContainersRemovesCreatedOrphan(t *testing.T) {
 		t.Skipf("docker create failed (environment): %v: %s", err, out)
 	}
 
-	m := NewManager(NewStore(t.TempDir()), quietLog())
+	m := testManager(t, NewStore(t.TempDir()), quietLog())
 	// No app named "coverage-orphan-test" is registered → it's an orphan.
 	m.cleanupOrphanContainers()
 
@@ -406,7 +406,7 @@ func TestCleanupOrphanContainersKeepsKnown(t *testing.T) {
 		t.Skipf("docker create failed: %v: %s", err, out)
 	}
 
-	m := NewManager(NewStore(t.TempDir()), quietLog())
+	m := testManager(t, NewStore(t.TempDir()), quietLog())
 	m.mu.Lock()
 	m.procs[app] = &process{name: app, runtimeKind: RuntimeDocker, stopCh: make(chan struct{})}
 	m.mu.Unlock()

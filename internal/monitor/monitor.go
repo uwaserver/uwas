@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sort"
 	"sync"
 	"syscall"
 	"time"
@@ -18,6 +19,13 @@ const (
 	defaultInterval = 30 * time.Second
 	maxChecks       = 100
 	checkTimeout    = 10 * time.Second
+
+	// maxProbeBodyBytes caps how much of the reply a probe reads. The status
+	// line decides the result; the body only has to start arriving. The probed
+	// site is tenant-controlled, and a "/" that is a multi-gigabyte file or an
+	// endless stream used to be read for the whole checkTimeout on every sweep
+	// (F49301). A reply that breaks off inside the cap is still a failed probe.
+	maxProbeBodyBytes = 64 << 10
 
 	// maxRedirects is how many hops a probe follows, as many as net/http's
 	// default. Running out of hops is a failed probe: it used to hand back the
@@ -327,7 +335,7 @@ func (m *Monitor) checkDomain(ctx context.Context, d config.Domain) {
 		status = "down"
 		statusCode = 0
 	} else {
-		_, bodyErr := io.Copy(io.Discard, resp.Body)
+		_, bodyErr := io.Copy(io.Discard, io.LimitReader(resp.Body, maxProbeBodyBytes))
 		resp.Body.Close()
 		statusCode = resp.StatusCode
 		check.StatusCode = statusCode
@@ -428,5 +436,8 @@ func (m *Monitor) Results() []HealthResult {
 		results = append(results, cp)
 	}
 
+	// The map has no order of its own: without this every call listed the same
+	// domains differently (F49304).
+	sort.Slice(results, func(i, j int) bool { return results[i].Host < results[j].Host })
 	return results
 }

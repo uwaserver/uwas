@@ -1,7 +1,6 @@
 package deploy
 
 import (
-	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/hmac"
@@ -37,9 +36,10 @@ func runStep(ctx context.Context, wd, name string, args []string, out LogSink, e
 	if env != nil {
 		cmd.Env = env
 	}
-	var combined bytes.Buffer
-	cmd.Stdout = &combined
-	cmd.Stderr = &combined
+	confineStep(cmd)
+	combined := &tailBuffer{max: maxStepOutput}
+	cmd.Stdout = combined
+	cmd.Stderr = combined
 	err := cmd.Run()
 	out.Write(combined.Bytes())
 	return err
@@ -58,9 +58,10 @@ func runShell(ctx context.Context, wd, command string, out LogSink, env []string
 	if env != nil {
 		cmd.Env = env
 	}
-	var combined bytes.Buffer
-	cmd.Stdout = &combined
-	cmd.Stderr = &combined
+	confineStep(cmd)
+	combined := &tailBuffer{max: maxStepOutput}
+	cmd.Stdout = combined
+	cmd.Stderr = combined
 	err := cmd.Run()
 	out.Write(combined.Bytes())
 	return err
@@ -89,7 +90,34 @@ func validateGitURL(u string) error {
 	if strings.ContainsAny(u, " \t\n\r\x00") {
 		return fmt.Errorf("git_url contains whitespace or null bytes")
 	}
+	if gitURLAuthorityLooksLikeOption(u) {
+		return fmt.Errorf("git_url host or user must not start with '-'")
+	}
 	return nil
+}
+
+// gitURLAuthorityLooksLikeOption reports whether the user or host part of u
+// starts with '-'. git hands that word to ssh as an argument, so on a git older
+// than 2.13 `ssh://-oProxyCommand=…/repo` runs a command (CVE-2017-1000117);
+// current git refuses it, this keeps the answer independent of the installed
+// git (F48302).
+func gitURLAuthorityLooksLikeOption(u string) bool {
+	authority := u
+	if i := strings.Index(u, "://"); i >= 0 {
+		authority = u[i+3:]
+		if j := strings.IndexAny(authority, "/?#"); j >= 0 {
+			authority = authority[:j]
+		}
+	} else if i := strings.Index(u, ":"); i >= 0 { // scp-like git@host:path
+		authority = u[:i]
+	}
+	if strings.HasPrefix(authority, "-") {
+		return true
+	}
+	if at := strings.LastIndex(authority, "@"); at >= 0 {
+		return strings.HasPrefix(authority[at+1:], "-")
+	}
+	return false
 }
 
 func validGitRef(s string) bool {

@@ -92,7 +92,7 @@ func (c *CertCommand) list(args []string) error {
 			expiry = expiry[:10]
 		}
 		days := "-"
-		if cert.Status == "active" {
+		if cert.Status == "active" || cert.Status == "expired" {
 			days = fmt.Sprintf("%d", cert.DaysLeft)
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",

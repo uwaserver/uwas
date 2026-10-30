@@ -90,7 +90,7 @@ func CheckUpdate(currentVersion string) (*ReleaseInfo, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 200 {
-		if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&release); err != nil {
 			return nil, fmt.Errorf("parse release: %w", err)
 		}
 	} else {
@@ -107,7 +107,7 @@ func CheckUpdate(currentVersion string) (*ReleaseInfo, error) {
 		}
 
 		var releases []ghRelease
-		if err := json.NewDecoder(resp2.Body).Decode(&releases); err != nil {
+		if err := json.NewDecoder(io.LimitReader(resp2.Body, 8<<20)).Decode(&releases); err != nil {
 			return nil, fmt.Errorf("parse releases: %w", err)
 		}
 		if len(releases) == 0 {

@@ -3,7 +3,6 @@ package server
 import (
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -12,6 +11,7 @@ import (
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/middleware"
+	"github.com/uwaserver/uwas/internal/testport"
 )
 
 // F9000: middleware.Recovery aborts a response that already started by
@@ -19,9 +19,7 @@ import (
 // handleHTTP's own recover(); it must pass the abort on rather than append an
 // error page to the partial body and end it as if complete.
 func TestHandleHTTPKeepsAbortOfStartedResponse(t *testing.T) {
-	probe, _ := net.Listen("tcp", "127.0.0.1:0")
-	addr := probe.Addr().String()
-	probe.Close()
+	addr := testport.FreeAddr(t)
 
 	log := logger.New("error", "text")
 	cfg := &config.Config{

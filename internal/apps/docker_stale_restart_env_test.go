@@ -96,7 +96,7 @@ func (d *staleDocker) releaseWait(id string) {
 
 func dockerTestManager(t *testing.T, name string, env map[string]string) *Manager {
 	t.Helper()
-	m := NewManager(NewStore(t.TempDir()), nil)
+	m := testManager(t, NewStore(t.TempDir()), nil)
 	a := &App{Name: name, Runtime: RuntimeDocker, Port: 39998,
 		Docker: DockerSpec{Image: "img:1", ContainerPort: 80}}
 	if env != nil {

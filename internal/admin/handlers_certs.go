@@ -115,12 +115,16 @@ func (s *Server) handleCertRenew(w http.ResponseWriter, r *http.Request) {
 	if idx >= 0 {
 		mode = s.config.Domains[idx].SSL.Mode
 	}
+	onDemand := s.config.Global.ACME.OnDemand
 	s.configMu.RUnlock()
 	if idx < 0 {
 		jsonError(w, "domain not found", http.StatusNotFound)
 		return
 	}
-	if mode != "auto" {
+	// With on-demand TLS the server obtains (and scheduled renewal renews) the
+	// certificate of an ssl.mode "off" host itself, so it can be force-renewed
+	// like an auto one (F47301); a manual one is the operator's.
+	if mode != "auto" && !(mode == "off" && onDemand) {
 		jsonError(w, "certificate is not managed by ACME (ssl.mode is "+mode+")", http.StatusConflict)
 		return
 	}

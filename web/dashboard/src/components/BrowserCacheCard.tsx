@@ -43,6 +43,9 @@ export default function BrowserCacheCard({
           html: html.trim(),
           assets: assets.trim(),
           immutable_paths: paths.split('\n').map((p: string) => p.trim()).filter(Boolean),
+          // Not editable here, but the server replaces the whole block when
+          // the key is present, so a configured value must be sent back.
+          ...(bc.immutable ? { immutable: bc.immutable } : {}),
         },
       });
       setStatus({ ok: true, message: 'Saved' });

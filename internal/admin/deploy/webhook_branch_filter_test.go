@@ -27,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,7 +36,14 @@ import (
 
 type branchFilterDeps struct {
 	mgr     *apps.Manager
+	mu      sync.Mutex // RecordAudit also runs from the background deploy goroutine
 	audited []string
+}
+
+func (d *branchFilterDeps) auditedSnapshot() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]string(nil), d.audited...)
 }
 
 func (d *branchFilterDeps) RequireAdmin(w http.ResponseWriter, r *http.Request) bool { return true }
@@ -44,6 +52,8 @@ func (d *branchFilterDeps) LogInfo(string, ...any)                              
 func (d *branchFilterDeps) LogWarn(string, ...any)                                   {}
 func (d *branchFilterDeps) LogError(string, ...any)                                  {}
 func (d *branchFilterDeps) RecordAudit(_ *http.Request, action, _ string, _ bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	d.audited = append(d.audited, action)
 }
 func (d *branchFilterDeps) AppsManager() *apps.Manager                      { return d.mgr }
@@ -96,7 +106,7 @@ func branchFilterHandler(t *testing.T, secret, branchFilter string) (*Handler, *
 				return
 			}
 			accepted := false
-			for _, a := range d.audited {
+			for _, a := range d.auditedSnapshot() {
 				accepted = accepted || a == "app.webhook.accept"
 			}
 			if !accepted {
@@ -158,7 +168,7 @@ func TestWebhookBranchFilterFailsClosedOnUnreadableRef(t *testing.T) {
 					"An event the filter cannot vouch for must never satisfy it. body=%s",
 					tc.why, got, rec.Body.String())
 			}
-			for _, a := range d.audited {
+			for _, a := range d.auditedSnapshot() {
 				if a == "app.webhook.accept" {
 					t.Errorf("app.webhook.accept audited for a push whose ref could not be read; want app.webhook.skip")
 				}

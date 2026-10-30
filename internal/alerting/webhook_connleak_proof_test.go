@@ -70,7 +70,7 @@ func TestSendWebhookBodyDrained(t *testing.T) {
 		// Detect io.Copy(io.Discard, resp.Body)
 		if sel.Sel.Name == "Copy" {
 			if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "io" && len(ce.Args) >= 2 {
-				if isIoDiscard(ce.Args[0]) && isRespBody(ce.Args[1]) {
+				if isIoDiscard(ce.Args[0]) && (isRespBody(ce.Args[1]) || isBoundedRespBody(ce.Args[1])) {
 					drainOK = true
 				}
 			}
@@ -115,6 +115,24 @@ func isIoDiscard(n ast.Node) bool {
 		return true
 	}
 	return false
+}
+
+// isBoundedRespBody reports whether n is io.LimitReader(resp.Body, N): a drain
+// bounded to N bytes. A reply that fits is fully drained (keep-alive reuse); a
+// larger one closes the connection on purpose instead of being read to the end.
+func isBoundedRespBody(n ast.Node) bool {
+	ce, ok := n.(*ast.CallExpr)
+	if !ok || len(ce.Args) != 2 {
+		return false
+	}
+	sel, ok := ce.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "LimitReader" {
+		return false
+	}
+	if id, ok := sel.X.(*ast.Ident); !ok || id.Name != "io" {
+		return false
+	}
+	return isRespBody(ce.Args[0])
 }
 
 // isRespBody reports whether n is resp.Body.

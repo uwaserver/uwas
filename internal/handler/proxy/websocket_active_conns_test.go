@@ -15,6 +15,7 @@ import (
 
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/router"
+	"github.com/uwaserver/uwas/internal/testport"
 )
 
 func TestWebSocketTunnelCountsActiveConns(t *testing.T) {
@@ -87,9 +88,7 @@ func TestWebSocketTunnelCountsActiveConns(t *testing.T) {
 
 // A failed dial must not leak a count either.
 func TestWebSocketTunnelDialFailureReleasesActiveConns(t *testing.T) {
-	l, _ := net.Listen("tcp", "127.0.0.1:0")
-	addr := l.Addr().String()
-	l.Close() // nothing listens here any more
+	addr := testport.Dead(t) // nothing listens here
 
 	u, _ := url.Parse("http://" + addr)
 	backend := &Backend{URL: u, Weight: 1}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/uwaserver/uwas/internal/cache"
@@ -304,7 +305,10 @@ func (s *Server) registerTools() {
 	}
 }
 
-// ListTools returns all available tools.
+// ListTools returns all available tools, ordered by name. The tool map has no
+// order of its own, so listing it directly reshuffled tools/list on every call;
+// a client that passes the list to a model (prompt caching, reproducible
+// sessions) needs it to stay put (F49302).
 func (s *Server) ListTools() []ToolInfo {
 	var tools []ToolInfo
 	for _, t := range s.tools {
@@ -314,6 +318,7 @@ func (s *Server) ListTools() []ToolInfo {
 			InputSchema: t.InputSchema,
 		})
 	}
+	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
 	return tools
 }
 

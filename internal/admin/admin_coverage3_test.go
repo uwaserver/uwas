@@ -499,8 +499,10 @@ func TestHandleSSHKeyAdd_NoSFTP(t *testing.T) {
 	body := strings.NewReader(`{"public_key":"ssh-rsa AAAAB3NzaC1 test"}`)
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/users/test.com/ssh-keys", body))
-	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
-		t.Errorf("status = %d, want 501, 404, or 500", rec.Code)
+	// The key is truncated, so it is refused as a bad request (400) before the
+	// host is touched (F42300); 501/404/500 cover a host without SFTP support.
+	if rec.Code != 400 && rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 400, 501, 404, or 500", rec.Code)
 	}
 }
 

@@ -411,7 +411,9 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if patch.Runtime == apps.RuntimeDocker {
+	// Gate on the app's runtime, not the request's: a PUT that only carries
+	// docker.* fields must not be answered 200 and silently dropped (F54300).
+	if existing.Runtime == apps.RuntimeDocker {
 		if patch.Docker.Image != "" {
 			existing.Docker.Image = patch.Docker.Image
 		}

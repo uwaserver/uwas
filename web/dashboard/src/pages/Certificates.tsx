@@ -402,7 +402,7 @@ export default function Certificates() {
                 renewingHost={renewingHost}
               />
             ))}
-            {certGroups.length === 0 && (
+            {certGroups.length === 0 && !error && (
               <div className="col-span-full rounded-lg border border-dashed border-border bg-card p-10 text-center">
                 <Lock size={32} className="mx-auto mb-3 text-muted-foreground opacity-40" />
                 <p className="text-sm font-medium text-card-foreground">No certificates configured</p>

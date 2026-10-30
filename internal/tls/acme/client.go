@@ -259,7 +259,7 @@ func (c *Client) ensureDirectory(ctx context.Context) error {
 	// Decode into a local so a failed decode doesn't leave a poisoned
 	// non-nil empty directory that would never be re-fetched.
 	dir := &Directory{}
-	if err := json.NewDecoder(resp.Body).Decode(dir); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxACMEBody)).Decode(dir); err != nil {
 		return err
 	}
 	// "{}" or "null" decode cleanly; caching one would fail every later
@@ -427,7 +427,7 @@ func (c *Client) newOrder(ctx context.Context, domains []string) (*Order, error)
 	}
 
 	order := &Order{}
-	if err := json.NewDecoder(resp.Body).Decode(order); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxACMEBody)).Decode(order); err != nil {
 		return nil, err
 	}
 	order.URL = resp.Header.Get("Location")
@@ -451,7 +451,7 @@ func (c *Client) getAuthorization(ctx context.Context, url string) (*Authorizati
 	}
 
 	authz := &Authorization{}
-	return authz, json.NewDecoder(resp.Body).Decode(authz)
+	return authz, json.NewDecoder(io.LimitReader(resp.Body, maxACMEBody)).Decode(authz)
 }
 
 func (c *Client) solveChallenge(ctx context.Context, authz *Authorization) error {
@@ -553,6 +553,10 @@ func (c *Client) solveDNS01(ctx context.Context, domain string, challenge *Chall
 // logs, the failure state and the admin API.
 const maxErrorBody = 4 << 10
 
+// maxACMEBody bounds every successful ACME response (directory, order,
+// authorization, certificate chain) so a misbehaving CA cannot exhaust memory.
+const maxACMEBody = 4 << 20
+
 func readErrorBody(r io.Reader) []byte {
 	body, _ := io.ReadAll(io.LimitReader(r, maxErrorBody))
 	return body
@@ -613,7 +617,7 @@ func (c *Client) waitForStatus(ctx context.Context, url, target string, maxAttem
 		}
 
 		var obj Order
-		if err := json.NewDecoder(resp.Body).Decode(&obj); err != nil {
+		if err := json.NewDecoder(io.LimitReader(resp.Body, maxACMEBody)).Decode(&obj); err != nil {
 			resp.Body.Close()
 			return nil, fmt.Errorf("ACME response decode error: %w", err)
 		}
@@ -662,7 +666,7 @@ func (c *Client) finalizeOrder(ctx context.Context, url string, csr []byte) (*Or
 	}
 
 	order := &Order{}
-	return order, json.NewDecoder(resp.Body).Decode(order)
+	return order, json.NewDecoder(io.LimitReader(resp.Body, maxACMEBody)).Decode(order)
 }
 
 func (c *Client) downloadCert(ctx context.Context, url string) ([]byte, error) {
@@ -680,7 +684,14 @@ func (c *Client) downloadCert(ctx context.Context, url string) ([]byte, error) {
 		return nil, acmeError(resp.StatusCode, body)
 	}
 
-	return io.ReadAll(resp.Body)
+	pem, err := io.ReadAll(io.LimitReader(resp.Body, maxACMEBody+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(pem) > maxACMEBody {
+		return nil, fmt.Errorf("certificate chain exceeds %d bytes", maxACMEBody)
+	}
+	return pem, nil
 }
 
 func encodeECKey(key *ecdsa.PrivateKey) []byte {

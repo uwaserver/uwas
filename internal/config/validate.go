@@ -283,6 +283,16 @@ func Validate(cfg *Config) error {
 	return nil
 }
 
+// ValidLocationRedirectCode reports whether code may answer a location
+// redirect; 0 means the 301 default.
+func ValidLocationRedirectCode(code int) bool {
+	switch code {
+	case 0, 301, 302, 303, 307, 308:
+		return true
+	}
+	return false
+}
+
 // validateDomainShape holds the per-domain checks that need nothing but the
 // domain itself. Validate (the loader) and validateDomain (the admin API) both
 // run it, so the API cannot accept and persist a domain that the next Load
@@ -593,6 +603,9 @@ func validateDomainShape(prefix string, d *Domain, partial bool, errs *[]string)
 	for j, loc := range d.Locations {
 		if err := pathmatch.ValidLocation(loc.Match); err != nil {
 			*errs = append(*errs, fmt.Sprintf("%s.locations[%d].match: invalid regular expression %q: %v", prefix, j, loc.Match, err))
+		}
+		if !ValidLocationRedirectCode(loc.RedirectCode) {
+			*errs = append(*errs, fmt.Sprintf("%s.locations[%d].redirect_code: invalid %d (must be 301, 302, 303, 307, 308)", prefix, j, loc.RedirectCode))
 		}
 	}
 

@@ -338,6 +338,14 @@ export default function Firewall() {
                 </p>
               </div>
             </div>
+          ) : !fw ? (
+            <div className="flex items-center gap-2">
+              <ShieldOff size={24} className="text-muted-foreground" />
+              <div>
+                <p className="text-sm font-semibold text-muted-foreground">Firewall status unavailable</p>
+                <p className="text-xs text-muted-foreground">The status request failed — press Refresh to retry.</p>
+              </div>
+            </div>
           ) : (
             <div className="flex items-center gap-2">
               <ShieldOff size={24} className="text-red-400" />
@@ -356,7 +364,7 @@ export default function Firewall() {
         </div>
         <button
           onClick={handleToggle}
-          disabled={toggling}
+          disabled={toggling || !fw}
           className={`flex items-center gap-2 rounded-md px-5 py-2.5 text-sm font-medium text-white transition disabled:opacity-50 ${
             fw?.active
               ? 'bg-red-600 hover:bg-red-700'
@@ -554,7 +562,7 @@ export default function Firewall() {
                   </td>
                 </tr>
               ))}
-              {filteredRules.length === 0 && (
+              {filteredRules.length === 0 && !!fw && (
                 <tr>
                   <td colSpan={6} className="px-5 py-12 text-center text-muted-foreground">
                     <ShieldCheck size={32} className="mx-auto mb-3 opacity-40" />

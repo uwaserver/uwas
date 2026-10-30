@@ -85,6 +85,20 @@ type Message struct {
 	Source string `json:"source"` // "cert_expiry", "domain_down", "backup_failed", etc.
 }
 
+// ErrInvalidConfig marks a Send failure caused by the channel's own
+// configuration (missing field, unknown type, destination refused by policy)
+// as opposed to a delivery failure. errors.Is matches it; the error text is
+// unchanged.
+var ErrInvalidConfig = errors.New("invalid channel configuration")
+
+type configError struct{ err error }
+
+func (e *configError) Error() string        { return e.err.Error() }
+func (e *configError) Unwrap() error        { return e.err }
+func (e *configError) Is(target error) bool { return target == ErrInvalidConfig }
+
+func invalidConfig(err error) error { return &configError{err: err} }
+
 // Send dispatches a message to a channel.
 func Send(ch Channel, msg Message) error {
 	if !ch.Enabled {
@@ -100,7 +114,7 @@ func Send(ch Channel, msg Message) error {
 	case "email":
 		return sendEmail(ch.Config, msg)
 	default:
-		return fmt.Errorf("unknown channel type: %s", ch.Type)
+		return invalidConfig(fmt.Errorf("unknown channel type: %s", ch.Type))
 	}
 }
 
@@ -117,7 +131,11 @@ func redactURLError(err error) error {
 	}
 	msg := strings.ReplaceAll(err.Error(), strconv.Quote(uerr.URL), `"[redacted URL]"`)
 	msg = strings.ReplaceAll(msg, uerr.URL, "[redacted URL]")
-	return &redactedError{msg: msg, cause: uerr.Err}
+	var out error = &redactedError{msg: msg, cause: uerr.Err}
+	if errors.Is(err, ErrInvalidConfig) {
+		out = invalidConfig(out)
+	}
+	return out
 }
 
 type redactedError struct {
@@ -131,12 +149,12 @@ func (e *redactedError) Unwrap() error { return e.cause }
 func sendWebhook(url string, msg Message) (err error) {
 	defer func() { err = redactURLError(err) }()
 	if strings.TrimSpace(url) == "" {
-		return fmt.Errorf("webhook url is required")
+		return invalidConfig(fmt.Errorf("webhook url is required"))
 	}
 
 	// SSRF check
 	if err := notifyURLSafetyCheck(url); err != nil {
-		return fmt.Errorf("webhook URL not allowed: %w", err)
+		return invalidConfig(fmt.Errorf("webhook URL not allowed: %w", err))
 	}
 
 	data, _ := json.Marshal(msg)
@@ -161,12 +179,12 @@ func sendWebhook(url string, msg Message) (err error) {
 func sendSlack(webhookURL string, msg Message) (err error) {
 	defer func() { err = redactURLError(err) }()
 	if strings.TrimSpace(webhookURL) == "" {
-		return fmt.Errorf("slack webhook_url is required")
+		return invalidConfig(fmt.Errorf("slack webhook_url is required"))
 	}
 
 	// SSRF check
 	if err := notifyURLSafetyCheck(webhookURL); err != nil {
-		return fmt.Errorf("slack webhook URL not allowed: %w", err)
+		return invalidConfig(fmt.Errorf("slack webhook URL not allowed: %w", err))
 	}
 
 	emoji := "ℹ️"
@@ -210,6 +228,9 @@ func slackEscape(s string) string {
 
 func sendTelegram(botToken, chatID string, msg Message) (err error) {
 	defer func() { err = redactURLError(err) }()
+	if strings.TrimSpace(botToken) == "" || strings.TrimSpace(chatID) == "" {
+		return invalidConfig(fmt.Errorf("telegram bot_token and chat_id are required"))
+	}
 	emoji := "ℹ️"
 	switch msg.Level {
 	case "warning":
@@ -230,7 +251,7 @@ func sendTelegram(botToken, chatID string, msg Message) (err error) {
 	// without this check a misconfiguration could turn the notify pipeline
 	// into an internal-network probe.
 	if err := notifyURLSafetyCheck(url); err != nil {
-		return fmt.Errorf("telegram URL not allowed: %w", err)
+		return invalidConfig(fmt.Errorf("telegram URL not allowed: %w", err))
 	}
 	payload := map[string]string{
 		"chat_id":    chatID,
@@ -242,7 +263,9 @@ func sendTelegram(botToken, chatID string, msg Message) (err error) {
 	if err != nil {
 		return err
 	}
-	_, readErr := io.Copy(io.Discard, resp.Body)
+	// Only the status matters; read a bounded prefix like the webhook and Slack
+	// channels do instead of whatever the endpoint streams within the timeout.
+	_, readErr := io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 	resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("telegram API returned %d", resp.StatusCode)
@@ -295,6 +318,14 @@ var (
 	smtpTLSConfig       = func(host string) *tls.Config { return &tls.Config{ServerName: host} }
 )
 
+// smtpDialControl applies the address policy IsHostSafe checks before sending
+// (cloud metadata, link-local, unspecified and documentation ranges refused;
+// loopback and private relays allowed, a local MTA being a normal setup) to the
+// address the OS is about to connect to. The pre-flight resolves the name on
+// its own, so a name that re-resolves to a blocked address between the check
+// and the dial (DNS rebinding) got through (F49303). Overridable in tests.
+var smtpDialControl = config.ProxyDialControl(true)
+
 // sendMailBounded is smtp.SendMail with a deadline on the connection: same
 // sequence (EHLO, STARTTLS when offered, AUTH, MAIL, RCPT, DATA, QUIT).
 func sendMailBounded(addr string, a smtp.Auth, from string, to []string, msg []byte) error {
@@ -310,7 +341,7 @@ func sendMailBounded(addr string, a smtp.Auth, from string, to []string, msg []b
 	if err != nil {
 		return err
 	}
-	d := net.Dialer{Timeout: smtpTimeout}
+	d := net.Dialer{Timeout: smtpTimeout, Control: smtpDialControl}
 	var conn net.Conn
 	implicitTLS := port == smtpImplicitTLSPort
 	if implicitTLS {
@@ -377,10 +408,10 @@ func sendEmail(cfg map[string]string, msg Message) error {
 	to := cfg["to"]
 
 	if host == "" || to == "" {
-		return fmt.Errorf("email: smtp_host and to are required")
+		return invalidConfig(fmt.Errorf("email: smtp_host and to are required"))
 	}
 	if err := notifyHostSafetyCheck(host); err != nil {
-		return fmt.Errorf("email: %w", err)
+		return invalidConfig(fmt.Errorf("email: %w", err))
 	}
 	if port == "" {
 		port = "587"
@@ -393,7 +424,7 @@ func sendEmail(cfg map[string]string, msg Message) error {
 	// RCPT that SMTP servers reject, and drop empties.
 	recipients := splitRecipients(to)
 	if len(recipients) == 0 {
-		return fmt.Errorf("email: no valid recipients")
+		return invalidConfig(fmt.Errorf("email: no valid recipients"))
 	}
 
 	// Strip CR/LF from header-interpolated fields to prevent SMTP header

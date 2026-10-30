@@ -48,6 +48,7 @@ type Deps interface {
 	AtomicWriteFile(path string, data []byte, perm os.FileMode) error
 	// PHP manager (may be nil)
 	PHPManager() *phpmanager.Manager
+	CronMonitor() *cronjob.Monitor
 	CachePurgeByTag(tag string) int
 	// Unknown host tracker
 	UnknownHostAvailable() bool
@@ -587,13 +588,10 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	cfg := h.deps.ConfigPtr()
 	found := false
 	var domainRoot string
-	for i, d := range cfg.Domains {
-		if domainutil.CanonicalDomainHostname(d.Host) == host {
-			domainRoot = d.Root
-			cfg.Domains = append(cfg.Domains[:i], cfg.Domains[i+1:]...)
-			found = true
-			break
-		}
+	if i := findDomainIndex(cfg.Domains, host); i >= 0 {
+		domainRoot = cfg.Domains[i].Root
+		cfg.Domains = append(cfg.Domains[:i], cfg.Domains[i+1:]...)
+		found = true
 	}
 	h.deps.UnlockConfig()
 
@@ -608,14 +606,22 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	h.deps.RemoveDomainFile(host)
 
+	// The PHP worker belongs to the domain: stopping it and dropping the
+	// assignment loses nothing, so it does not wait for the opt-in cleanup.
+	// Left behind, a php-cgi process kept listening for a hostname that no
+	// longer exists and the next tenant given the name inherited its per-domain
+	// php.ini overrides and worker address (F51100).
+	if mgr := h.deps.PHPManager(); mgr != nil {
+		_ = mgr.StopDomain(host)
+		mgr.UnassignDomain(host)
+	}
+
 	if r.URL.Query().Get("cleanup") == "true" {
-		mgr := h.deps.PHPManager()
-		if mgr != nil {
-			mgr.StopDomain(host)
-			mgr.UnassignDomain(host)
-		}
 		h.deps.CachePurgeByTag(cache.SiteTag(host))
 		cronjob.RemoveByDomain(host)
+		if mon := h.deps.CronMonitor(); mon != nil {
+			mon.ClearDomain(host)
+		}
 		siteuser.DeleteUser(host)
 	}
 
@@ -728,12 +734,9 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		var cur *config.Domain
-		for _, existing := range h.deps.ConfigDomains() {
-			if domainutil.CanonicalDomainHostname(existing.Host) == host {
-				e := existing
-				cur = &e
-				break
-			}
+		if domains := h.deps.ConfigDomains(); findDomainIndex(domains, host) >= 0 {
+			e := domains[findDomainIndex(domains, host)]
+			cur = &e
 		}
 		if key := webAccessFieldChange(cur, d); key != "" {
 			h.deps.RecordAudit(r, "domain.update", "domain: "+host+" (forbidden field: "+key+")", false)
@@ -805,8 +808,9 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	cfg := h.deps.ConfigPtr()
 	found := false
 	var replaced []string
+	updateIndex := findDomainIndex(cfg.Domains, host)
 	for i, existing := range cfg.Domains {
-		if domainutil.CanonicalDomainHostname(existing.Host) == host {
+		if i == updateIndex {
 			merged := config.MergeDomain(existing, d, patchFields, replaceMode)
 			domainutil.NormalizeDomainHostnames(&merged)
 			// Redirect domains cannot have aliases
@@ -894,7 +898,9 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 			replaced = implicitWWWRedirectHosts(cfg.Domains, merged.Host, i)
 			domainutil.RemoveImplicitWWWRedirectDomains(&cfg.Domains, merged.Host, i)
 			if len(redirectAliases) > 0 {
-				domainutil.UpsertCanonicalRedirectAliasDomains(&cfg.Domains, i, redirectAliases, merged.Host, aliasOpts.redirectCode, aliasOpts.preservePath)
+				// The removal above shifts the records after it, so the edited
+				// domain's index is looked up again (F59600).
+				domainutil.UpsertCanonicalRedirectAliasDomains(&cfg.Domains, findDomainIndex(cfg.Domains, merged.Host), redirectAliases, merged.Host, aliasOpts.redirectCode, aliasOpts.preservePath)
 			}
 			d = merged
 			found = true
@@ -1030,12 +1036,32 @@ func parseAliasOptions(body []byte) (aliasOptions, error) {
 	return opts, nil
 }
 
-func (h *Handler) domainTypeForHost(host string) string {
-	host = domainutil.CanonicalDomainHostname(host)
-	for _, d := range h.deps.ConfigDomains() {
-		if domainutil.CanonicalDomainHostname(d.Host) == host {
-			return d.Type
+// findDomainIndex returns the index of the record for host, or -1. Host
+// comparison ignores a leading "www.", so a legacy or migrated redirect record
+// "www.example.test" shares its key with the site "example.test"; the record
+// spelled exactly as asked wins, so that record never shadows the site when it
+// happens to come first (F59601).
+func findDomainIndex(domains []config.Domain, host string) int {
+	key := domainutil.CanonicalDomainHostname(host)
+	fallback := -1
+	for i, d := range domains {
+		if domainutil.CanonicalDomainHostname(d.Host) != key {
+			continue
 		}
+		if domainutil.NormalizeDomainHostname(d.Host) == key {
+			return i
+		}
+		if fallback < 0 {
+			fallback = i
+		}
+	}
+	return fallback
+}
+
+func (h *Handler) domainTypeForHost(host string) string {
+	domains := h.deps.ConfigDomains()
+	if i := findDomainIndex(domains, host); i >= 0 {
+		return domains[i].Type
 	}
 	return ""
 }
@@ -1079,14 +1105,12 @@ func (h *Handler) Detail(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	for _, d := range h.deps.ConfigDomains() {
-		if domainutil.CanonicalDomainHostname(d.Host) == host {
-			out := d
-			domainutil.NormalizeDomainHostnames(&out)
-			out.Aliases = domainutil.PublicDomainAliases(out)
-			jsonResponse(w, out)
-			return
-		}
+	if domains := h.deps.ConfigDomains(); findDomainIndex(domains, host) >= 0 {
+		out := domains[findDomainIndex(domains, host)]
+		domainutil.NormalizeDomainHostnames(&out)
+		out.Aliases = domainutil.PublicDomainAliases(out)
+		jsonResponse(w, out)
+		return
 	}
 	jsonError(w, "domain not found", http.StatusNotFound)
 }
@@ -1175,13 +1199,9 @@ func (h *Handler) UnknownAlias(w http.ResponseWriter, r *http.Request) {
 
 	h.deps.LockConfig()
 	cfg := h.deps.ConfigPtr()
-	targetIndex := -1
-	for i, d := range cfg.Domains {
-		if domainutil.CanonicalDomainHostname(d.Host) == target {
-			targetIndex = i
-			break
-		}
-	}
+	// findDomainIndex, not the first canonical match: a "www." redirect record
+	// listed before the site would stand in for it (F60600).
+	targetIndex := findDomainIndex(cfg.Domains, target)
 	if targetIndex == -1 {
 		h.deps.UnlockConfig()
 		jsonError(w, "target domain not found", http.StatusNotFound)
@@ -1326,12 +1346,11 @@ func (h *Handler) RawPut(w http.ResponseWriter, r *http.Request) {
 	// manage, and no one may point root outside web_root.
 	if user, ok := h.deps.UserFromContext(r); ok && user.Role != auth.RoleAdmin {
 		var cur *config.Domain
-		for _, d := range h.deps.ConfigDomains() {
-			if domainutil.CanonicalDomainHostname(d.Host) == domainutil.CanonicalDomainHostname(host) {
-				dd := d
-				cur = &dd
-				break
-			}
+		// findDomainIndex, not the first canonical match: a "www." redirect record
+		// listed before the site would stand in for it (F60000).
+		if domains := h.deps.ConfigDomains(); findDomainIndex(domains, host) >= 0 {
+			dd := domains[findDomainIndex(domains, host)]
+			cur = &dd
 		}
 		if cur == nil {
 			h.deps.RecordAudit(r, "domain.raw_update", "domain: "+host+" (not found)", false)
@@ -1593,10 +1612,10 @@ func rawPutForbiddenChange(cur, next config.Domain) string {
 // alias. A redirect domain that points at next's own host is the alias
 // mechanism and does not count, as in Update.
 func rawPutConflict(all []config.Domain, editing string, next config.Domain) string {
-	editKey := domainutil.CanonicalDomainHostname(editing)
+	editIdx := findDomainIndex(all, editing)
 	others := make([]config.Domain, 0, len(all))
-	for _, d := range all {
-		if domainutil.CanonicalDomainHostname(d.Host) == editKey {
+	for i, d := range all {
+		if i == editIdx {
 			continue
 		}
 		others = append(others, d)

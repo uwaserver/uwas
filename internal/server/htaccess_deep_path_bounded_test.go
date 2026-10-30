@@ -62,7 +62,11 @@ func TestHtaccessWalkIgnoresNonexistentDeepPath(t *testing.T) {
 		if c := deepGet(s, "/"+strings.Repeat("a/", segs)+"x.txt"); c != http.StatusNotFound {
 			t.Errorf("%d nonexistent segments = %d, want 404", segs, c)
 		}
-		if d := time.Since(start); d > 5*time.Second {
+		// Hang detector only: the regression itself is caught by the
+		// deterministic cache-entry count below. A wall-clock bound tight
+		// enough to matter is not stable (warm ~7ms, but 12s on a loaded CI
+		// host under -race).
+		if d := time.Since(start); d > 90*time.Second {
 			t.Errorf("%d nonexistent segments took %v", segs, d)
 		}
 	}

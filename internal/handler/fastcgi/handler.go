@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -221,7 +222,7 @@ func (h *Handler) tryServeFile(ctx *router.RequestContext, domain *config.Domain
 	isAccel := false
 	if accel := headers.Get("X-Accel-Redirect"); accel != "" {
 		headers.Del("X-Accel-Redirect")
-		filePath = filepath.Join(domain.Root, filepath.Clean("/"+accel))
+		filePath = accelFilePath(domain.Root, accel)
 		isAccel = true
 	} else if sendfile := headers.Get("X-Sendfile"); sendfile != "" {
 		headers.Del("X-Sendfile")
@@ -309,6 +310,31 @@ func (h *Handler) tryServeFile(ctx *router.RequestContext, domain *config.Domain
 	}
 	http.ServeContent(ctx.Response, ctx.Request, info.Name(), info.ModTime(), f)
 	return true
+}
+
+// accelFilePath maps an X-Accel-Redirect value to a file under root. The value
+// is a URI, as nginx treats it: its query string is not part of the path and
+// %XX escapes are decoded, so "/my%20file.pdf?dl=1" names "my file.pdf". The
+// decoded path is joined to root through filepath.Clean("/"+...), so ".."
+// that decoding reveals cannot climb out; the caller still checks containment.
+// A value that does not decode cleanly, or whose decoded name no file answers
+// to, keeps its literal reading, so a file whose name really contains "%20" is
+// still reachable (F48601).
+func accelFilePath(root, accel string) string {
+	literal := filepath.Join(root, filepath.Clean("/"+accel))
+	uri, _, _ := strings.Cut(accel, "?")
+	dec, err := url.PathUnescape(uri)
+	if err != nil || hasControlChar(dec) {
+		return literal
+	}
+	decoded := filepath.Join(root, filepath.Clean("/"+dec))
+	if decoded == literal {
+		return literal
+	}
+	if _, err := os.Stat(decoded); err == nil {
+		return decoded
+	}
+	return literal
 }
 
 // hasDotDotElement reports whether p has a ".." path element. A file name that

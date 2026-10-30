@@ -159,6 +159,11 @@ func loadDomainsDirWarn(dir string) ([]Domain, []string, error) {
 		if !strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml") {
 			continue
 		}
+		// Editor lock and swap artefacts (Emacs ".#name.yaml", a dangling
+		// symlink) are not domain files (F56302).
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
 
 		path := filepath.Join(dir, name)
 		domains, ws, err := loadDomainFileWarn(path)
@@ -193,6 +198,11 @@ func loadDomainFile(path string) ([]Domain, error) {
 	domains, _, err := loadDomainFileWarn(path)
 	return domains, err
 }
+
+// LoadDomainFile loads the domains one domains.d file defines, with the same
+// rules Load applies (environment expansion, single-domain or domains-list
+// format). The admin API uses it to find out which file a host came from.
+func LoadDomainFile(path string) ([]Domain, error) { return loadDomainFile(path) }
 
 // loadDomainFileWarn is loadDomainFile that also returns what the file
 // contained that the loader could not act on: keys the schema does not have,

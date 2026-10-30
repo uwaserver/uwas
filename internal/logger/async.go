@@ -3,7 +3,6 @@ package logger
 import (
 	"fmt"
 	"io"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -31,7 +30,13 @@ type asyncWriter struct {
 	out     io.Writer
 	ch      chan []byte
 	dropped atomic.Uint64
-	pending sync.WaitGroup
+	// queued and written count lines accepted and handed to the output. flush
+	// waits for written to reach the queued count it saw on entry; a
+	// sync.WaitGroup cannot do this, because Write adds to it while flush
+	// waits, which panics the process with "WaitGroup is reused before
+	// previous Wait has returned" when the counter hits zero in between.
+	queued  atomic.Uint64
+	written atomic.Uint64
 	json    bool // the stream is JSON lines, so the drop notice must be too
 }
 
@@ -49,11 +54,10 @@ func (a *asyncWriter) Write(p []byte) (int, error) {
 	// slog reuses its buffer after Write returns, so the line must be copied.
 	b := make([]byte, len(p))
 	copy(b, p)
-	a.pending.Add(1)
 	select {
 	case a.ch <- b:
+		a.queued.Add(1)
 	default:
-		a.pending.Done()
 		a.dropped.Add(1)
 	}
 	return len(p), nil
@@ -65,7 +69,7 @@ func (a *asyncWriter) run() {
 	last := time.Now()
 	for b := range a.ch {
 		_, _ = a.out.Write(b)
-		a.pending.Done()
+		a.written.Add(1)
 		if len(a.ch) == 0 || time.Since(last) >= time.Second {
 			a.reportDropped()
 			last = time.Now()
@@ -86,15 +90,12 @@ func (a *asyncWriter) reportDropped() {
 	}
 }
 
-// flush waits until queued lines are written, or until timeout passes.
+// flush waits until the lines queued before the call are written, or until
+// timeout passes.
 func (a *asyncWriter) flush(timeout time.Duration) {
-	done := make(chan struct{})
-	go func() {
-		a.pending.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(timeout):
+	target := a.queued.Load()
+	deadline := time.Now().Add(timeout)
+	for a.written.Load() < target && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
 	}
 }

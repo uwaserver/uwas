@@ -201,7 +201,7 @@ export default function Services() {
                   </td>
                 </tr>
               ))}
-              {services.length === 0 && (
+              {services.length === 0 && !error && (
                 <tr>
                   <td colSpan={4} className="px-5 py-12 text-center text-muted-foreground">
                     No services found.

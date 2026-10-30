@@ -3,8 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"io"
 	"net"
@@ -290,7 +288,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Virtual host lookup
-	domain := s.vhosts.Lookup(r.Host)
+	domain, hostConfigured := s.vhosts.LookupWithStatus(r.Host)
 	if domain == nil {
 		renderErrorPage(ctx.Response, http.StatusNotFound)
 		return
@@ -467,7 +465,10 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 					clientAddr = r.RemoteAddr
 				}
 			}
-			limiterKey := domain.Host + "|" + loc.Match + "|" + clientAddr
+			// Counted per client as the domain and global limiters count one:
+			// an IPv6 client owns a /64, so a per-address key let it rotate
+			// the low bits past this limit (F47700).
+			limiterKey := domain.Host + "|" + loc.Match + "|" + middleware.RateBucket(clientAddr)
 			window := loc.RateLimit.Window.Duration
 			if window == 0 {
 				window = time.Minute
@@ -486,13 +487,15 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				entry = v.(*rateLimitEntry)
 			}
 			entry.mu.Lock()
-			// Evict stale entry (>10x window since last access) and treat as new.
+			entry.window = window
+			// A counter idle for more than 10 windows starts over. It stays in
+			// the map: deleting it here threw away the request just counted,
+			// so every long pause let one extra request through (F48001).
 			if now.Sub(entry.lastAccess) > 10*window {
 				entry.windowStart = now
 				entry.count = 1
 				entry.lastAccess = now
 				entry.mu.Unlock()
-				s.locationLimiters.Delete(limiterKey)
 			} else {
 				if now.Sub(entry.windowStart) > window {
 					entry.windowStart = now
@@ -543,7 +546,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		if loc.Redirect != "" {
 			applyDomainResponseHeaders(ctx.Response.Header(), r, domain)
 			code := loc.RedirectCode
-			if code == 0 {
+			if code == 0 || !config.ValidLocationRedirectCode(code) {
 				code = http.StatusMovedPermanently
 			}
 			http.Redirect(ctx.Response, r, loc.Redirect, code)
@@ -673,6 +676,17 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				ctx.Response.Header()[k] = append([]string(nil), vv...)
 			}
 			mergeVaryNames(ctx.Response.Header(), priorVary)
+			// A backend that builds an absolute redirect from the Host it was
+			// given names its own address; point it at the client-facing host
+			// (F40302). A base path or strip_prefix remaps paths as well, which
+			// is not undone here, so those locations are left alone.
+			if pu, perr := url.Parse(loc.ProxyPass); perr == nil && !loc.StripPrefix && (pu.Path == "" || pu.Path == "/") {
+				scheme := "http"
+				if ctx.IsHTTPS {
+					scheme = "https"
+				}
+				proxyhandler.RewriteBackendLocation(ctx.Response.Header(), pu, scheme, r.Host)
+			}
 			applyDomainResponseHeaders(ctx.Response.Header(), r, domain)
 			// Same laundering on the response side: the upstream's Connection
 			// header and the fields it names must not reach the client.
@@ -805,7 +819,11 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Cache lookup — check global bypass + per-domain bypass rules
 	// PHP domains: only cache static assets (images, CSS, JS), never PHP output.
 	// PHP responses go through FastCGI and are always dynamic.
-	cacheEnabled := s.cache != nil && domain.Cache.Enabled && !cache.ShouldBypass(r)
+	// A Host that matched no configured site falls through to the first
+	// domain; its answers are not cached, because the key carries the raw Host
+	// and every invented name would store another copy of that site's pages,
+	// evicting the real tenants' entries (F60301).
+	cacheEnabled := s.cache != nil && domain.Cache.Enabled && hostConfigured && !cache.ShouldBypass(r)
 	if cacheEnabled && domain.Type == "php" {
 		// Only cache requests for known static file extensions on PHP domains.
 		ext := strings.ToLower(filepath.Ext(r.URL.Path))
@@ -910,6 +928,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				}
 				ctx.Response.Header()[ck] = append([]string(nil), vals...)
 			}
+			reresolveHeaderTemplates(ctx.Response.Header(), r, domain)
 			// RFC 9111 §4.2.3: the age of the stored response is the age the
 			// upstream reported plus the time it has sat in this cache.
 			ctx.Response.Header().Set("X-Cache", status)
@@ -1003,19 +1022,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		if !capture.overflow && !capture.upstreamEncoded && cache.IsCacheable(r, ctx.Response.StatusCode(), hdrs) {
 			ttl := cache.CapTTL(cacheTTLFor(ruleTTL, domain.Cache.TTL, s.defaultCacheTTL()), hdrs)
 			capturedBody := capture.body.Bytes()
-			isESI := domain.Cache.ESI && s.esiProcessor != nil &&
-				strings.Contains(hdrs.Get("Content-Type"), "text/html") &&
-				cache.ContainsESI(capturedBody) &&
-				r.Header.Get("X-ESI-Subrequest") == ""
-			// Generate ETag for non-ESI dynamic responses to support conditional requests.
-			if !isESI && hdrs.Get("ETag") == "" && len(capturedBody) > 0 {
-				hash := sha256.Sum256(capturedBody)
-				var etag [34]byte
-				etag[0] = '"'
-				hex.Encode(etag[1:33], hash[:16])
-				etag[33] = '"'
-				hdrs.Set("ETag", string(etag[:]))
-			}
+			isESI := s.prepareCacheEntry(domain, r, hdrs, capturedBody)
 			s.cache.SetByKey(cacheKey, &cache.CachedResponse{
 				StatusCode:  ctx.Response.StatusCode(),
 				Headers:     hdrs,

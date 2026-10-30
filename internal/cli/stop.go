@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/uwaserver/uwas/internal/config"
 )
 
 // Hooks for testing.
@@ -77,8 +79,10 @@ func (s *StopCommand) Run(args []string) error {
 		return fmt.Errorf("failed to send SIGTERM to process %d: %w", pid, err)
 	}
 
-	// Wait for exit (up to 15 seconds)
-	for i := 0; i < 30; i++ {
+	// Wait for exit: the server drains for its shutdown grace, so the wait
+	// has to outlast it before SIGKILL cuts the shutdown short (F56304).
+	wait := stopWaitFromConfig()
+	for i := 0; i < int(wait/(500*time.Millisecond)); i++ {
 		time.Sleep(500 * time.Millisecond)
 		if !isProcessAliveFn(process) {
 			fmt.Println("UWAS stopped.")
@@ -86,7 +90,7 @@ func (s *StopCommand) Run(args []string) error {
 		}
 	}
 
-	fmt.Println("Process still running after 15s — sending SIGKILL.")
+	fmt.Printf("Process still running after %s — sending SIGKILL.\n", wait.Round(time.Second))
 	process.Kill()
 	fmt.Println("UWAS killed.")
 	return nil
@@ -165,7 +169,8 @@ func expandConfigEnv(s string) string {
 	return envRefPattern.ReplaceAllStringFunc(s, func(match string) string {
 		name := match[2 : len(match)-1]
 		if n, fallback, ok := strings.Cut(name, ":-"); ok {
-			if v, found := os.LookupEnv(n); found {
+			// Same as the loader: unset or empty takes the fallback (F56303).
+			if v, found := os.LookupEnv(n); found && v != "" {
 				return v
 			}
 			return fallback
@@ -175,4 +180,28 @@ func expandConfigEnv(s string) string {
 		}
 		return match
 	})
+}
+
+// stopWaitFromConfig is how long `uwas stop` waits for the server to exit:
+// global.timeouts.shutdown_grace (30s when unset or unreadable, the loader's
+// default) plus a margin for what runs after the drain.
+func stopWaitFromConfig() time.Duration {
+	grace := 30 * time.Second
+	if cfgFile, found := findConfigFn(""); found {
+		if raw, err := osReadFileFn(cfgFile); err == nil {
+			var doc struct {
+				Global *struct {
+					Timeouts struct {
+						ShutdownGrace config.Duration `yaml:"shutdown_grace"`
+					} `yaml:"timeouts"`
+				} `yaml:"global"`
+			}
+			if yaml.Unmarshal([]byte(expandConfigEnv(string(raw))), &doc) == nil && doc.Global != nil {
+				if g := doc.Global.Timeouts.ShutdownGrace.Duration; g > 0 {
+					grace = g
+				}
+			}
+		}
+	}
+	return grace + 10*time.Second
 }

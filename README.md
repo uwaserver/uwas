@@ -24,7 +24,7 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.11.39)
+## Current Snapshot (v0.11.40)
 
 - **Dashboard pages:** 42 (`web/dashboard/src/pages`; `settingsSections.tsx` lives there too but is section definitions, not a page)
 - **Admin API routes:** 254+ explicit route registrations in `internal/admin/routes.go` under `/api/v1` plus dashboard/static handlers
@@ -33,6 +33,13 @@ One binary. Zero hassle.
 - **Test status:** all gates pass — `go build`, `go vet`, `staticcheck`, `go test`, `go test -race`, dashboard npm build; CI runs additional `govulncheck`, shellcheck, installer tests, Docker Compose validation, and docs/site builds
 - **Security/stability fixes:** v0.11.29 hardens against request floods (async logging, rate-limited redirects, cache bypass fix) and moves to Go 1.26.9 for HTTP/2 DoS fixes
 - **Security posture:** risk score 2.1/10 (Low) per July 2026 reassessment
+
+**v0.11.40 highlights (security release, evidence-audit rounds 174–195):**
+- Tenant isolation: PHP workers and wp-cli no longer run as root, root-owned writes and chowns on tenant paths refuse symlinks (backup restore, WordPress install/update, image optimizer, clone/migrate), bootstrap rejects DNS-rebinding hosts
+- Availability: a NUL byte in a WordPress install request no longer crashes the server, `domains.d` and `include:` domains no longer produce a duplicate host that blocks restart, a second instance no longer clobbers the PID file, `uwas stop` waits for graceful shutdown
+- Disclosure: PHP variant sources (`.phtml` and friends), vendor and lock files are no longer served, cache no longer leaks template headers, config export redacts secrets
+- Destructive actions: DB import and API-key regeneration require PIN / current password; many API status codes, null lists and dashboard load-error states fixed
+- Cache and DoS hardening: bounded `Accept-Encoding` cache keys, no cache entries for unmatched hosts, bounded reads, image-conversion and `systemctl` deadlines, log rotation, deploy output cap
 
 **v0.11.39 highlights:**
 - 2FA fixes: the per-request gate no longer rejects the second admin request in a 30 s window, the web terminal and SSE stats work with 2FA, the dashboard recovers from an expired code and sends it on every call

@@ -5,6 +5,7 @@ package php
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -239,7 +240,14 @@ func (h *Handler) ConfigUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.deps.PHPManager().SetConfig(version, req.Key, req.Value); err != nil {
 		h.deps.RecordAudit(r, "php.config_update", fmt.Sprintf("version: %s, key: %s: %s", version, req.Key, err.Error()), false)
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, phpmanager.ErrInvalidDirective):
+			status = http.StatusBadRequest
+		case errors.Is(err, phpmanager.ErrVersionNotFound):
+			status = http.StatusNotFound
+		}
+		jsonError(w, err.Error(), status)
 		return
 	}
 	h.deps.RecordAudit(r, "php.config_update", fmt.Sprintf("version: %s, key: %s", version, req.Key), true)
@@ -574,7 +582,11 @@ func (h *Handler) DomainConfigPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.deps.PHPManager().SetDomainConfig(domain, req.Key, req.Value); err != nil {
-		jsonError(w, err.Error(), http.StatusNotFound)
+		status := http.StatusBadRequest
+		if errors.Is(err, phpmanager.ErrDomainNotAssigned) {
+			status = http.StatusNotFound
+		}
+		jsonError(w, err.Error(), status)
 		return
 	}
 	if p, ok := h.deps.(interface{ PersistDomainPHPOverridesErr(string) error }); ok {

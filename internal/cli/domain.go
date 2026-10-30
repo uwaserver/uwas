@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -33,6 +34,13 @@ Flags for 'add':
   --type string    Domain type: static, php, proxy, redirect (default "static")
   --root string    Document root path
   --ssl string     SSL mode: auto, manual, off (default "off")
+
+Flags for 'remove':
+  --cleanup        Also stop its PHP worker, purge its cache and remove its
+                   cron jobs and SFTP user (never deletes the document root)
+  --pin string     Admin PIN, required when the server has pin_code set
+                   (env: UWAS_ADMIN_PIN; 'uwas install' and 'uwas init' save it
+                   next to UWAS_ADMIN_KEY in the .env file)
 
 Examples:
   uwas domain list --api-url http://127.0.0.1:9443 --api-key mykey
@@ -137,6 +145,8 @@ func (d *DomainCommand) remove(args []string) error {
 	fs := flag.NewFlagSet("domain remove", flag.ContinueOnError)
 	apiURL := fs.String("api-url", "", "admin API URL")
 	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
+	cleanup := fs.Bool("cleanup", false, "also stop its PHP worker, purge its cache and remove its cron jobs and SFTP user")
+	pin := fs.String("pin", adminPinFromEnv(), "admin PIN (env: UWAS_ADMIN_PIN); required when the server has pin_code set")
 	rest, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
@@ -154,7 +164,12 @@ func (d *DomainCommand) remove(args []string) error {
 		return fmt.Errorf("host is required: uwas domain remove <host>")
 	}
 
-	_, err = apiRequest("DELETE", *apiURL+"/api/v1/domains/"+url.PathEscape(host), *apiKey, nil)
+	// The API refuses a delete without ?confirm=true (F51000).
+	target := *apiURL + "/api/v1/domains/" + url.PathEscape(host) + "?confirm=true"
+	if *cleanup {
+		target += "&cleanup=true"
+	}
+	_, err = apiRequestPin("DELETE", target, *apiKey, *pin, nil)
 	if err != nil {
 		return fmt.Errorf("remove domain %s: %w", host, err)
 	}
@@ -252,7 +267,44 @@ func (c *CacheCommand) stats(args []string) error {
 	return nil
 }
 
+// apiError is a non-2xx answer from the admin API. Its text keeps the
+// "API error <status>: <body>" form and adds, on the same line, how to fix the
+// two refusals an operator can fix from the command line: no/wrong API key and
+// a missing PIN.
+type apiError struct {
+	status int
+	body   string
+}
+
+func (e *apiError) Error() string {
+	msg := fmt.Sprintf("API error %d: %s", e.status, e.body)
+	switch {
+	case e.status == http.StatusUnauthorized:
+		msg += " (the admin API key is missing or wrong: pass --api-key or set UWAS_ADMIN_KEY)"
+	case e.status == http.StatusForbidden && (strings.Contains(e.body, "pin_required") || strings.Contains(e.body, "invalid_pin")):
+		msg += " (this action needs the admin PIN: pass --pin <code> or set UWAS_ADMIN_PIN)"
+	}
+	return msg
+}
+
+// isAuthError reports whether err is the API refusing the CLI's credentials.
+func isAuthError(err error) bool {
+	var ae *apiError
+	return errors.As(err, &ae) && ae.status == http.StatusUnauthorized
+}
+
+// adminPinFromEnv is the PIN the CLI sends with every request when the
+// operator has set UWAS_ADMIN_PIN (or put it in the .env file that holds
+// UWAS_ADMIN_KEY). The server only checks it on destructive routes and ignores
+// it elsewhere.
+func adminPinFromEnv() string { return os.Getenv("UWAS_ADMIN_PIN") }
+
 func apiRequest(method, url, apiKey string, body io.Reader) ([]byte, error) {
+	return apiRequestPin(method, url, apiKey, adminPinFromEnv(), body)
+}
+
+// apiRequestPin is apiRequest with an explicit PIN (the --pin flag).
+func apiRequestPin(method, url, apiKey, pin string, body io.Reader) ([]byte, error) {
 	req, err := http.NewRequest(method, url, body)
 	if err != nil {
 		return nil, err
@@ -260,7 +312,14 @@ func apiRequest(method, url, apiKey string, body io.Reader) ([]byte, error) {
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
+	if pin != "" {
+		req.Header.Set("X-Pin-Code", pin)
+	}
 	req.Header.Set("Content-Type", "application/json")
+	// The admin API refuses a state-changing request that carries neither this
+	// header nor a dashboard Origin ("csrf: invalid origin"); without it every
+	// add/remove/start/purge was rejected by a server with an API key (F51001).
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 
 	resp, err := apiHTTPClient.Do(req)
 	if err != nil {
@@ -274,7 +333,7 @@ func apiRequest(method, url, apiKey string, body io.Reader) ([]byte, error) {
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(data))
+		return nil, &apiError{status: resp.StatusCode, body: string(data)}
 	}
 
 	return data, nil

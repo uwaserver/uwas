@@ -828,7 +828,7 @@ func ValidateTokenWithClient(client *http.Client, token, accountID string) (stri
 			Message string `json:"message"`
 		} `json:"errors"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&result); err != nil {
 		return "", fmt.Errorf("token verify: malformed response: %w", err)
 	}
 	if !result.Success {
@@ -899,7 +899,7 @@ func FetchZonesWithClient(client *http.Client, token string) ([]Zone, error) {
 				Message string `json:"message"`
 			} `json:"errors"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&result); err != nil {
 			return nil, fmt.Errorf("zones page %d: malformed response: %w", page, err)
 		}
 		io.Copy(io.Discard, resp.Body)
@@ -965,7 +965,7 @@ func FetchDNSRecordsWithClient(client *http.Client, token, zoneID string) ([]DNS
 				TotalPages int `json:"total_pages"`
 			} `json:"result_info"`
 		}
-		err = json.NewDecoder(resp.Body).Decode(&result)
+		err = json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&result)
 		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 		if err != nil {

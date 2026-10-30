@@ -475,16 +475,16 @@ type RemoteAccessResult struct {
 // CreateDatabase creates a new MySQL database and user. Returns credentials.
 func CreateDatabase(name, user, password, host string) (*CreateResult, error) {
 	if name == "" {
-		return nil, fmt.Errorf("database name required")
+		return nil, invalidInputf("database name required")
 	}
 	if !validDBIdentifier(name) {
-		return nil, fmt.Errorf("invalid database name: only letters, digits and underscore allowed (max 64 chars)")
+		return nil, invalidInputf("invalid database name: only letters, digits and underscore allowed (max 64 chars)")
 	}
 	if user == "" {
 		user = name
 	}
 	if !validDBIdentifier(user) {
-		return nil, fmt.Errorf("invalid username: only letters, digits and underscore allowed (max 64 chars)")
+		return nil, invalidInputf("invalid username: only letters, digits and underscore allowed (max 64 chars)")
 	}
 	if password == "" {
 		var err error
@@ -497,7 +497,7 @@ func CreateDatabase(name, user, password, host string) (*CreateResult, error) {
 		host = "localhost"
 	}
 	if strings.ContainsRune(password, 0) || strings.ContainsRune(host, 0) {
-		return nil, fmt.Errorf("invalid password or host: null byte not allowed")
+		return nil, invalidInputf("invalid password or host: null byte not allowed")
 	}
 
 	// CREATE USER IF NOT EXISTS leaves an existing account untouched, so the
@@ -523,6 +523,29 @@ func CreateDatabase(name, user, password, host string) (*CreateResult, error) {
 	return &CreateResult{Name: name, User: user, Password: password, Host: host}, nil
 }
 
+// ErrInvalidInput marks an error that is the caller's fault (a name, user,
+// host or password the validators refuse). Handlers answer it with 400. The
+// error text is unchanged; errors.Is matches through the inputError type.
+var ErrInvalidInput = errors.New("invalid input")
+
+type inputError string
+
+func (e inputError) Error() string        { return string(e) }
+func (e inputError) Is(target error) bool { return target == ErrInvalidInput }
+
+func invalidInputf(format string, args ...any) error {
+	return inputError(fmt.Sprintf(format, args...))
+}
+
+// ErrContainerExists reports that a Docker database container with the
+// requested name already exists (a conflict, not a server fault).
+var ErrContainerExists = errors.New("container already exists")
+
+type conflictError string
+
+func (e conflictError) Error() string        { return string(e) }
+func (e conflictError) Is(target error) bool { return target == ErrContainerExists }
+
 // ErrUserExists reports that the account CreateDatabase was asked to create is
 // already present on the server.
 var ErrUserExists = errors.New("database user already exists")
@@ -546,7 +569,7 @@ func dbUserExists(user, host string) (bool, error) {
 // DropDatabase removes a database and its user.
 func DropDatabase(name, user, host string) error {
 	if !validDBIdentifier(name) {
-		return fmt.Errorf("invalid database name")
+		return invalidInputf("invalid database name")
 	}
 	if user == "" {
 		user = name
@@ -556,13 +579,13 @@ func DropDatabase(name, user, host string) error {
 	// "admin'#" breaks the string and enables SQL comment injection:
 	//   DROP USER IF EXISTS 'admin'#'@'host'  → drops user 'admin'
 	if !validDBIdentifier(user) {
-		return fmt.Errorf("invalid database user")
+		return invalidInputf("invalid database user")
 	}
 	if host == "" {
 		host = "localhost"
 	}
 	if strings.ContainsRune(host, 0) {
-		return fmt.Errorf("invalid host: null byte not allowed")
+		return invalidInputf("invalid host: null byte not allowed")
 	}
 
 	// DROP DATABASE does not revoke the privileges granted on it. Only the
@@ -630,10 +653,10 @@ func DropUser(user, host string) error {
 	user = strings.TrimSpace(user)
 	host = strings.TrimSpace(host)
 	if user == "" {
-		return fmt.Errorf("user is required")
+		return invalidInputf("user is required")
 	}
 	if !validDBIdentifier(user) {
-		return fmt.Errorf("invalid username: only letters, digits, and underscore allowed (max 64 chars)")
+		return invalidInputf("invalid username: only letters, digits, and underscore allowed (max 64 chars)")
 	}
 	if _, ok := protectedMySQLUsers[user]; ok {
 		return fmt.Errorf("refusing to drop protected system user %q", user)
@@ -642,7 +665,7 @@ func DropUser(user, host string) error {
 		host = "localhost"
 	}
 	if strings.ContainsAny(host, "\x00\n\r'") {
-		return fmt.Errorf("invalid host")
+		return invalidInputf("invalid host")
 	}
 
 	sql := fmt.Sprintf(`
@@ -668,13 +691,13 @@ func ChangePassword(user, host, newPassword string) error {
 	// a username with SQL metacharacters (e.g., single-quote) can break the
 	// string literal and enable comment injection into the ALTER USER statement.
 	if !validDBIdentifier(user) {
-		return fmt.Errorf("invalid database user")
+		return invalidInputf("invalid database user")
 	}
 	if host == "" {
 		host = "localhost"
 	}
 	if strings.ContainsRune(host, 0) || strings.ContainsRune(newPassword, 0) {
-		return fmt.Errorf("invalid password or host: null byte not allowed")
+		return invalidInputf("invalid password or host: null byte not allowed")
 	}
 	sql := fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED BY '%s'; FLUSH PRIVILEGES;", escapeSQL(user), escapeSQL(host), escapeSQL(newPassword))
 	if _, err := runMySQLFn(sql); err != nil {
@@ -694,19 +717,19 @@ func ConfigureRemoteAccess(user, host, password, databaseName string) (*RemoteAc
 	host = strings.TrimSpace(host)
 	databaseName = strings.TrimSpace(databaseName)
 	if user == "" {
-		return nil, fmt.Errorf("user is required")
+		return nil, invalidInputf("user is required")
 	}
 	if !validDBIdentifier(user) {
-		return nil, fmt.Errorf("invalid username: only letters, digits and underscore allowed (max 64 chars)")
+		return nil, invalidInputf("invalid username: only letters, digits and underscore allowed (max 64 chars)")
 	}
 	if host == "" {
 		host = "%"
 	}
 	if strings.ContainsAny(host, "\x00\n\r'") {
-		return nil, fmt.Errorf("invalid host")
+		return nil, invalidInputf("invalid host")
 	}
 	if databaseName != "" && !validDBIdentifier(databaseName) {
-		return nil, fmt.Errorf("invalid database name")
+		return nil, invalidInputf("invalid database name")
 	}
 	if password == "" {
 		var pwErr error
@@ -716,7 +739,7 @@ func ConfigureRemoteAccess(user, host, password, databaseName string) (*RemoteAc
 		}
 	}
 	if strings.ContainsRune(password, 0) {
-		return nil, fmt.Errorf("invalid password: null byte not allowed")
+		return nil, invalidInputf("invalid password: null byte not allowed")
 	}
 
 	// An existing account keeps its password under CREATE USER IF NOT EXISTS,
@@ -863,7 +886,7 @@ type DBUser struct {
 // ExportDatabase exports a database to SQL using mysqldump.
 func ExportDatabase(name string) ([]byte, error) {
 	if !validDBIdentifier(name) {
-		return nil, fmt.Errorf("invalid database name: %s", name)
+		return nil, invalidInputf("invalid database name: %s", name)
 	}
 	// Try mariadb-dump first, then mysqldump
 	for _, bin := range []string{"mariadb-dump", "mysqldump"} {
@@ -887,7 +910,7 @@ func ExportDatabase(name string) ([]byte, error) {
 // ImportDatabase imports SQL data into a database.
 func ImportDatabase(name string, sqlData []byte) error {
 	if !validDBIdentifier(name) {
-		return fmt.Errorf("invalid database name: %s", name)
+		return invalidInputf("invalid database name: %s", name)
 	}
 	for _, client := range []string{"mariadb", "mysql"} {
 		bin, err := execLookPathFn(client)

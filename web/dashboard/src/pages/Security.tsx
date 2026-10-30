@@ -138,6 +138,10 @@ export default function Security() {
       const currentSecurity: Partial<NonNullable<DomainDetail['security']>> = detail.security ?? {};
       await updateDomain(host, {
         security: {
+          // This page does not edit the Cloudflare-only origin lock, but the
+          // server replaces the whole security block, so the saved value has
+          // to be sent back or every save here would turn the lock off.
+          cloudflare_only: currentSecurity.cloudflare_only ?? false,
           waf: { ...(currentSecurity.waf ?? {}), enabled: wafEnabled, bypass_paths: wafBypassPaths },
           rate_limit: { ...(currentSecurity.rate_limit ?? {}), requests: rateLimitReqs, window: rateLimitWindow, by: rateLimitBy.trim() || 'ip' },
           blocked_paths: blockedPaths,

@@ -122,6 +122,7 @@ export default function PHP() {
   const [instances, setInstances] = useState<DomainPHP[]>([]);
   const [domains, setDomains] = useState<DomainData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(null);
 
   /* Per-row state keyed by domain */
@@ -180,8 +181,10 @@ export default function PHP() {
       setInstalls(phpData ?? []);
       setInstances(instanceData ?? []);
       setDomains(domainData ?? []);
-    } catch {
-      // ignore
+      setLoadError('');
+    } catch (e) {
+      // A failed load must not read as "no PHP installed" (F54600).
+      setLoadError((e as Error)?.message || 'Failed to load PHP installations');
     } finally {
       setLoading(false);
     }
@@ -609,7 +612,12 @@ export default function PHP() {
       {/* ============ Section 1: Detected PHP Versions ============ */}
       <div>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Detected PHP Versions</h2>
-        {installs.length === 0 ? (
+        {loadError && (
+          <div className="mb-3 rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">
+            Failed to load PHP installations: {loadError}
+          </div>
+        )}
+        {installs.length === 0 && loadError ? null : installs.length === 0 ? (
           <div className="rounded-lg border border-border bg-card p-8 text-center">
             <Cpu size={40} className="mx-auto mb-3 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">No PHP (FastCGI/FPM) detected.</p>

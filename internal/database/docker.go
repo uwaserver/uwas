@@ -77,11 +77,17 @@ func dockerNameExists(out, target string) bool {
 	return false
 }
 
+// SupportedDockerEngine reports whether engine names an image UWAS can run.
+func SupportedDockerEngine(engine DockerDBEngine) bool { return imageForEngine(engine) != "" }
+
 // CreateDockerDB creates and starts a new database container.
 func CreateDockerDB(engine DockerDBEngine, name string, port int, rootPass, dataDir string) (*DockerDBContainer, error) {
 	image := imageForEngine(engine)
 	if image == "" {
-		return nil, fmt.Errorf("unsupported engine: %s", engine)
+		return nil, invalidInputf("unsupported engine: %s", engine)
+	}
+	if port < 1 || port > 65535 {
+		return nil, invalidInputf("port must be between 1 and 65535")
 	}
 
 	containerName := containerPrefix + name
@@ -90,7 +96,7 @@ func CreateDockerDB(engine DockerDBEngine, name string, port int, rootPass, data
 	// so it also returns e.g. uwas-db-foobar when creating uwas-db-foo — compare
 	// the returned names exactly to avoid a false "already exists".
 	if out, _ := dockerExecCommandFn("docker", "ps", "-a", "--filter", "name="+containerName, "--format", "{{.Names}}").Output(); dockerNameExists(string(out), containerName) {
-		return nil, fmt.Errorf("container %s already exists", containerName)
+		return nil, conflictError(fmt.Sprintf("container %s already exists", containerName))
 	}
 
 	args := []string{
@@ -331,13 +337,13 @@ func DockerDBCreateDatabase(containerName, dbName, user, password string) (*Crea
 	// Validate identifiers (defense-in-depth, mirroring the native path) before
 	// interpolating into SQL — backticking alone is not a substitute.
 	if !ValidDBIdentifier(dbName) {
-		return nil, fmt.Errorf("invalid database name %q", dbName)
+		return nil, invalidInputf("invalid database name %q", dbName)
 	}
 	if !ValidDBIdentifier(user) {
-		return nil, fmt.Errorf("invalid database user %q", user)
+		return nil, invalidInputf("invalid database user %q", user)
 	}
 	if strings.ContainsRune(password, 0) {
-		return nil, fmt.Errorf("invalid password: null byte not allowed")
+		return nil, invalidInputf("invalid password: null byte not allowed")
 	}
 	// CREATE USER IF NOT EXISTS leaves an existing account untouched, so the
 	// password returned below would never have been set while that account
@@ -368,7 +374,7 @@ func DockerDBCreateDatabase(containerName, dbName, user, password string) (*Crea
 // DockerDBDropDatabase drops a database from a Docker container.
 func DockerDBDropDatabase(containerName, dbName string) error {
 	if !ValidDBIdentifier(dbName) {
-		return fmt.Errorf("invalid database name %q", dbName)
+		return invalidInputf("invalid database name %q", dbName)
 	}
 	sql := fmt.Sprintf("DROP DATABASE IF EXISTS %s;", backtick(dbName))
 	if _, err := DockerDBExecSQL(containerName, sql); err != nil {
@@ -442,7 +448,7 @@ func DockerDBImport(containerName, dbName, sql string) error {
 // and a leading '-' reach the client as an option (e.g. -h<host>).
 func dockerDBNameArg(name string) (string, error) {
 	if name == "" || len(name) > 64 || strings.HasPrefix(name, "-") || containerName_safe(name) != name {
-		return "", fmt.Errorf("invalid database name %q", name)
+		return "", invalidInputf("invalid database name %q", name)
 	}
 	return name, nil
 }

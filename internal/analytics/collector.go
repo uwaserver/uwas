@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,6 +35,11 @@ type DomainStats struct {
 	minuteBuckets [minuteBucketCount]minuteBucket
 	bucketPos     int
 	lastBucketAt  time.Time
+
+	// pathDrops counts new paths turned away while Paths is full; every
+	// maxPaths/pathPruneEvery of them the one-hit paths are cleared out so a
+	// scanner's one-off probes cannot hold the map shut against real traffic.
+	pathDrops int
 }
 
 const minuteBucketCount = 7 * 24 * 60 // 7 days of minute buckets
@@ -56,6 +62,10 @@ const maxHostLen = 253
 // maxKeyLen bounds the length of a stored path key so the per-map entry caps
 // also bound memory (the request line can be up to MaxHeaderBytes).
 const maxKeyLen = 2048
+
+// pathPruneEvery sets how often a full Paths map is cleaned of one-hit paths:
+// once per maxPaths/pathPruneEvery turned-away new paths.
+const pathPruneEvery = 16
 
 // statsHost folds the spellings the router treats as one domain (port, case,
 // trailing dot) into one key. Each DomainStats holds a ~400 KB minute ring,
@@ -131,6 +141,22 @@ func (c *Collector) RecordFull(host, path, remoteAddr, referrer, userAgent strin
 	const maxPaths = 50000
 	if _, exists := stats.Paths[path]; exists || len(stats.Paths) < maxPaths {
 		stats.Paths[path]++
+	} else if stats.pathDrops++; stats.pathDrops >= maxPaths/pathPruneEvery {
+		// The map is full of paths. A path seen once is almost always a probe
+		// (scanner, bot); drop those so a page that is new, and genuinely
+		// popular, can be counted. Paths hit more than once stay, and the map
+		// never exceeds maxPaths. The clean-up is rationed (one scan per
+		// maxPaths/pathPruneEvery drops) so it cannot be turned into a
+		// per-request O(n) scan.
+		stats.pathDrops = 0
+		for k, v := range stats.Paths {
+			if v <= 1 {
+				delete(stats.Paths, k)
+			}
+		}
+		if len(stats.Paths) < maxPaths {
+			stats.Paths[path]++
+		}
 	}
 
 	stats.HourlyViews[hour]++
@@ -319,6 +345,9 @@ func (c *Collector) GetAll() []Snapshot {
 		snapshots = append(snapshots, c.snapshot(host, stats))
 		return true
 	})
+	// Range visits keys in map order; list the domains by name so the table
+	// does not rearrange itself between polls (F49304).
+	sort.Slice(snapshots, func(i, j int) bool { return snapshots[i].Host < snapshots[j].Host })
 	return snapshots
 }
 
