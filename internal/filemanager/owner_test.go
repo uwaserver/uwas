@@ -118,6 +118,10 @@ func TestExistingFilesAndNonRootUWASAreUntouched(t *testing.T) {
 	if err := os.WriteFile(path, []byte("old"), 0o664); err != nil {
 		t.Fatal(err)
 	}
+	// The create mode above is masked by the process umask (022 on CI).
+	if err := os.Chmod(path, 0o664); err != nil {
+		t.Fatal(err)
+	}
 	if err := WriteFile(base, "keep.php", []byte("new")); err != nil {
 		t.Fatal(err)
 	}
