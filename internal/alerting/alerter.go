@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -101,7 +103,7 @@ type errorEntry struct {
 func New(enabled bool, webhookURL string, channels []notify.Channel, log *logger.Logger) *Alerter {
 	a := &Alerter{
 		webhookURL:     webhookURL,
-		channels:       channels,
+		channels:       cloneChannels(channels),
 		logger:         log,
 		enabled:        enabled,
 		history:        make([]Alert, 0, maxAlertHistory),
@@ -141,8 +143,17 @@ func (a *Alerter) Update(enabled bool, webhookURL string, channels []notify.Chan
 	a.mu.Lock()
 	a.enabled = enabled
 	a.webhookURL = webhookURL
-	a.channels = channels
+	a.channels = cloneChannels(channels)
 	a.mu.Unlock()
+}
+
+// cloneChannels detaches caller-owned destinations before asynchronous delivery.
+func cloneChannels(channels []notify.Channel) []notify.Channel {
+	out := slices.Clone(channels)
+	for i := range out {
+		out[i].Config = maps.Clone(channels[i].Config)
+	}
+	return out
 }
 
 // settings returns a consistent snapshot of the delivery settings.

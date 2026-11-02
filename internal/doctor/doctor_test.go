@@ -364,9 +364,9 @@ func TestCheckPorts_ErrorWithoutBindKeyword(t *testing.T) {
 	}
 
 	c := checkPorts()
-	// Should be OK because the error doesn't match the bind pattern
-	if c.Status != StatusOK {
-		t.Errorf("expected StatusOK (non-bind error), got %s", c.Status)
+	// A failed probe must not claim the port is available.
+	if c.Status != StatusWarn {
+		t.Errorf("expected StatusWarn (probe failed), got %s", c.Status)
 	}
 }
 

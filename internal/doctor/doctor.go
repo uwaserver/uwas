@@ -133,6 +133,8 @@ func checkPorts() Check {
 			// Port in use — check if it's UWAS
 			if strings.Contains(err.Error(), "address already in use") || strings.Contains(err.Error(), "bind") {
 				issues = append(issues, fmt.Sprintf("port %s in use", port))
+			} else {
+				denied = append(denied, fmt.Sprintf("port %s: cannot probe (%v)", port, err))
 			}
 		} else {
 			ln.Close()
@@ -142,7 +144,7 @@ func checkPorts() Check {
 		return Check{Name: "Ports 80/443", Status: StatusWarn, Message: strings.Join(append(issues, denied...), "; "), HowTo: "UWAS or another server is already listening (this is normal if UWAS is running)"}
 	}
 	if len(denied) > 0 {
-		return Check{Name: "Ports 80/443", Status: StatusWarn, Message: strings.Join(denied, "; "), HowTo: "Run the doctor as root to probe privileged ports"}
+		return Check{Name: "Ports 80/443", Status: StatusWarn, Message: strings.Join(denied, "; "), HowTo: "Resolve the reported listen errors and run the probe again (privileged ports may require root)"}
 	}
 	return Check{Name: "Ports 80/443", Status: StatusOK, Message: "Available"}
 }

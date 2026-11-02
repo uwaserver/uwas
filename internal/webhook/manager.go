@@ -12,10 +12,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -143,7 +145,11 @@ func (m *Manager) Close() {
 func (m *Manager) UpdateWebhooks(configs []WebhookConfig) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.webhooks = configs
+	m.webhooks = slices.Clone(configs)
+	for i := range m.webhooks {
+		m.webhooks[i].Events = slices.Clone(configs[i].Events)
+		m.webhooks[i].Headers = maps.Clone(configs[i].Headers)
+	}
 }
 
 // Fire sends a webhook event to all matching webhooks.

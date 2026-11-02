@@ -315,7 +315,7 @@ func (s *Server) ListTools() []ToolInfo {
 		tools = append(tools, ToolInfo{
 			Name:        t.Name,
 			Description: t.Description,
-			InputSchema: t.InputSchema,
+			InputSchema: bytes.Clone(t.InputSchema),
 		})
 	}
 	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
