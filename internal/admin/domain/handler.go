@@ -616,20 +616,37 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		mgr.UnassignDomain(host)
 	}
 
+	var cleanupErrs []string
 	if r.URL.Query().Get("cleanup") == "true" {
 		h.deps.CachePurgeByTag(cache.SiteTag(host))
-		cronjob.RemoveByDomain(host)
+		// A failed step is reported, not dropped: the cron jobs or the SFTP
+		// account would otherwise outlive the domain with a "deleted" answer
+		// (F63003).
+		if err := cronjob.RemoveByDomain(host); err != nil {
+			cleanupErrs = append(cleanupErrs, "cron jobs: "+err.Error())
+		}
 		if mon := h.deps.CronMonitor(); mon != nil {
 			mon.ClearDomain(host)
 		}
-		siteuser.DeleteUser(host)
+		// A hostname no account can be named after (a wildcard) has nothing to delete.
+		if err := siteuser.DeleteUser(host); err != nil && !errors.Is(err, siteuser.ErrInvalidInput) {
+			cleanupErrs = append(cleanupErrs, "site user: "+err.Error())
+		}
 	}
 
 	perr := h.notifyChange()
-	h.deps.RecordAudit(r, "domain.delete", persistDetail("domain: "+host, perr), perr == nil)
+	detail := persistDetail("domain: "+host, perr)
+	if len(cleanupErrs) > 0 {
+		detail += " (cleanup incomplete: " + strings.Join(cleanupErrs, "; ") + ")"
+	}
+	h.deps.RecordAudit(r, "domain.delete", detail, perr == nil && len(cleanupErrs) == 0)
 	h.deps.WebhookFire(webhook.EventDomainDelete, map[string]any{"host": host})
 	if perr != nil {
 		jsonError(w, "domain deleted but could not be persisted: "+perr.Error(), http.StatusInternalServerError)
+		return
+	}
+	if len(cleanupErrs) > 0 {
+		jsonError(w, "domain deleted but cleanup incomplete: "+strings.Join(cleanupErrs, "; "), http.StatusInternalServerError)
 		return
 	}
 

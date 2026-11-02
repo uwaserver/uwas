@@ -122,7 +122,7 @@ function ConfirmModal({
 
 /* -- Credentials Panel --------------------------------------------------- */
 
-function CredentialsPanel({
+export function CredentialsPanel({
   name,
   user,
   host,
@@ -135,8 +135,17 @@ function CredentialsPanel({
   password: string;
   onDismiss: () => void;
 }) {
-  const copyToClipboard = (text: string) => {
-    void copyText(text);
+  const [copied, setCopied] = useState('');
+  const [copyError, setCopyError] = useState(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (copiedTimer.current) clearTimeout(copiedTimer.current); }, []);
+
+  const copyToClipboard = async (label: string, text: string) => {
+    const ok = await copyText(text);
+    setCopyError(!ok);
+    setCopied(ok ? label : '');
+    if (copiedTimer.current) clearTimeout(copiedTimer.current);
+    if (ok) copiedTimer.current = setTimeout(() => setCopied(''), 2000);
   };
 
   return (
@@ -168,15 +177,20 @@ function CredentialsPanel({
               <p className="font-mono text-sm text-foreground">{item.value}</p>
             </div>
             <button
-              onClick={() => copyToClipboard(item.value)}
+              onClick={() => void copyToClipboard(item.label, item.value)}
               className="rounded-md p-1.5 text-muted-foreground transition hover:bg-accent hover:text-foreground"
-              title={`Copy ${item.label.toLowerCase()}`}
+              title={copied === item.label ? 'Copied' : `Copy ${item.label.toLowerCase()}`}
             >
-              <Copy size={14} />
+              {copied === item.label ? <CheckCircle size={14} className="text-emerald-400" /> : <Copy size={14} />}
             </button>
           </div>
         ))}
       </div>
+      {copyError && (
+        <p role="alert" className="mt-3 text-xs text-red-400">
+          Copy failed. Select the visible value and copy it manually.
+        </p>
+      )}
     </div>
   );
 }
@@ -1028,7 +1042,7 @@ export default function Database() {
                         </div>
                       ) : (
                         <div className="flex items-center justify-end gap-2">
-                          <button onClick={() => setPwUser(u)} className="flex items-center gap-1 rounded-md bg-accent/50 px-2.5 py-1.5 text-xs text-card-foreground hover:bg-accent">
+                          <button onClick={() => { setPwUser(u); setNewPassword(''); }} className="flex items-center gap-1 rounded-md bg-accent/50 px-2.5 py-1.5 text-xs text-card-foreground hover:bg-accent">
                             <Key size={12} /> Change Password
                           </button>
                           <button

@@ -25,6 +25,13 @@ func TestEncodeAttrsPOSIXTypeBits(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "f"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// The create modes above are masked by the process umask.
+	if err := os.Chmod(filepath.Join(tmp, "d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(tmp, "f"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	dinfo, _ := os.Stat(filepath.Join(tmp, "d"))
 	finfo, _ := os.Stat(filepath.Join(tmp, "f"))
 

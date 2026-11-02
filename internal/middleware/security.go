@@ -246,8 +246,12 @@ func SecurityGuard(log *logger.Logger, blockedPaths []string, stats *SecuritySta
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			path := r.URL.Path
+			// The static handler opens files through the cleaned path, so
+			// "/wp-config.old/." names the copy while its last component is
+			// "." (F63300); every decision below sees both forms.
+			clean := pathmatch.Clean(path)
 
-			if isWPConfigCopy(path) {
+			if isWPConfigCopy(path) || isWPConfigCopy(strings.TrimSuffix(clean, "/")) {
 				if stats != nil {
 					stats.Record(r.RemoteAddr, path, "waf", r.UserAgent())
 				}
@@ -260,10 +264,8 @@ func SecurityGuard(log *logger.Logger, blockedPaths []string, stats *SecuritySta
 				return
 			}
 
-			// The static handler opens files through the cleaned path, so a
-			// name hidden behind dot segments reaches the same file; decide
+			// A name hidden behind dot segments reaches the same file; decide
 			// on both forms (F49000).
-			clean := pathmatch.Clean(path)
 			if isComposerVendorPath(clean) {
 				if stats != nil {
 					stats.Record(r.RemoteAddr, path, "waf", r.UserAgent())
@@ -321,7 +323,18 @@ func DomainWAFGuard(log *logger.Logger, bypassPaths []string, rules []string, st
 			fullURI += "?" + r.URL.RawQuery
 		}
 		decodedURI := wafUnescape(fullURI)
-		if matchWAF(wafURLPatterns, families, fullURI, decodedURI) {
+		// The file_probe family anchors on the end of the name ("dump.sql$"),
+		// and "/dump.sql/." is served as the same file: the canonical form is
+		// matched too (F63301).
+		blocked := matchWAF(wafURLPatterns, families, fullURI, decodedURI)
+		if !blocked && canonical != path {
+			canonURI := canonical
+			if r.URL.RawQuery != "" {
+				canonURI += "?" + r.URL.RawQuery
+			}
+			blocked = matchWAF(wafURLPatterns, families, canonURI, wafUnescape(canonURI))
+		}
+		if blocked {
 			if stats != nil {
 				stats.Record(r.RemoteAddr, path, "waf", r.UserAgent())
 			}

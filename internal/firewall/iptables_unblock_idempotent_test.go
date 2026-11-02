@@ -44,7 +44,7 @@ func installFakeIPTables(t *testing.T) *fakeIPTables {
 			f.rules[key]++
 		case "-D":
 			if f.rules[key] == 0 {
-				return exec.Command("sh", "-c", "echo '"+name+": Bad rule (does not exist).'; exit 1")
+				return exec.Command("sh", "-c", "echo '"+name+": Bad rule (does a matching rule exist in that chain?).'; exit 1")
 			}
 			f.rules[key]--
 		}

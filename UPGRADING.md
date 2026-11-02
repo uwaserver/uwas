@@ -5,13 +5,23 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.41
+
+Security release; drop-in binary, no config or data migration. Behavior changes worth knowing:
+
+- **Trailing-slash and dot-segment paths** no longer bypass `$`-anchored regex locations (including `basic_auth`), the wp-config copy guard, WAF file-probe rules or the hotlink guard. A request such as `/private/a.txt/` now answers 404.
+- **Clone and migrate** stop and discard partial work on failure; a clone whose database copy fails leaves the target `wp-config.php` on the target database name.
+- **`DELETE /domains/{host}?cleanup=true`** answers 500 `cleanup incomplete` when cron or SFTP-user removal fails (the domain is still removed). Backup endpoints answer 400/404 instead of 500 for an unknown provider or missing archive.
+
+---
+
 ## Upgrading to v0.11.40
 
 Security release; drop-in binary, no config or data migration. Behavior changes worth knowing:
 
-- **PHP workers and wp-cli** run as the site user instead of root; make sure site files and `wp-config.php` stay group-readable for the web server.
+- **PHP workers and wp-cli** no longer run as root. The php-cgi worker runs as the web account (`www-data`, `nginx`, `apache`, `http`, else `nobody`); wp-cli runs as the owner of the site's web root (the web account when the root is root-owned). A root UWAS that cannot resolve the account refuses to start PHP or run wp-cli instead of falling back to root. Site files and `wp-config.php` must be readable by that account.
 - **Database import and API-key regeneration** require the PIN / current password.
-- **`.phtml` and other PHP variant sources, `vendor/`, `node_modules/` and lock files** are no longer served as static files.
+- **`.phtml`, `.pht`, `.php3`–`.php8`, Composer `vendor/` trees, `node_modules/` and lock files** (`composer.lock`, `yarn.lock`, `pnpm-lock.yaml`, ...) are no longer served as static files. A top-level front-end `/vendor/` or `/assets/vendor/` directory without Composer files is still served.
 - **`include:` domains** edited from the panel are rewritten in the file they came from; `domains.d` files starting with `.` are ignored.
 - **`uwas stop`** waits `shutdown_grace` plus 10 s before SIGKILL; a second instance that cannot bind leaves the running PID file alone.
 - **Dashboard assets** answer 404 for missing files, and the dashboard mount accepts only GET/HEAD.

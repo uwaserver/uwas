@@ -36,6 +36,9 @@ func TestEncodeAttrsSymlinkAndDirOnTheWire(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(tmp, "d"), 0o750); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(filepath.Join(tmp, "d"), 0o750); err != nil { // masked by the umask at Mkdir
+		t.Fatal(err)
+	}
 	if err := os.Symlink("d", filepath.Join(tmp, "l")); err != nil {
 		t.Skip("symlinks unavailable:", err)
 	}

@@ -455,6 +455,13 @@ func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool {
 	// Security: prevent path traversal
 	cleanURI := filepath.Clean("/" + uri)
 
+	// Clean drops a trailing slash, so "/private/a.txt/" would open the file
+	// "/private/a.txt". Rules that decide on the URL (a location's regex
+	// anchored with "$", cache rules) see the slash and do not match, so the
+	// file was served without them (F62300). A slash names a directory: Apache
+	// and nginx answer 404 for a regular file requested that way.
+	slashURI := cleanURI != "/" && strings.HasSuffix(uri, "/")
+
 	candidates := domain.TryFiles
 	if len(candidates) == 0 {
 		switch domain.Type {
@@ -538,6 +545,9 @@ func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool {
 
 		stat, err := os.Stat(fullPath)
 		if err != nil {
+			continue
+		}
+		if slashURI && !stat.IsDir() && (candidate == "$uri" || candidate == "$uri/") {
 			continue
 		}
 

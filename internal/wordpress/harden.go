@@ -190,6 +190,11 @@ func Harden(webRoot string, opts HardenOptions) (string, error) {
 			return log.String(), fmt.Errorf("wp-content/mu-plugins is under a symlink; refusing to write the XML-RPC mu-plugin")
 		}
 		osMkdirAllFn(muDir, 0755)
+		// Checked again after the mkdir, the last point before the write or
+		// remove: a link swapped in meanwhile would redirect root (F63600).
+		if pathHasSymlink(webRoot, filepath.Join("wp-content", "mu-plugins")) {
+			return log.String(), fmt.Errorf("wp-content/mu-plugins is under a symlink; refusing to touch the XML-RPC mu-plugin")
+		}
 		muPath := filepath.Join(muDir, "uwas-security.php")
 
 		if *opts.DisableXMLRPC {

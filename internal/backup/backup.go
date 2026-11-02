@@ -241,6 +241,24 @@ func (m *BackupManager) Provider(name string) StorageProvider {
 	return m.provider(name)
 }
 
+// ErrBadRequest matches (errors.Is) a rejection that is the caller's fault: a
+// provider that does not exist, an archive the endpoint cannot restore.
+// Handlers answer it with 400 rather than a server error (F63002).
+var ErrBadRequest = errors.New("bad backup request")
+
+type requestError string
+
+func (e requestError) Error() string        { return string(e) }
+func (e requestError) Is(target error) bool { return target == ErrBadRequest }
+
+// ErrNotFound matches (errors.Is) a Restore or Delete of an archive the
+// provider does not have (F63002).
+var ErrNotFound = errors.New("backup not found")
+
+func requestErrorf(format string, args ...any) error {
+	return requestError(fmt.Sprintf(format, args...))
+}
+
 // CreateBackup creates a tar.gz archive containing the UWAS config file and
 // the certificates directory, then uploads it via the chosen provider.
 func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
@@ -255,7 +273,7 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 
 	p := m.provider(provider)
 	if p == nil {
-		return nil, fmt.Errorf("unknown backup provider %q", provider)
+		return nil, requestErrorf("unknown backup provider %q", provider)
 	}
 
 	// Build the backup filename. Use nanosecond precision to avoid collisions
@@ -326,6 +344,12 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 		dbDump, dumpErr := dumpAllDatabases()
 		if dumpErr != nil {
 			m.logger.Warn("backup: database dump failed, backup will not contain databases", "error", dumpErr)
+			// No client installed is the files-only host. A client that ran and
+			// failed (server down, bad credentials) left a DB-less backup that
+			// must not displace an older one holding the databases (F63000).
+			if !errors.Is(dumpErr, exec.ErrNotFound) {
+				rootsIncomplete.Store(true)
+			}
 		}
 		if dumpErr == nil && len(dbDump) > 0 {
 			hdr := &tar.Header{
@@ -382,7 +406,7 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 	// Prune old backups — unless this one is missing site content, in which
 	// case the older complete backups are worth more than the retention count.
 	if rootsIncomplete.Load() {
-		m.logger.Warn("backup: skipping retention because a domain root was not fully archived", "name", filename)
+		m.logger.Warn("backup: skipping retention because the backup is incomplete (a domain root or the database dump is missing)", "name", filename)
 	} else {
 		m.pruneOld(provider)
 	}
@@ -413,12 +437,12 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 	// holds the domain YAML, not the main uwas.yaml. Restoring one here would
 	// overwrite the main config with a domain config and restore nothing else.
 	if strings.HasPrefix(filepath.Base(name), "uwas-domain-") {
-		return fmt.Errorf("domain backups cannot be restored through this endpoint")
+		return requestErrorf("domain backups cannot be restored through this endpoint")
 	}
 
 	p := m.provider(provider)
 	if p == nil {
-		return fmt.Errorf("unknown backup provider %q", provider)
+		return requestErrorf("unknown backup provider %q", provider)
 	}
 
 	// Idle-based, not absolute: a large archive that keeps streaming must not
@@ -428,6 +452,9 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 
 	body, err := p.Download(ctx, name)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("download backup: %w: %w", ErrNotFound, err)
+		}
 		return fmt.Errorf("download backup: %w", err)
 	}
 	defer body.Close()
@@ -747,11 +774,17 @@ func (m *BackupManager) ListBackups() []BackupInfo {
 func (m *BackupManager) DeleteBackup(name, provider string) error {
 	p := m.provider(provider)
 	if p == nil {
-		return fmt.Errorf("unknown backup provider %q", provider)
+		return requestErrorf("unknown backup provider %q", provider)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	return p.Delete(ctx, name)
+	if err := p.Delete(ctx, name); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%w: %w", ErrNotFound, err)
+		}
+		return err
+	}
+	return nil
 }
 
 // ScheduleBackup starts the automatic periodic backup goroutine. It can be
@@ -1268,7 +1301,7 @@ func importDatabaseDumpReal(data []byte, log *logger.Logger) error {
 func (m *BackupManager) CreateDomainBackup(domain, webRoot, dbName, provider string) (*BackupInfo, error) {
 	p := m.provider(provider)
 	if p == nil {
-		return nil, fmt.Errorf("unknown backup provider %q", provider)
+		return nil, requestErrorf("unknown backup provider %q", provider)
 	}
 	if dbName != "" && !database.ValidDBIdentifier(dbName) {
 		return nil, fmt.Errorf("invalid database name %q", dbName)

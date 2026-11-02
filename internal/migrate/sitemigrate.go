@@ -126,12 +126,27 @@ func Migrate(req MigrateRequest) *MigrateResult {
 	log.WriteString("=== Syncing files ===\n")
 	filesResult := runSyncFiles(req, &log)
 	result.FilesSync = filesResult
+	// A failed sync is a failed migration: importing the database, rewriting
+	// wp-config.php and reporting "done" over a partial tree would hide it (F62000).
+	if filesResult != "ok" {
+		result.Status = "error"
+		result.Error = "file sync failed: " + strings.TrimPrefix(filesResult, "error: ")
+		result.Output = log.String()
+		result.FinishedAt = time.Now()
+		result.Duration = result.FinishedAt.Sub(result.StartedAt).Round(time.Second).String()
+		return result
+	}
 
 	// Step 2: Dump and import database (if configured)
 	if req.DBName != "" {
 		log.WriteString("\n=== Migrating database ===\n")
 		dbResult := runMigrateDB(req, &log)
 		result.DBImport = dbResult
+		if dbResult != "ok" {
+			// The files are migrated, so the run stays "done", but the failure
+			// reaches API callers that only read error (F62000).
+			result.Error = "database import failed: " + strings.TrimPrefix(dbResult, "error: ")
+		}
 	}
 
 	// Step 3: Fix permissions

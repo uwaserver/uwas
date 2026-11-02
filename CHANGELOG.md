@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.41] - 2026-11-02
+
+### Fixed
+
+- The always-on wp-config copy guard (`wp-config.old`, `.bak`, …), the WAF `file_probe` rules and the hotlink guard judged the raw request path while the static handler opens the cleaned one, so `/wp-config.old/.`, `//.`, `/dump.sql/.` or `/img/a.jpg/.` bypassed them and the file was served (F63300/F63301/F63302). They now also check the cleaned path.
+- A database dump that fails (server down, wrong password) no longer lets a files-only backup count as complete and prune the older backup that held the database; backup endpoints answer 400/404 instead of 500 for an unknown provider or missing archive; `DELETE /domains/{host}?cleanup=true` reports cron or SFTP-user cleanup failures (500) instead of `200 deleted`; `UnblockIP` no longer errors after a successful iptables delete (F63000/F63002/F63003/F63001).
+- `wordpress.Harden` re-checks the `mu-plugins` symlink after creating it, so a swap cannot make root write or delete `uwas-security.php` outside the web root (F63600).
+- A location with a `$`-anchored regex (for example `~\.txt$` with `basic_auth`) could be skipped by appending `/` to the file path (`/private/a.txt/`, `//`, `/./`): the file was still served, bypassing the location's basic auth, redirects, headers, rate limit and regex cache rules. Such requests no longer match a file as a directory and answer 404 (F62300).
+- Cloning a site whose database clone fails no longer leaves the target `wp-config.php` pointing at the source's production database; a failed rsync or docroot copy stops the migration instead of reporting done, and a partial cPanel import is discarded (F62001/F62000/F62003). Clone Staging shows a partial-failure error (F62002).
+- Dashboard: Admin Users and Database clear password fields when the form moves to another row, so a password typed for one user is not submitted for another (F62601/F62602); new database credentials report copy success or failure (F62600).
+- `migrate.Clone` discards a partially copied target when the copy fails, so a half-cloned tree (possibly holding the source's production `wp-config.php`) is not left behind and a retry is not refused (F61301).
+- Release workflow passes `build.Date`, so `uwas version` no longer prints `built unknown` (F61600). README and UPGRADING for v0.11.40 now describe PHP/wp-cli identity, Composer-only `vendor/` blocking and startup-only log rotation accurately (F61601/F61602).
+- Test-only: umask- and multi-call-`sleep`-dependent tests fixed (F61000), filemanager owner test no longer depends on umask; `staticcheck` findings from rounds 174–195 cleaned up.
+
 ## [0.11.40] - 2026-10-31
 
 ### Fixed

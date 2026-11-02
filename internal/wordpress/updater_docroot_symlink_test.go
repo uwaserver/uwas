@@ -32,6 +32,9 @@ func TestFixPermissionsSkipsDocrootSymlinks(t *testing.T) {
 	if err := os.WriteFile(victim, []byte("system file\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(victim, 0644); err != nil { // the create mode is masked by the umask
+		t.Fatal(err)
+	}
 	os.Symlink(victim, filepath.Join(root, "wp-config.php"))
 	os.Symlink(filepath.Join(outside, "content"), filepath.Join(root, "wp-content"))
 

@@ -4,6 +4,7 @@ package backup
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -79,6 +80,19 @@ func paginate[T any](items []T, limit, offset int) ([]T, int) {
 	return items[offset:end], total
 }
 
+// errStatus maps a manager error to its HTTP status: a bad provider or an
+// archive the endpoint cannot restore is the caller's (400), a missing archive
+// is 404, anything else is a server fault (F63002).
+func errStatus(err error) int {
+	switch {
+	case errors.Is(err, backup.ErrBadRequest):
+		return http.StatusBadRequest
+	case errors.Is(err, backup.ErrNotFound):
+		return http.StatusNotFound
+	}
+	return http.StatusInternalServerError
+}
+
 // List returns all backups with pagination.
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	if !h.deps.RequireAdmin(w, r) {
@@ -127,11 +141,15 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	info, err := mgr.CreateBackup(req.Provider)
 	if err != nil {
 		h.deps.RecordAudit(r, "backup.create", "provider: "+req.Provider+", error: "+err.Error(), false)
-		h.deps.WebhookFire(webhook.EventBackupFailed, map[string]any{
-			"provider": req.Provider,
-			"error":    err.Error(),
-		})
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		code := errStatus(err)
+		// A request naming no such provider backed nothing up and failed no backup.
+		if code >= http.StatusInternalServerError {
+			h.deps.WebhookFire(webhook.EventBackupFailed, map[string]any{
+				"provider": req.Provider,
+				"error":    err.Error(),
+			})
+		}
+		jsonError(w, err.Error(), code)
 		return
 	}
 	h.deps.RecordAudit(r, "backup.create", "provider: "+req.Provider, true)
@@ -200,7 +218,7 @@ func (h *Handler) DomainBackup(w http.ResponseWriter, r *http.Request) {
 	info, err := mgr.CreateDomainBackup(req.Domain, webRoot, dbName, req.Provider)
 	if err != nil {
 		h.deps.RecordAudit(r, "backup.domain", req.Domain+": "+err.Error(), false)
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		jsonError(w, err.Error(), errStatus(err))
 		return
 	}
 	h.deps.RecordAudit(r, "backup.domain", req.Domain, true)
@@ -297,7 +315,7 @@ func (h *Handler) Restore(w http.ResponseWriter, r *http.Request) {
 
 	if err := mgr.RestoreBackup(req.Name, req.Provider); err != nil {
 		h.deps.RecordAudit(r, "backup.restore", "name: "+req.Name+", error: "+err.Error(), false)
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		jsonError(w, err.Error(), errStatus(err))
 		return
 	}
 	h.deps.RecordAudit(r, "backup.restore", "name: "+req.Name, true)
@@ -327,7 +345,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	if err := mgr.DeleteBackup(name, provider); err != nil {
 		h.deps.RecordAudit(r, "backup.delete", "name: "+name+", error: "+err.Error(), false)
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		jsonError(w, err.Error(), errStatus(err))
 		return
 	}
 	h.deps.RecordAudit(r, "backup.delete", "name: "+name, true)

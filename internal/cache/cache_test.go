@@ -300,7 +300,16 @@ func TestDiskCachePermissions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := info.Mode().Perm(); got != want {
+		got := info.Mode().Perm()
+		if info.IsDir() {
+			// The directory mode is masked by the process umask (0750 under
+			// 022, 0700 under 077): never wider than wanted, always usable.
+			if got&^want != 0 || got&0o700 != 0o700 {
+				t.Errorf("%s permissions=%#o, want %#o or narrower", path, got, want)
+			}
+			continue
+		}
+		if got != want {
 			t.Errorf("%s permissions=%#o, want %#o", path, got, want)
 		}
 	}

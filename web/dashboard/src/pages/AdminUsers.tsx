@@ -114,6 +114,7 @@ export default function AdminUsers() {
       // Replacing your own key proves the password: ask for it in the row.
       if (msg === 'current_password required') {
         setKeyUser(username);
+        setKeyPw('');
       } else {
         setError(msg);
       }
@@ -297,7 +298,7 @@ export default function AdminUsers() {
                         </div>
                       ) : (
                         <>
-                          <button onClick={() => setPwUser(u.username)} className="rounded bg-accent/50 p-1.5 text-muted-foreground hover:text-foreground" title="Change password"><Lock size={12} /></button>
+                          <button onClick={() => { setPwUser(u.username); setNewPw(''); setCurPw(''); }} className="rounded bg-accent/50 p-1.5 text-muted-foreground hover:text-foreground" title="Change password"><Lock size={12} /></button>
                           <button disabled={actionLoading === 'key-' + u.username} onClick={() => handleRegenKey(u.username)} className="rounded bg-accent/50 p-1.5 text-muted-foreground hover:text-foreground disabled:opacity-50" title="Regenerate API key"><Key size={12} /></button>
                           {confirmDelete === u.username ? (
                             <span className="flex items-center gap-1">

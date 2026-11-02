@@ -198,14 +198,18 @@ func TestHandleBackupRestoreMissingName(t *testing.T) {
 
 func TestHandleBackupRestoreNotFound(t *testing.T) {
 	s := testServer()
-	s.SetBackupManager(testBackupManager(t))
+	mgr := testBackupManager(t)
+	cfgPath := t.TempDir() + "/uwas.yaml"
+	os.WriteFile(cfgPath, []byte("global: {}"), 0644)
+	mgr.SetPaths(cfgPath, "")
+	s.SetBackupManager(mgr)
 
 	body := strings.NewReader(`{"name":"nonexistent.tar.gz","provider":"local"}`)
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/backups/restore", body))
 
-	if rec.Code != 500 {
-		t.Errorf("status = %d, want 500", rec.Code)
+	if rec.Code != 404 {
+		t.Errorf("status = %d, want 404", rec.Code)
 	}
 }
 
@@ -227,8 +231,8 @@ func TestHandleBackupDeleteNotFound(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/backups/nonexistent.tar.gz", nil))
 
-	if rec.Code != 500 {
-		t.Errorf("status = %d, want 500", rec.Code)
+	if rec.Code != 404 {
+		t.Errorf("status = %d, want 404", rec.Code)
 	}
 }
 

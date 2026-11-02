@@ -70,6 +70,9 @@ type CPanelDatabase struct {
 // (a var so tests can lower it).
 var maxExtractFileBytes int64 = 10 << 30
 
+// copyDirFn is the document-root copy (a var so tests can inject a failure).
+var copyDirFn = copyDir
+
 // ImportCPanelBackup extracts a cPanel backup (cpmove-*.tar.gz) into UWAS format.
 // It extracts web files, discovers domains, and optionally imports databases.
 func ImportCPanelBackup(backupPath, targetDir string, importDB bool) (*CPanelResult, error) {
@@ -239,13 +242,21 @@ func ImportCPanelBackup(backupPath, targetDir string, importDB bool) (*CPanelRes
 			result.Errors = append(result.Errors, "skipped "+dom.Domain+": "+dstRoot+" already exists and is not empty")
 			continue
 		}
+		_, rootStatErr := os.Stat(dstRoot)
+		dstExisted := rootStatErr == nil
 		if err := os.MkdirAll(dstRoot, 0755); err != nil {
 			result.Errors = append(result.Errors, "mkdir "+dom.Domain+": "+err.Error())
 		}
 
 		if _, err := os.Stat(srcRoot); err == nil {
-			if err := copyDir(srcRoot, dstRoot); err != nil {
-				result.Errors = append(result.Errors, "copy "+dom.Domain+": "+err.Error())
+			if err := copyDirFn(srcRoot, dstRoot); err != nil {
+				// The root was empty or new when the copy began, so its content
+				// is this attempt's partial output: drop it and the domain, so
+				// a half-imported site is not registered and a retry is not
+				// refused as "not empty" (F62003).
+				discardPartialClone(dstRoot, dstExisted)
+				result.Errors = append(result.Errors, "copy "+dom.Domain+": "+err.Error()+" (nothing imported for this domain)")
+				continue
 			}
 		} else {
 			result.Errors = append(result.Errors, "no files for "+dom.Domain+": "+srcRoot)

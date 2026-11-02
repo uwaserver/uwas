@@ -3,7 +3,6 @@
 package cli
 
 import (
-	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -15,26 +14,24 @@ import (
 	"time"
 )
 
-// startNamed runs a copy of /bin/sleep under the given name, so its
+// startNamed runs a helper process under the given name, so its
 // /proc/<pid>/comm is that name. It returns the PID and a channel closed
-// when the process exits.
+// when the process exits. The helper is this test binary reached through a
+// symlink called name: a copy of /bin/sleep is not portable, because where
+// sleep is a multi-call binary (uutils coreutils) a renamed copy exits at
+// once with "unknown program" (F61000).
 func startNamed(t *testing.T, name string) (int, <-chan struct{}) {
 	t.Helper()
-	src, err := os.Open("/bin/sleep")
+	exe, err := os.Executable()
 	if err != nil {
-		t.Skipf("no /bin/sleep: %v", err)
+		t.Skipf("no test executable: %v", err)
 	}
-	defer src.Close()
 	bin := filepath.Join(t.TempDir(), name)
-	dst, err := os.OpenFile(bin, os.O_CREATE|os.O_WRONLY, 0o755)
-	if err != nil {
+	if err := os.Symlink(exe, bin); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := io.Copy(dst, src); err != nil {
-		t.Fatal(err)
-	}
-	dst.Close()
-	cmd := exec.Command(bin, "600")
+	cmd := exec.Command(bin, "-test.run=^TestSleepHelperProcess$")
+	cmd.Env = append(os.Environ(), "UWAS_TEST_SLEEP_HELPER=1")
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -43,6 +40,15 @@ func startNamed(t *testing.T, name string) (int, <-chan struct{}) {
 	t.Cleanup(func() { _ = cmd.Process.Kill(); <-done })
 	waitComm(t, cmd.Process.Pid, name)
 	return cmd.Process.Pid, done
+}
+
+// TestSleepHelperProcess is the body of the process startNamed launches; it
+// does nothing in a normal test run.
+func TestSleepHelperProcess(t *testing.T) {
+	if os.Getenv("UWAS_TEST_SLEEP_HELPER") != "1" {
+		return
+	}
+	time.Sleep(10 * time.Minute)
 }
 
 // waitComm waits until /proc/<pid>/comm shows name. Right after Start the

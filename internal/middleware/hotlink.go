@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/pathmatch"
 )
 
 // isAllowedReferer checks whether the referer URL (lowercased) is allowed under
@@ -85,6 +86,12 @@ func HotlinkGuard(log *logger.Logger, allowedReferers []string, extensions []str
 		isProtected := hasProtectedExt(path, extMap)
 		if !isProtected && strings.Contains(path, ";") {
 			isProtected = hasProtectedExt(stripPathParams(path), extMap)
+		}
+		// "/a.jpg/." is served as "/a.jpg" but ends in "." (F63302).
+		if !isProtected {
+			clean := strings.ToLower(pathmatch.Clean(r.URL.Path))
+			isProtected = hasProtectedExt(clean, extMap) ||
+				(strings.Contains(clean, ";") && hasProtectedExt(stripPathParams(clean), extMap))
 		}
 
 		if !isProtected {

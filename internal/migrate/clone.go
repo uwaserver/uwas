@@ -136,6 +136,8 @@ func Clone(req CloneRequest) *CloneResult {
 
 	// Step 1: Copy files
 	log.WriteString("=== Copying files ===\n")
+	_, statErr := os.Stat(req.TargetRoot)
+	targetExisted := statErr == nil
 	if err := os.MkdirAll(req.TargetRoot, 0755); err != nil {
 		result.Status = "error"
 		result.Error = "create target directory: " + err.Error()
@@ -143,6 +145,10 @@ func Clone(req CloneRequest) *CloneResult {
 		return result
 	}
 	if err := runCloneFiles(req.SourceRoot, req.TargetRoot, &log); err != nil {
+		// The target was empty or absent when the copy began, so everything in
+		// it is this attempt's partial output, including the source's
+		// wp-config.php: remove it, which also lets the caller retry (F61301).
+		discardPartialClone(req.TargetRoot, targetExisted)
 		result.Status = "error"
 		result.Error = "file copy failed: " + err.Error()
 		result.Output = log.String()
@@ -187,9 +193,12 @@ func Clone(req CloneRequest) *CloneResult {
 	wpConfig := filepath.Join(req.TargetRoot, "wp-config.php")
 	if _, err := os.Stat(wpConfig); err == nil {
 		log.WriteString("\n=== Updating target wp-config.php ===\n")
-		// Skip the DB rewrite when the clone failed — otherwise wp-config
-		// would point at a database/user that may not exist.
-		if req.TargetDB != "" && dbCloneErr == nil {
+		// Point the clone at its own database even when the DB clone failed:
+		// the file copy carried the source's wp-config.php, and leaving its
+		// credentials would run the staging site (auto-registered as a live
+		// domain) against the source's production database. A missing target
+		// database fails visibly instead (F62001).
+		if req.TargetDB != "" {
 			updateWPConfigDB(wpConfig, req.TargetDB, dbUser, dbPass, &log)
 		}
 		// Update siteurl/home to target domain
@@ -204,6 +213,23 @@ func Clone(req CloneRequest) *CloneResult {
 	result.Output = log.String()
 	result.Duration = time.Since(start).Round(time.Second).String()
 	return result
+}
+
+// discardPartialClone removes what a failed copy left in root. A directory the
+// copy created is removed whole; one that already existed (empty) keeps its
+// place and loses only its content. RemoveAll does not follow symlinks.
+func discardPartialClone(root string, existed bool) {
+	if !existed {
+		_ = os.RemoveAll(root)
+		return
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		_ = os.RemoveAll(filepath.Join(root, e.Name()))
+	}
 }
 
 // cloneFilesReal copies files using rsync.

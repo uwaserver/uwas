@@ -108,8 +108,9 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           COMMIT_SHA: ${{ github.sha }}
         run: |
+          BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           go build \
-            -ldflags="-s -w -X 'github.com/uwaserver/uwas/internal/build.Version=${REF_NAME}' -X 'github.com/uwaserver/uwas/internal/build.Commit=${COMMIT_SHA}'" \
+            -ldflags="-s -w -X 'github.com/uwaserver/uwas/internal/build.Version=${REF_NAME}' -X 'github.com/uwaserver/uwas/internal/build.Commit=${COMMIT_SHA}' -X 'github.com/uwaserver/uwas/internal/build.Date=${BUILD_DATE}'" \
             -o uwas-${{ matrix.suffix }} \
             ./cmd/uwas
 

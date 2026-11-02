@@ -76,6 +76,7 @@ func TestSetStatAppliesPermissions(t *testing.T) {
 	roRoot, _ := filepath.EvalSymlinks(t.TempDir())
 	rp := filepath.Join(roRoot, "r.txt")
 	os.WriteFile(rp, []byte("x"), 0644)
+	os.Chmod(rp, 0644) // the create mode is masked by the umask
 	ro := pipeSFTP(t, roRoot, true)
 	if _, _, body := ro(sshFXPSetStat, append(marshalString("r.txt"), permAttrs(0600)...)); statusCode(body) != sshFXPermissionDenied {
 		t.Fatalf("read-only setstat status %d, want permission denied", statusCode(body))

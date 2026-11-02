@@ -188,6 +188,11 @@ export default function CloneStaging() {
       {result && result.status === 'done' && (
         <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-5 space-y-4">
           <h3 className="text-sm font-semibold text-emerald-400">Clone Complete</h3>
+          {result.error && (
+            <div role="alert" className="rounded-md bg-amber-500/10 px-4 py-3 text-sm text-amber-400">
+              {result.error}
+            </div>
+          )}
 
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {([

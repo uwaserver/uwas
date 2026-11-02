@@ -130,7 +130,9 @@ func iptablesDeleteAll(bin string, args ...string) error {
 		if err == nil {
 			continue
 		}
-		if strings.Contains(string(out), "does not exist") {
+		// iptables and ip6tables (legacy and nft) report an absent rule as
+		// "Bad rule (does a matching rule exist in that chain?)" (F63001).
+		if strings.Contains(string(out), "Bad rule") || strings.Contains(string(out), "does not exist") {
 			return nil
 		}
 		return fmt.Errorf("%s %s: %w: %s", bin, strings.Join(args, " "), err, strings.TrimSpace(string(out)))

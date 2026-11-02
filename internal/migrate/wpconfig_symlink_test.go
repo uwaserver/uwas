@@ -26,6 +26,9 @@ func plantedSymlink(t *testing.T) (link, victim string) {
 	if err := os.WriteFile(victim, []byte(victimConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(victim, 0o644); err != nil { // the create mode is masked by the umask
+		t.Fatal(err)
+	}
 	link = filepath.Join(dir, "clone", "wp-config.php")
 	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 		t.Fatal(err)

@@ -1031,8 +1031,9 @@ func TestCloneDBError(t *testing.T) {
 	tmpSrc, tmpDst := cloneTestRoots(t)
 
 	// wp-config.php in the source is carried into the fresh target by the
-	// file copy — the DB rewrite must be skipped when the DB clone fails, or
-	// wp-config would point at a missing DB.
+	// file copy — it must be pointed at the target's own database even when
+	// the DB clone fails, or the clone would run on the source's database
+	// (F62001).
 	wpContent := `<?php
 define('DB_NAME', 'old_db');
 require_once ABSPATH . 'wp-settings.php';
@@ -1061,10 +1062,11 @@ require_once ABSPATH . 'wp-settings.php';
 	if result.TargetDB != "" {
 		t.Errorf("TargetDB = %q, want empty on DB error", result.TargetDB)
 	}
-	// wp-config must keep the old DB_NAME (no rewrite to a missing DB).
+	// wp-config must not keep the source's DB_NAME: the clone points at its own
+	// (missing) database instead of sharing the source's.
 	data, _ := os.ReadFile(filepath.Join(tmpDst, "wp-config.php"))
-	if !strings.Contains(string(data), "define('DB_NAME', 'old_db')") {
-		t.Errorf("wp-config DB_NAME was rewritten despite DB clone failure:\n%s", data)
+	if strings.Contains(string(data), "old_db") || !strings.Contains(string(data), "define('DB_NAME', 'staging_db')") {
+		t.Errorf("wp-config still points at the source database after a DB clone failure:\n%s", data)
 	}
 }
 
