@@ -16,6 +16,7 @@ func TestPruneSkippedWhenNewBackupMissesDomainRoot(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("permission-based failure injection does not apply to root")
 	}
+	noDBClient(t)
 	m, mp := testManager(t)
 	m.SetKeepCount(1)
 

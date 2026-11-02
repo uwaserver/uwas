@@ -61,3 +61,14 @@ func TestPruneSkippedWhenDatabaseDumpFails(t *testing.T) {
 		t.Fatalf("without a dump client retention keeps %d, want 1", n)
 	}
 }
+
+// noDBClient makes the native dump behave like a files-only host (no client
+// installed) so a test about retention does not depend on whether the machine
+// running it has mysqldump (CI does, a bare dev box does not).
+func noDBClient(t *testing.T) {
+	t.Helper()
+	origDump, origDocker := dumpAllDatabasesFunc, dockerDumpFn
+	t.Cleanup(func() { dumpAllDatabasesFunc, dockerDumpFn = origDump, origDocker })
+	dumpAllDatabasesFunc = func() ([]byte, error) { return nil, exec.ErrNotFound }
+	dockerDumpFn = nil
+}

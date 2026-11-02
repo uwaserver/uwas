@@ -29,5 +29,8 @@
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.68.0",
     "vite": "^8.2.2"
+  },
+  "overrides": {
+    "minimatch": "^11.0.1"
   }
 }

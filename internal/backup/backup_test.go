@@ -239,6 +239,7 @@ func TestDeleteBackup(t *testing.T) {
 }
 
 func TestPruneOldBackups(t *testing.T) {
+	noDBClient(t)
 	m, mp := testManager(t)
 	m.keepCount = 2
 
