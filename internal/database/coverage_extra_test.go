@@ -142,20 +142,19 @@ func TestGetStatus_WindowsShortCircuit(t *testing.T) {
 	}
 }
 
-func TestGetStatus_PingSucceedsButNoAliveToken(t *testing.T) {
+func TestGetStatus_SilentPingSucceeds(t *testing.T) {
 	saveHooks(t)
 	runtimeGOOS = "linux"
 	execLookPathFn = lookPathFound("mariadb", "mysqladmin")
-	// All exec commands exit 0 but output contains neither "alive" nor "1",
-	// so the line-90 condition's right-hand side is false -> Running stays false.
-	execCommandFn = fakeCmd("pong", 0)
+	// --silent reports liveness through the exit status, with no output.
+	execCommandFn = fakeCmd("", 0)
 
 	st := GetStatus()
 	if !st.Installed {
 		t.Fatal("expected Installed=true")
 	}
-	if st.Running {
-		t.Error("expected Running=false when ping output lacks alive/1 token")
+	if !st.Running {
+		t.Error("expected Running=true for a successful silent ping")
 	}
 }
 

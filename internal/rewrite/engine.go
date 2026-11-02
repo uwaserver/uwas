@@ -330,6 +330,11 @@ func BuildVariables(r *http.Request, docRoot, resolvedPath string, isHTTPS bool)
 		port = "443"
 		httpsVal = "on"
 	}
+	if addr, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok {
+		if _, localPort, err := net.SplitHostPort(addr.String()); err == nil {
+			port = localPort
+		}
+	}
 
 	theRequest := r.Method + " " + r.URL.RequestURI() + " " + r.Proto
 

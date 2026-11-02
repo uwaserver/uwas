@@ -34,6 +34,20 @@ type Task struct {
 	CreatedAt time.Time  `json:"created_at"`
 }
 
+// cloneTask detaches timestamp pointers as well as the task's scalar fields.
+func cloneTask(task *Task) Task {
+	cp := *task
+	if task.StartedAt != nil {
+		started := *task.StartedAt
+		cp.StartedAt = &started
+	}
+	if task.EndedAt != nil {
+		ended := *task.EndedAt
+		cp.EndedAt = &ended
+	}
+	return cp
+}
+
 // TaskFunc is the function that performs the actual installation work.
 // It receives an output callback to stream progress.
 type TaskFunc func(appendOutput func(string)) error
@@ -91,11 +105,11 @@ func (q *Queue) Submit(taskType, name, action string, fn TaskFunc) *Task {
 		task.Status = StatusError
 		task.Error = "manager stopped"
 		task.EndedAt = &end
-		cp := *task
+		cp := cloneTask(task)
 		q.mu.Unlock()
 		return &cp
 	}
-	cp := *task
+	cp := cloneTask(task)
 	q.mu.Unlock()
 
 	select {
@@ -104,7 +118,7 @@ func (q *Queue) Submit(taskType, name, action string, fn TaskFunc) *Task {
 		q.mu.Lock()
 		task.Status = StatusError
 		task.Error = "manager stopped"
-		cp = *task
+		cp = cloneTask(task)
 		q.mu.Unlock()
 	}
 	return &cp
@@ -119,7 +133,7 @@ func (q *Queue) Get(id string) *Task {
 		return nil
 	}
 	// Return a copy to avoid races
-	cp := *t
+	cp := cloneTask(t)
 	return &cp
 }
 
@@ -129,7 +143,7 @@ func (q *Queue) Active() *Task {
 	defer q.mu.Unlock()
 	for _, t := range q.tasks {
 		if t.Status == StatusRunning || t.Status == StatusQueued {
-			cp := *t
+			cp := cloneTask(t)
 			return &cp
 		}
 	}
@@ -142,7 +156,7 @@ func (q *Queue) ActiveByType(taskType string) *Task {
 	defer q.mu.Unlock()
 	for _, t := range q.tasks {
 		if t.Type == taskType && (t.Status == StatusRunning || t.Status == StatusQueued) {
-			cp := *t
+			cp := cloneTask(t)
 			return &cp
 		}
 	}
@@ -166,7 +180,7 @@ func (q *Queue) LatestByType(taskType string) *Task {
 	if latest == nil {
 		return nil
 	}
-	cp := *latest
+	cp := cloneTask(latest)
 	return &cp
 }
 
@@ -177,7 +191,7 @@ func (q *Queue) List() []Task {
 	q.cleanupLocked()
 	result := make([]Task, 0, len(q.tasks))
 	for _, t := range q.tasks {
-		result = append(result, *t)
+		result = append(result, cloneTask(t))
 	}
 	return result
 }

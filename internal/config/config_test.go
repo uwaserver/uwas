@@ -224,13 +224,13 @@ domains:
 
 func TestDurationUnmarshalYAMLInteger(t *testing.T) {
 	// Test Duration.UnmarshalYAML directly with an unmarshal function
-	// that fails for string but succeeds for int (simulating non-string YAML node).
+	// that fails for string but succeeds for numeric seconds (simulating a non-string YAML node).
 	var d Duration
 	fakeUnmarshal := func(v any) error {
 		switch p := v.(type) {
 		case *string:
 			return fmt.Errorf("not a string")
-		case *int:
+		case *float64:
 			*p = 45
 			return nil
 		default:

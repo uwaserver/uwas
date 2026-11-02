@@ -41,6 +41,12 @@ func Apply(domain string, limits Limits) (cgroupPath string, err error) {
 		return "", nil
 	}
 
+	// Reject unrepresentable kernel values before changing any cgroup files.
+	const maxInt64 = int64(1<<63 - 1)
+	if int64(limits.MemoryMB) > maxInt64/(1024*1024) {
+		return "", fmt.Errorf("memory limit is too large")
+	}
+
 	anyLimit := limits.CPUPercent > 0 || limits.MemoryMB > 0 || limits.PIDMax > 0
 	path := filepath.Join(cgroupBase, sanitizeDomain(domain))
 

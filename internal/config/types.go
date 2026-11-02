@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -66,19 +67,19 @@ func (d *Duration) UnmarshalYAML(unmarshal func(any) error) error {
 			return nil
 		}
 	}
-	// YAML can decode an integer into a string, so try seconds after a
+	// YAML can decode numbers into strings, so try numeric seconds after a
 	// missing-unit parse error as well as a string decode error.
 	{
-		var secs int
+		var secs float64
 		if err2 := unmarshal(&secs); err2 != nil {
-			// Neither a duration string nor an integer; report the int-path
-			// error since that was the last (and most specific) attempt.
+			// Neither a duration string nor numeric seconds.
 			return err2
 		}
-		if int64(secs) > (1<<63-1)/int64(time.Second) || int64(secs) < (-1<<63)/int64(time.Second) {
-			return fmt.Errorf("duration %d seconds overflows int64 nanoseconds", secs)
+		nanos := secs * float64(time.Second)
+		if math.IsNaN(nanos) || nanos >= 1<<63 || nanos < -1<<63 {
+			return fmt.Errorf("duration %g seconds overflows int64 nanoseconds", secs)
 		}
-		d.Duration = time.Duration(secs) * time.Second
+		d.Duration = time.Duration(nanos)
 		return nil
 	}
 }

@@ -268,5 +268,8 @@ func (m *Manager) GetExtensions(version string) ([]string, error) {
 	if !ok {
 		return nil, fmt.Errorf("PHP %s not found", version)
 	}
+	if inst.Extensions != nil {
+		inst.Extensions = append([]string{}, inst.Extensions...)
+	}
 	return inst.Extensions, nil
 }

@@ -29,6 +29,7 @@ type HealthChecker struct {
 	successes    map[*Backend]int
 	cancel       context.CancelFunc // cancels the derived context that stops the background goroutine
 	allowPrivate bool
+	generation   uint64 // guarded by mu; Stop invalidates in-flight probes
 }
 
 // HealthConfig configures health checking.
@@ -121,6 +122,7 @@ func (hc *HealthChecker) Start(ctx context.Context) {
 	}
 	derivedCtx, cancel := context.WithCancel(ctx)
 	hc.cancel = cancel
+	generation := hc.generation
 	hc.mu.Unlock()
 
 	go func() {
@@ -132,7 +134,7 @@ func (hc *HealthChecker) Start(ctx context.Context) {
 			case <-derivedCtx.Done():
 				return
 			case <-ticker.C:
-				hc.checkAll()
+				hc.checkAllGeneration(generation)
 			}
 		}
 	}()
@@ -147,6 +149,8 @@ func (hc *HealthChecker) Stop() {
 		hc.cancel()
 		hc.cancel = nil
 	}
+	// Invalidate results from probes started before this stop.
+	hc.generation++
 	// Reset failure/success maps to prevent memory leak
 	hc.failures = make(map[*Backend]int)
 	hc.successes = make(map[*Backend]int)
@@ -160,6 +164,13 @@ const maxConcurrentProbes = 32
 // few dead backends made detection of the rest slower than the interval
 // (F58000). record* serialize on hc.mu.
 func (hc *HealthChecker) checkAll() {
+	hc.mu.Lock()
+	generation := hc.generation
+	hc.mu.Unlock()
+	hc.checkAllGeneration(generation)
+}
+
+func (hc *HealthChecker) checkAllGeneration(generation uint64) {
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, maxConcurrentProbes)
 	for _, b := range hc.pool.All() {
@@ -171,13 +182,33 @@ func (hc *HealthChecker) checkAll() {
 		go func(b *Backend) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			hc.checkOne(b)
+			hc.checkOneGeneration(b, generation)
 		}(b)
 	}
 	wg.Wait()
 }
 
 func (hc *HealthChecker) checkOne(b *Backend) {
+	hc.mu.Lock()
+	generation := hc.generation
+	hc.mu.Unlock()
+	hc.checkOneGeneration(b, generation)
+}
+
+func (hc *HealthChecker) checkOneGeneration(b *Backend, generation uint64) {
+	success := false
+	defer func() {
+		hc.mu.Lock()
+		defer hc.mu.Unlock()
+		if generation != hc.generation {
+			return
+		}
+		if success {
+			hc.recordSuccessLocked(b)
+		} else {
+			hc.recordFailureLocked(b)
+		}
+	}()
 	// Trim the address's trailing slash so "http://host/"+"/health" probes
 	// "/health", not "//health" (F20200).
 	urlStr := strings.TrimRight(b.URL.String(), "/") + hc.path
@@ -192,7 +223,6 @@ func (hc *HealthChecker) checkOne(b *Backend) {
 		validate = config.IsPrivateProxyUpstreamSafe
 	}
 	if err := validate(b.URL.String()); err != nil {
-		hc.recordFailure(b)
 		return
 	}
 
@@ -201,34 +231,30 @@ func (hc *HealthChecker) checkOne(b *Backend) {
 
 	req, err := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 	if err != nil {
-		hc.recordFailure(b)
 		return
 	}
 	req.Header.Set("User-Agent", "UWAS-HealthCheck/1.0")
 
 	resp, err := hc.client.Do(req)
 	if err != nil {
-		hc.recordFailure(b)
 		return
 	}
 	_, bodyErr := io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 	if bodyErr != nil {
-		hc.recordFailure(b)
 		return
 	}
 
-	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
-		hc.recordSuccess(b)
-	} else {
-		hc.recordFailure(b)
-	}
+	success = resp.StatusCode >= 200 && resp.StatusCode < 400
 }
 
 func (hc *HealthChecker) recordFailure(b *Backend) {
 	hc.mu.Lock()
 	defer hc.mu.Unlock()
+	hc.recordFailureLocked(b)
+}
 
+func (hc *HealthChecker) recordFailureLocked(b *Backend) {
 	hc.successes[b] = 0
 	hc.failures[b]++
 
@@ -241,10 +267,7 @@ func (hc *HealthChecker) recordFailure(b *Backend) {
 	}
 }
 
-func (hc *HealthChecker) recordSuccess(b *Backend) {
-	hc.mu.Lock()
-	defer hc.mu.Unlock()
-
+func (hc *HealthChecker) recordSuccessLocked(b *Backend) {
 	hc.failures[b] = 0
 	hc.successes[b]++
 

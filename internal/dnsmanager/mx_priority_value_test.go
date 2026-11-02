@@ -22,7 +22,7 @@ func TestHetznerMXValueCarriesPriority(t *testing.T) {
 	}{
 		{"priority prefixed", Record{Type: "MX", Name: "@", Content: "mail.example.com.", TTL: 300, Priority: 10}, "10 mail.example.com."},
 		{"already prefixed (control)", Record{Type: "MX", Name: "@", Content: "20 mail.example.com.", TTL: 300, Priority: 10}, "20 mail.example.com."},
-		{"no priority (control)", Record{Type: "MX", Name: "@", Content: "mail.example.com.", TTL: 300}, "mail.example.com."},
+		{"zero priority", Record{Type: "MX", Name: "@", Content: "mail.example.com.", TTL: 300}, "0 mail.example.com."},
 		{"non-MX priority ignored (control)", Record{Type: "A", Name: "@", Content: "1.2.3.4", TTL: 300, Priority: 10}, "1.2.3.4"},
 	}
 	for _, c := range cases {
@@ -64,7 +64,7 @@ func TestRoute53MXValueCarriesPriority(t *testing.T) {
 	}{
 		{"priority prefixed", Record{Type: "MX", Name: "example.com", Content: "mail.example.com.", TTL: 300, Priority: 10}, "10 mail.example.com."},
 		{"already prefixed (control)", Record{Type: "MX", Name: "example.com", Content: "20 mail.example.com.", TTL: 300, Priority: 10}, "20 mail.example.com."},
-		{"no priority (control)", Record{Type: "MX", Name: "example.com", Content: "mail.example.com.", TTL: 300}, "mail.example.com."},
+		{"zero priority", Record{Type: "MX", Name: "example.com", Content: "mail.example.com.", TTL: 300}, "0 mail.example.com."},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

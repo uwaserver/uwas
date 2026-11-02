@@ -90,8 +90,8 @@ func GetStatus() Status {
 			continue
 		}
 		cmd := execCommandFn(bin, method[1:]...)
-		out, err := cmd.CombinedOutput()
-		if err == nil && (strings.Contains(string(out), "alive") || strings.Contains(string(out), "1")) {
+		_, err = cmd.CombinedOutput()
+		if err == nil {
 			st.Running = true
 			break
 		}

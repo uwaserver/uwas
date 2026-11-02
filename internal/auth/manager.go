@@ -1197,6 +1197,10 @@ func (m *Manager) loadUsers() error {
 		return fmt.Errorf("parse %s: %w", file, err)
 	}
 
+	if users == nil {
+		return fmt.Errorf("parse %s: expected a user array, got null", file)
+	}
+
 	for _, user := range users {
 		m.users[user.Username] = user
 		m.usersByID[user.ID] = user

@@ -1076,6 +1076,20 @@ func normalizeCronWeekdayTerm(term string) string {
 	if idx := strings.Index(term, "/"); idx != -1 {
 		base, step = term[:idx], term[idx:]
 	}
+	// Expand stepped terms before folding Sunday: 1-7/2 selects 1,3,5,7,
+	// whereas folding the endpoint first creates the empty range 1-0/2.
+	if step != "" && base != "*" {
+		var days []string
+		for day := 0; day <= 7; day++ {
+			if matchCronTerm(day, term) {
+				days = append(days, fmt.Sprint(day%7))
+			}
+		}
+		if len(days) > 0 {
+			return strings.Join(days, ",")
+		}
+		return term
+	}
 	if parts := strings.Split(base, "-"); len(parts) == 2 {
 		base = foldCronWeekday7(parts[0]) + "-" + foldCronWeekday7(parts[1])
 	} else {

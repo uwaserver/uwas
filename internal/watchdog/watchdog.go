@@ -110,15 +110,15 @@ func (w *Watchdog) Run(ctx context.Context) {
 	}
 
 	interval := w.cfg.Interval
+	if interval <= 0 {
+		interval = 15 * time.Second
+	}
 	// systemd kills the service if WATCHDOG_USEC elapses without a ping, so
 	// probe at least twice per period: one lost probe must not be fatal.
 	if sd := SystemdInterval(); sd > 0 && sd/2 < interval {
 		interval = sd / 2
 		w.log.Info("watchdog interval reduced to match systemd WatchdogSec",
 			"systemd_period", sd.String(), "interval", interval.String())
-	}
-	if interval <= 0 {
-		interval = 15 * time.Second
 	}
 	// A hung probe delays the next ping by interval + timeout. With the
 	// interval at sd/2 that must stay under sd, so the timeout has to stay

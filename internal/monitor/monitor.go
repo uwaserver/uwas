@@ -75,13 +75,15 @@ type Monitor struct {
 	domains   []config.Domain
 	// hosts is the set of configured hosts and gen counts UpdateDomains
 	// calls, both guarded by domainsMu. A check that finishes after its host
-	// was removed is not stored.
-	hosts     map[string]struct{}
-	gen       uint64
-	logger    *logger.Logger
-	resultsMu sync.RWMutex
-	results   map[string]*HealthResult // host -> *HealthResult
-	client    *http.Client
+	// was removed is not stored. hostGeneration records when each current
+	// host was added, so unchanged hosts can retain in-flight checks.
+	hosts          map[string]struct{}
+	hostGeneration map[string]uint64
+	gen            uint64
+	logger         *logger.Logger
+	resultsMu      sync.RWMutex
+	results        map[string]*HealthResult // host -> *HealthResult
+	client         *http.Client
 }
 
 // HealthResult holds the health status of a single domain.
@@ -213,8 +215,22 @@ func (m *Monitor) UpdateDomains(domains []config.Domain) {
 	m.domainsMu.Lock()
 	defer m.domainsMu.Unlock()
 	m.domains = append([]config.Domain(nil), domains...)
-	m.hosts = hostSet(domains)
+	nextHosts := hostSet(domains)
 	m.gen++
+	if m.hostGeneration == nil {
+		m.hostGeneration = make(map[string]uint64)
+	}
+	for host := range nextHosts {
+		if _, present := m.hosts[host]; !present {
+			m.hostGeneration[host] = m.gen
+		}
+	}
+	for host := range m.hostGeneration {
+		if _, present := nextHosts[host]; !present {
+			delete(m.hostGeneration, host)
+		}
+	}
+	m.hosts = nextHosts
 	m.resultsMu.Lock()
 	for host := range m.results {
 		if _, ok := m.hosts[host]; !ok {
@@ -232,13 +248,13 @@ func hostSet(domains []config.Domain) map[string]struct{} {
 	return set
 }
 
-func (m *Monitor) snapshotDomains() []config.Domain {
+func (m *Monitor) snapshotDomains() ([]config.Domain, uint64) {
 	m.domainsMu.RLock()
 	defer m.domainsMu.RUnlock()
 
 	out := make([]config.Domain, len(m.domains))
 	copy(out, m.domains)
-	return out
+	return out, m.gen
 }
 
 // Start launches goroutines that check each domain every 30 seconds.
@@ -264,7 +280,7 @@ func (m *Monitor) Start(ctx context.Context) {
 // once they have all finished. Waiting for the whole sweep keeps two rounds
 // from overlapping on a host that is timing out.
 func (m *Monitor) sweep(ctx context.Context) {
-	domains := m.snapshotDomains()
+	domains, generation := m.snapshotDomains()
 	if len(domains) == 0 {
 		return
 	}
@@ -282,13 +298,20 @@ func (m *Monitor) sweep(ctx context.Context) {
 		go func(d config.Domain) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			m.checkDomain(ctx, d)
+			m.checkDomainGeneration(ctx, d, generation)
 		}(d)
 	}
 	wg.Wait()
 }
 
 func (m *Monitor) checkDomain(ctx context.Context, d config.Domain) {
+	m.domainsMu.RLock()
+	generation := m.gen
+	m.domainsMu.RUnlock()
+	m.checkDomainGeneration(ctx, d, generation)
+}
+
+func (m *Monitor) checkDomainGeneration(ctx context.Context, d config.Domain, startGen uint64) {
 	scheme := "http"
 	if d.SSL.Mode == "auto" || d.SSL.Mode == "manual" {
 		scheme = "https"
@@ -303,10 +326,6 @@ func (m *Monitor) checkDomain(ctx context.Context, d config.Domain) {
 		m.logger.Debug("monitor skipping unsafe host", "domain", d.Host, "error", err)
 		return
 	}
-
-	m.domainsMu.RLock()
-	startGen := m.gen
-	m.domainsMu.RUnlock()
 
 	// Per-check deadline bounded by both checkTimeout and the parent context
 	// so a shutdown does not leave HTTP calls hanging in flight.
@@ -356,7 +375,8 @@ func (m *Monitor) checkDomain(ctx context.Context, d config.Domain) {
 	// domain was removed must not bring the result back (lock order:
 	// domainsMu, then resultsMu, as in UpdateDomains).
 	m.domainsMu.RLock()
-	if _, configured := m.hosts[d.Host]; !configured && m.gen != startGen {
+	_, configured := m.hosts[d.Host]
+	if m.gen != startGen && (!configured || m.hostGeneration[d.Host] > startGen) {
 		m.domainsMu.RUnlock()
 		return
 	}

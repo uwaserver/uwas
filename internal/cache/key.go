@@ -3,6 +3,7 @@ package cache
 import (
 	"hash/fnv"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -177,9 +178,12 @@ func codingAccepted(header, coding string) bool {
 	return false
 }
 
-// paramName is the part of a "name=value" query parameter before the '='.
+// paramName is the decoded name, so encoded aliases keep duplicate ordering.
 func paramName(p string) string {
 	name, _, _ := strings.Cut(p, "=")
+	if decoded, err := url.QueryUnescape(name); err == nil {
+		return decoded
+	}
 	return name
 }
 

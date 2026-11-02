@@ -9,7 +9,7 @@ import (
 // field (Hetzner DNS, Route53): an MX value is "<priority> <host>". A value
 // that already starts with a number is left alone.
 func mxValue(rec Record) string {
-	if rec.Type != "MX" || rec.Priority <= 0 {
+	if rec.Type != "MX" || rec.Priority < 0 {
 		return rec.Content
 	}
 	if first, _, _ := strings.Cut(strings.TrimSpace(rec.Content), " "); first != "" {

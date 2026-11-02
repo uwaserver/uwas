@@ -38,7 +38,7 @@ func CanonicalDomainHostname(host string) string {
 // "bücher.example", so comparing the spellings as strings let a second domain
 // claim a name another domain already owned (F13100).
 func hostKey(host string) string {
-	return config.CanonicalHost(CanonicalDomainHostname(host))
+	return CanonicalDomainHostname(config.CanonicalHost(host))
 }
 
 // SameHostname reports whether a and b name the same site: equal after case

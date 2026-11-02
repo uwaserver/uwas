@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/uwaserver/uwas/internal/config"
 )
 
 // Collector gathers Prometheus-compatible metrics.
@@ -251,7 +253,7 @@ func statsHost(host string) (string, bool) {
 	} else if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
 		host = host[1 : len(host)-1]
 	}
-	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	host = config.CanonicalHost(host)
 	if len(host) > maxHostLen {
 		return "", false
 	}

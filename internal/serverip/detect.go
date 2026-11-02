@@ -135,7 +135,7 @@ func PublicIP() string {
 			continue
 		}
 		ip := strings.TrimSpace(string(body))
-		if net.ParseIP(ip) != nil {
+		if isPublicAddr(net.ParseIP(ip)) {
 			return ip
 		}
 	}

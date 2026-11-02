@@ -185,6 +185,7 @@ export default function PHPConfig() {
   };
 
   const handlePreset = async (preset: typeof presets[0]) => {
+    const seq = verLoadSeqRef.current;
     setApplyingPreset(preset.name);
     try {
       let restarted = false;
@@ -192,10 +193,12 @@ export default function PHPConfig() {
         const res = await updatePHPConfigKey(selectedVer, k, v) as { status: string; restarted?: boolean };
         if (res?.restarted) restarted = true;
       }
+      if (verLoadSeqRef.current !== seq) return;
       setFormValues(prev => ({ ...prev, ...preset.values }));
       setSavedValues(prev => ({ ...prev, ...preset.values }));
       showStatus(true, `${preset.name} preset applied (${Object.keys(preset.values).length} settings)${restarted ? ' — PHP restarted' : ''}`);
     } catch (e) {
+      if (verLoadSeqRef.current !== seq) return;
       showStatus(false, (e as Error).message);
     } finally {
       setApplyingPreset('');

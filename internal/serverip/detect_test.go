@@ -676,7 +676,7 @@ func TestPublicIP_WhitespaceInResponse(t *testing.T) {
 	saveAndRestore(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "  10.0.0.1  \n")
+		fmt.Fprint(w, "  8.8.8.8  \n")
 	}))
 	defer srv.Close()
 
@@ -686,8 +686,8 @@ func TestPublicIP_WhitespaceInResponse(t *testing.T) {
 	}
 
 	ip := PublicIP()
-	if ip != "10.0.0.1" {
-		t.Errorf("expected '10.0.0.1' after trimming, got %q", ip)
+	if ip != "8.8.8.8" {
+		t.Errorf("expected '8.8.8.8' after trimming, got %q", ip)
 	}
 }
 
@@ -835,7 +835,7 @@ func TestPublicIP_ExactlyFitsIn64Bytes(t *testing.T) {
 	saveAndRestore(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "192.168.255.255")
+		fmt.Fprint(w, "199.199.199.199")
 	}))
 	defer srv.Close()
 
@@ -845,8 +845,8 @@ func TestPublicIP_ExactlyFitsIn64Bytes(t *testing.T) {
 	}
 
 	ip := PublicIP()
-	if ip != "192.168.255.255" {
-		t.Errorf("expected '192.168.255.255', got %q", ip)
+	if ip != "199.199.199.199" {
+		t.Errorf("expected '199.199.199.199', got %q", ip)
 	}
 }
 
@@ -854,7 +854,7 @@ func TestPublicIP_MixedFailures(t *testing.T) {
 	saveAndRestore(t)
 
 	srvGood := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "100.64.0.1")
+		fmt.Fprint(w, "8.8.4.4")
 	}))
 	defer srvGood.Close()
 
@@ -874,8 +874,8 @@ func TestPublicIP_MixedFailures(t *testing.T) {
 	publicIPURLs = []string{"http://a.invalid", "http://b.invalid", srvGood.URL}
 
 	ip := PublicIP()
-	if ip != "100.64.0.1" {
-		t.Errorf("expected '100.64.0.1', got %q", ip)
+	if ip != "8.8.4.4" {
+		t.Errorf("expected '8.8.4.4', got %q", ip)
 	}
 }
 

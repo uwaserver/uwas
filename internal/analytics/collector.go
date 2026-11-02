@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
+
+	"github.com/uwaserver/uwas/internal/config"
 )
 
 // Collector tracks per-domain analytics: page views, unique IPs,
@@ -79,7 +81,7 @@ func statsHost(host string) (string, bool) {
 	} else if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
 		host = host[1 : len(host)-1]
 	}
-	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	host = config.CanonicalHost(host)
 	if len(host) > maxHostLen {
 		return "", false
 	}

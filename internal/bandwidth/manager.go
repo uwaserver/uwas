@@ -210,14 +210,14 @@ func normalizeHost(host string) string {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
-	return strings.ToLower(strings.TrimSuffix(host, "."))
+	return config.CanonicalHost(host)
 }
 
 // hostKey normalizes like normalizeHost but keeps the port, so a
 // port-qualified domain ("example.com:8080") keys separately from the plain
 // host — the router serves them as two tenants.
 func hostKey(host string) string {
-	host = strings.ToLower(strings.TrimSpace(host))
+	host = config.CanonicalHost(host)
 	if h, p, err := net.SplitHostPort(host); err == nil && p != "" {
 		return net.JoinHostPort(strings.TrimSuffix(h, "."), p)
 	}
