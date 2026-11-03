@@ -303,7 +303,11 @@ func (c *Client) ensureAccount(ctx context.Context) error {
 		return fmt.Errorf("account creation returned %d: %s", resp.StatusCode, body)
 	}
 
-	c.accountURL = resp.Header.Get("Location")
+	accountURL := strings.TrimSpace(resp.Header.Get("Location"))
+	if accountURL == "" {
+		return fmt.Errorf("account creation response is missing Location header")
+	}
+	c.accountURL = accountURL
 	return nil
 }
 
