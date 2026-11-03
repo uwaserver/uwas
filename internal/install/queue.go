@@ -6,6 +6,7 @@ package install
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -70,6 +71,34 @@ type Queue struct {
 type queueEntry struct {
 	task *Task
 	fn   TaskFunc
+}
+
+// Completed tasks remain queryable for keepTime, so subprocess output must
+// not grow the queue's retained memory without bound. Keep the most recent
+// output: it contains the useful failure/progress tail shown by the dashboard.
+const maxTaskOutput = 2 << 20
+
+const taskOutputTruncated = "...[earlier output truncated]\n"
+
+func appendBoundedTaskOutput(current, line string) string {
+	truncated := strings.HasPrefix(current, taskOutputTruncated)
+	if truncated {
+		current = strings.TrimPrefix(current, taskOutputTruncated)
+	}
+	if len(current)+len(line) <= maxTaskOutput {
+		if truncated {
+			return taskOutputTruncated + current + line
+		}
+		return current + line
+	}
+	if len(line) >= maxTaskOutput {
+		return taskOutputTruncated + line[len(line)-maxTaskOutput:]
+	}
+	keep := maxTaskOutput - len(line)
+	if keep > len(current) {
+		keep = len(current)
+	}
+	return taskOutputTruncated + current[len(current)-keep:] + line
 }
 
 // New creates a new install Queue and starts its background worker.
@@ -256,7 +285,7 @@ func (q *Queue) runTask(entry *queueEntry) {
 
 	appendOutput := func(line string) {
 		q.mu.Lock()
-		task.Output += line
+		task.Output = appendBoundedTaskOutput(task.Output, line)
 		q.mu.Unlock()
 	}
 

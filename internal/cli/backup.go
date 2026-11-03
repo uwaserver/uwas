@@ -259,15 +259,34 @@ func restoreBackup(input, configDir, certsDir string) error {
 	defer gr.Close()
 
 	tr := tar.NewReader(gr)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("create config destination: %w", err)
+	}
+	configRoot, err := os.OpenRoot(configDir)
+	if err != nil {
+		return fmt.Errorf("open config destination: %w", err)
+	}
+	defer configRoot.Close()
+	if err := os.MkdirAll(certsDir, 0755); err != nil {
+		return fmt.Errorf("create certificates destination: %w", err)
+	}
+	certsRoot, err := os.OpenRoot(certsDir)
+	if err != nil {
+		return fmt.Errorf("open certificates destination: %w", err)
+	}
+	defer certsRoot.Close()
 
 	// Entries are staged next to their destination and only renamed into place
 	// once the whole archive has been read: a truncated or corrupt backup must
 	// not leave the live config or a TLS key half-overwritten (F8010).
-	type staged struct{ tmp, dest string }
+	type staged struct {
+		root           *os.Root
+		tmp, rel, dest string
+	}
 	var pending []staged
 	cleanup := func() {
 		for _, st := range pending {
-			os.Remove(st.tmp)
+			_ = st.root.Remove(st.tmp)
 		}
 	}
 
@@ -289,15 +308,18 @@ func restoreBackup(input, configDir, certsDir string) error {
 		// Determine destination based on archive path prefix
 		var destPath string
 		var baseDir string
+		var destRoot *os.Root
 		switch {
 		case strings.HasPrefix(header.Name, "config/"):
 			relPath := strings.TrimPrefix(header.Name, "config/")
 			destPath = filepath.Join(configDir, relPath)
 			baseDir = configDir
+			destRoot = configRoot
 		case strings.HasPrefix(header.Name, "certs/"):
 			relPath := strings.TrimPrefix(header.Name, "certs/")
 			destPath = filepath.Join(certsDir, relPath)
 			baseDir = certsDir
+			destRoot = certsRoot
 		default:
 			// Skip unknown entries
 			continue
@@ -309,32 +331,38 @@ func restoreBackup(input, configDir, certsDir string) error {
 			fmt.Fprintf(os.Stderr, "warning: skipping traversal path: %s\n", header.Name)
 			continue
 		}
+		relPath, err := filepath.Rel(baseDir, destPath)
+		if err != nil {
+			cleanup()
+			return fmt.Errorf("resolve restore path %s: %w", header.Name, err)
+		}
 
-		// Create parent directories
-		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+		// Root methods enforce containment during the operation, including when
+		// an existing parent component is a symlink changed after validation.
+		if err := destRoot.MkdirAll(filepath.Dir(relPath), 0755); err != nil {
 			cleanup()
 			return fmt.Errorf("create dir for %s: %w", destPath, err)
 		}
 
 		// Write the entry to a sibling temp file (exclusive create, so a
 		// planted link at the temp name is never followed).
-		tmpPath := destPath + ".uwas-restore"
-		os.Remove(tmpPath)
+		tmpPath := relPath + ".uwas-restore"
+		_ = destRoot.Remove(tmpPath)
 		// Replacing a file keeps its permissions (a hardened 0600 config or key
 		// must not become whatever the archive recorded); a new file takes the
 		// archive's mode minus anything beyond rwxr-xr-x (F8300).
 		mode := os.FileMode(header.Mode) & 0o755
-		if info, lerr := os.Lstat(destPath); lerr == nil && info.Mode().IsRegular() {
+		if info, lerr := destRoot.Lstat(relPath); lerr == nil && info.Mode().IsRegular() {
 			mode = info.Mode().Perm()
 		}
-		outFile, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+		outFile, err := destRoot.OpenFile(tmpPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
 		if err != nil {
 			cleanup()
 			return fmt.Errorf("create %s: %w", destPath, err)
 		}
 		if err := outFile.Chmod(mode); err != nil {
 			outFile.Close()
-			os.Remove(tmpPath)
+			_ = destRoot.Remove(tmpPath)
 			cleanup()
 			return fmt.Errorf("chmod %s: %w", destPath, err)
 		}
@@ -344,11 +372,11 @@ func restoreBackup(input, configDir, certsDir string) error {
 		// member after it.
 		kept := pending[:0]
 		for _, st := range pending {
-			if st.dest != destPath {
+			if st.root != destRoot || st.rel != relPath {
 				kept = append(kept, st)
 			}
 		}
-		pending = append(kept, staged{tmpPath, destPath})
+		pending = append(kept, staged{destRoot, tmpPath, relPath, destPath})
 
 		// Limit copy to prevent decompression bombs
 		if _, err := io.Copy(outFile, io.LimitReader(tr, header.Size)); err != nil {
@@ -371,9 +399,9 @@ func restoreBackup(input, configDir, certsDir string) error {
 
 	fileCount := 0
 	for i, st := range pending {
-		if err := os.Rename(st.tmp, st.dest); err != nil {
+		if err := st.root.Rename(st.tmp, st.rel); err != nil {
 			for _, rest := range pending[i:] {
-				os.Remove(rest.tmp)
+				_ = rest.root.Remove(rest.tmp)
 			}
 			return fmt.Errorf("install %s: %w", st.dest, err)
 		}

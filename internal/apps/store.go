@@ -1,6 +1,7 @@
 package apps
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
 	"os"
@@ -339,7 +340,9 @@ func readAppFile(path string) (*App, error) {
 		return nil, err
 	}
 	var app App
-	if err := yaml.Unmarshal(data, &app); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&app); err != nil {
 		return nil, fmt.Errorf("yaml: %w", err)
 	}
 	return &app, nil

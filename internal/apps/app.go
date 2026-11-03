@@ -253,27 +253,27 @@ func (a *App) ExposedPorts() []int {
 // Host-network, privileged, cap-add, security-opt, and bind-mount flags are
 // explicitly excluded because they break the container-isolation contract.
 var allowedDockerFlags = map[string]bool{
-	"--env":                     true,
-	"--label":                   true,
-	"--hostname":                true,
-	"--dns":                     true,
-	"--dns-search":              true,
-	"--dns-option":              true,
-	"--add-host":                true,
-	"--ulimit":                  true,
-	"--cpu-quota":               true,
-	"--cpus":                    true,
-	"--cpu-period":              true,
-	"--cpu-shares":              true,
-	"--memory":                  true,
-	"--memory-swap":             true,
-	"--memory-reservation":      true,
-	"--restart":                 true,
-	"--user":                    true,
-	"--workdir":                 true,
-	"--init":                    true,
-	"--read-only":               true,
-	"--tty":                     true,
+	"--env":                true,
+	"--label":              true,
+	"--hostname":           true,
+	"--dns":                true,
+	"--dns-search":         true,
+	"--dns-option":         true,
+	"--add-host":           true,
+	"--ulimit":             true,
+	"--cpu-quota":          true,
+	"--cpus":               true,
+	"--cpu-period":         true,
+	"--cpu-shares":         true,
+	"--memory":             true,
+	"--memory-swap":        true,
+	"--memory-reservation": true,
+	"--restart":            true,
+	"--user":               true,
+	"--workdir":            true,
+	"--init":               true,
+	"--read-only":          true,
+	"--tty":                true,
 }
 
 // ValidateExtraArgs returns an error if any arg in the slice is not in the
@@ -336,6 +336,13 @@ func ValidateVolumes(volumes []string) error {
 		if vol == "" {
 			continue
 		}
+		// A Windows drive path contains the first colon inside the host path, so
+		// splitting host:container first would reduce C:\\host to just "C" and
+		// misclassify an absolute bind mount as a named volume. UNC paths have
+		// the same isolation impact and are absolute even without a drive.
+		if isWindowsAbsolutePath(vol) {
+			return fmt.Errorf("docker volume %q: host path is absolute; absolute host paths are not permitted", vol)
+		}
 		// Split on ':' to get the host portion of "host:container[:options]"
 		host := vol
 		if idx := strings.IndexByte(vol, ':'); idx != -1 {
@@ -360,6 +367,15 @@ func ValidateVolumes(volumes []string) error {
 		}
 	}
 	return nil
+}
+
+func isWindowsAbsolutePath(path string) bool {
+	if strings.HasPrefix(path, `\\`) {
+		return true
+	}
+	return len(path) >= 3 &&
+		((path[0] >= 'a' && path[0] <= 'z') || (path[0] >= 'A' && path[0] <= 'Z')) &&
+		path[1] == ':' && (path[2] == '\\' || path[2] == '/')
 }
 
 // isValidAppName enforces the filename-safe / shell-safe / URL-safe

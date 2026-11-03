@@ -180,8 +180,13 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var result []AuditEntry
-	if s.auditBuf != nil {
-		result = s.auditBuf.Snapshot()
+	// Synchronize the pointer read with stopAudit. The ring buffer protects its
+	// own contents, but auditBuf itself is replaced during shutdown.
+	s.auditMu.RLock()
+	buf := s.auditBuf
+	s.auditMu.RUnlock()
+	if buf != nil {
+		result = buf.Snapshot()
 	}
 
 	limit, offset := parsePagination(r)

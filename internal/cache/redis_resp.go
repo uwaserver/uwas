@@ -225,8 +225,11 @@ func readReply(r *bufio.Reader) (any, error) {
 		if err != nil {
 			return nil, fmt.Errorf("redis: bad bulk len %q", line[1:])
 		}
-		if n < 0 {
+		if n == -1 {
 			return nil, nil // RESP nil
+		}
+		if n < -1 {
+			return nil, fmt.Errorf("redis: invalid bulk len %d: %w", n, errFramingLost)
 		}
 		if n > maxBulkLen {
 			// The declared payload stays unread: framing is lost.
@@ -235,6 +238,9 @@ func readReply(r *bufio.Reader) (any, error) {
 		buf := make([]byte, n+2) // includes trailing CRLF
 		if _, err := io.ReadFull(r, buf); err != nil {
 			return nil, err
+		}
+		if buf[n] != '\r' || buf[n+1] != '\n' {
+			return nil, fmt.Errorf("redis: malformed bulk terminator: %w", errFramingLost)
 		}
 		return string(buf[:n]), nil
 	case '*':

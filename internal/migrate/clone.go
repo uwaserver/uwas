@@ -199,7 +199,12 @@ func Clone(req CloneRequest) *CloneResult {
 		// domain) against the source's production database. A missing target
 		// database fails visibly instead (F62001).
 		if req.TargetDB != "" {
-			updateWPConfigDB(wpConfig, req.TargetDB, dbUser, dbPass, &log)
+			if configErr := updateWPConfigDB(wpConfig, req.TargetDB, dbUser, dbPass, &log); configErr != nil {
+				if result.Error != "" {
+					result.Error += "; "
+				}
+				result.Error += "wp-config update failed: " + configErr.Error()
+			}
 		}
 		// Update siteurl/home to target domain
 		updateWPConfigURLs(wpConfig, req.TargetDomain, &log)
