@@ -226,6 +226,12 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, cancelCh 
 	}
 	// Restrict git protocols to prevent command execution via ext::
 	gitEnv["GIT_ALLOW_PROTOCOL"] = "https:ssh:git"
+	// An incomplete .git must not make git discover and mutate a parent repo.
+	absAppRoot, err := filepath.Abs(appRoot)
+	if err != nil {
+		return fmt.Errorf("resolve app root: %w", err)
+	}
+	gitEnv["GIT_CEILING_DIRECTORIES"] = filepath.Dir(absAppRoot)
 
 	// SSH key auth: GIT_SSH_COMMAND with -i flag
 	if req.SSHKeyPath != "" {

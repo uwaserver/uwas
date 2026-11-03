@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/uwaserver/uwas/internal/config"
 )
@@ -20,7 +21,7 @@ func (c *ConfigCommand) Run(args []string) error {
 	fs.StringVar(configPath, "config", "", "path to config file (same as -c)")
 
 	subcommand := "validate"
-	if len(args) > 0 && args[0] != "-c" && args[0] != "--config" {
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		subcommand = args[0]
 		args = args[1:]
 	}

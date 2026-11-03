@@ -47,6 +47,10 @@ func Apply(domain string, limits Limits) (cgroupPath string, err error) {
 		return "", fmt.Errorf("memory limit is too large")
 	}
 
+	if int64(limits.CPUPercent) > maxInt64/1000 {
+		return "", fmt.Errorf("CPU limit is too large")
+	}
+
 	anyLimit := limits.CPUPercent > 0 || limits.MemoryMB > 0 || limits.PIDMax > 0
 	path := filepath.Join(cgroupBase, sanitizeDomain(domain))
 
@@ -80,7 +84,7 @@ func Apply(domain string, limits Limits) (cgroupPath string, err error) {
 	}
 
 	if limits.CPUPercent > 0 {
-		quota := limits.CPUPercent * 1000
+		quota := int64(limits.CPUPercent) * 1000
 		val := fmt.Sprintf("%d 100000", quota)
 		if err := osWriteFileFn(filepath.Join(path, "cpu.max"), []byte(val), 0644); err != nil {
 			return path, fmt.Errorf("set cpu.max: %w", err)

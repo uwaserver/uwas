@@ -50,7 +50,7 @@ func (c *Client) signedRequest(ctx context.Context, url string, payload any) (*h
 
 func (c *Client) signedRequestOnce(ctx context.Context, url string, payload any) (*http.Response, error) {
 	// Get nonce
-	nonce, err := c.nonces.get(c.httpClient, c.directory.NewNonce)
+	nonce, err := c.nonces.getContext(ctx, c.httpClient, c.directory.NewNonce)
 	if err != nil {
 		return nil, fmt.Errorf("get nonce: %w", err)
 	}
@@ -187,6 +187,13 @@ type noncePool struct {
 }
 
 func (p *noncePool) get(client *http.Client, newNonceURL string) (string, error) {
+	return p.getContext(context.Background(), client, newNonceURL)
+}
+
+func (p *noncePool) getContext(ctx context.Context, client *http.Client, newNonceURL string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	p.mu.Lock()
 	if len(p.nonces) > 0 {
 		nonce := p.nonces[len(p.nonces)-1]
@@ -197,7 +204,11 @@ func (p *noncePool) get(client *http.Client, newNonceURL string) (string, error)
 	p.mu.Unlock()
 
 	// Fetch fresh nonce
-	resp, err := client.Head(newNonceURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, newNonceURL, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
