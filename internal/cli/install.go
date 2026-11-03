@@ -176,7 +176,13 @@ func installUWAS(args []string) error {
 				return fmt.Errorf("install: %w", err)
 			}
 			envContent := fmt.Sprintf("UWAS_ADMIN_KEY=%s\nUWAS_ADMIN_PIN=%s\nUWAS_PURGE_KEY=%s\n", apiKey, pinCode, purgeKey)
-			_ = installOsWriteFile(envPath, []byte(envContent), 0600)
+			if err := installOsWriteFile(envPath, []byte(envContent), 0600); err != nil {
+				// Without the credential file a later install sees the config and
+				// skips this whole seed block, so remove the partial config and let
+				// the operator retry after fixing the destination.
+				_ = installOsRemove(cfgPath)
+				return fmt.Errorf("write %s: %w", envPath, err)
+			}
 			fmt.Printf("  ✓ Baseline config: %s\n", cfgPath)
 		} else {
 			fmt.Printf("  ✓ Config already exists: %s (untouched)\n", cfgPath)
