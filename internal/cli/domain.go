@@ -21,6 +21,8 @@ var apiHTTPClient = &http.Client{
 	Timeout: 15 * time.Second,
 }
 
+const maxAPIResponseSize = 10 << 20
+
 func (d *DomainCommand) Name() string        { return "domain" }
 func (d *DomainCommand) Description() string { return "Manage domains (list, add, remove)" }
 
@@ -327,9 +329,12 @@ func apiRequestPin(method, url, apiKey, pin string, body io.Reader) ([]byte, err
 	}
 	defer resp.Body.Close()
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20)) // 10 MB cap
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxAPIResponseSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("API response read: %w", err)
+	}
+	if len(data) > maxAPIResponseSize {
+		return nil, fmt.Errorf("API response exceeds %d bytes", maxAPIResponseSize)
 	}
 
 	if resp.StatusCode >= 400 {
