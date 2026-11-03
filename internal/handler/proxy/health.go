@@ -126,6 +126,15 @@ func (hc *HealthChecker) Start(ctx context.Context) {
 	hc.mu.Unlock()
 
 	go func() {
+		defer func() {
+			hc.mu.Lock()
+			// Stop increments generation before another Start can install a
+			// new run. An older worker must not clear that newer run's guard.
+			if hc.generation == generation {
+				hc.cancel = nil
+			}
+			hc.mu.Unlock()
+		}()
 		ticker := time.NewTicker(hc.interval)
 		defer ticker.Stop()
 
