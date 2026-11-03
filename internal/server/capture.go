@@ -81,6 +81,16 @@ func (rc *responseCapture) Write(b []byte) (int, error) {
 	return rc.ResponseWriter.Write(b)
 }
 
+// Flush preserves streaming semantics while the cache capture is installed
+// beneath router.ResponseWriter. Without it, that wrapper's http.Flusher
+// check stopped at responseCapture and silently swallowed SSE/proxy flushes.
+func (rc *responseCapture) Flush() {
+	if !rc.written {
+		rc.WriteHeader(http.StatusOK)
+	}
+	_ = http.NewResponseController(rc.ResponseWriter).Flush()
+}
+
 func (rc *responseCapture) Header() http.Header {
 	return rc.ResponseWriter.Header()
 }
