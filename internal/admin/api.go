@@ -372,6 +372,10 @@ func (s *Server) Start() error {
 	if err != nil {
 		return err
 	}
+	// ServeTLS can fail while loading the certificate, before Serve takes
+	// ownership of the listener. Retain cleanup ownership for every return path;
+	// the extra Close after Serve is harmless.
+	defer ln.Close()
 
 	// Use TLS if certificate is configured
 	s.configMu.RLock()
