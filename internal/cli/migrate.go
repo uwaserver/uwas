@@ -167,7 +167,10 @@ func migrateApache(file string) error {
 	}
 	defer f.Close()
 
-	vhosts := parseApacheConfig(f)
+	vhosts, err := parseApacheConfigChecked(f)
+	if err != nil {
+		return fmt.Errorf("parse %s: %w", file, err)
+	}
 	if len(vhosts) == 0 {
 		return fmt.Errorf("no VirtualHost blocks found in %s", file)
 	}
@@ -181,6 +184,11 @@ func migrateApache(file string) error {
 }
 
 func parseApacheConfig(f *os.File) []apacheVHost {
+	vhosts, _ := parseApacheConfigChecked(f)
+	return vhosts
+}
+
+func parseApacheConfigChecked(f *os.File) ([]apacheVHost, error) {
 	var vhosts []apacheVHost
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // 64KB initial, 1MB max
@@ -314,8 +322,11 @@ func parseApacheConfig(f *os.File) []apacheVHost {
 		}
 	}
 
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan Apache config: %w", err)
+	}
 	expandApacheBalancers(vhosts, balancers)
-	return vhosts
+	return vhosts, nil
 }
 
 // stripApachePort drops the ":port" of "ServerName host:port" (and of an
