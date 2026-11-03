@@ -363,7 +363,7 @@ func (m *Manager) findInstall(version string) (PHPInstall, bool) {
 	hasFallback := false
 
 	for _, inst := range m.installations {
-		if inst.Version == version || strings.HasPrefix(inst.Version, version) {
+		if inst.Version == version || (version != "" && strings.HasPrefix(inst.Version, version+".")) {
 			// Prefer cgi-fcgi or fpm-fcgi over cli.
 			if inst.SAPI == "cgi-fcgi" || inst.SAPI == "fpm-fcgi" {
 				return inst, true
@@ -387,7 +387,7 @@ func (m *Manager) findInstallPtr(version string) (*PHPInstall, bool) {
 
 	for i := range m.installations {
 		inst := &m.installations[i]
-		if inst.Version == version || strings.HasPrefix(inst.Version, version) {
+		if inst.Version == version || (version != "" && strings.HasPrefix(inst.Version, version+".")) {
 			if inst.SAPI == "cgi-fcgi" || inst.SAPI == "fpm-fcgi" {
 				return inst, true
 			}
