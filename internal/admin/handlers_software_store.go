@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -158,37 +159,50 @@ func appNameLike(name string) string {
 	return b.String()
 }
 
-func fillSoftwareSecrets(templateID string, env map[string]string) {
-	setDefault := func(k string) {
+func fillSoftwareSecrets(templateID string, env map[string]string) error {
+	setDefault := func(k string) error {
 		if strings.TrimSpace(env[k]) == "" {
-			env[k] = randomHex(16)
+			secret, err := randomHex(16)
+			if err != nil {
+				return fmt.Errorf("generate %s: %w", k, err)
+			}
+			env[k] = secret
 		}
+		return nil
 	}
 	switch templateID {
 	case "adminer-postgres", "postgres":
-		setDefault("POSTGRES_PASSWORD")
+		return setDefault("POSTGRES_PASSWORD")
 	case "mysql":
-		setDefault("MYSQL_ROOT_PASSWORD")
-		setDefault("MYSQL_PASSWORD")
+		if err := setDefault("MYSQL_ROOT_PASSWORD"); err != nil {
+			return err
+		}
+		return setDefault("MYSQL_PASSWORD")
 	case "mariadb":
-		setDefault("MARIADB_ROOT_PASSWORD")
-		setDefault("MARIADB_PASSWORD")
+		if err := setDefault("MARIADB_ROOT_PASSWORD"); err != nil {
+			return err
+		}
+		return setDefault("MARIADB_PASSWORD")
 	case "minio":
 		if strings.TrimSpace(env["MINIO_ROOT_USER"]) == "" {
 			env["MINIO_ROOT_USER"] = "admin"
 		}
-		setDefault("MINIO_ROOT_PASSWORD")
+		return setDefault("MINIO_ROOT_PASSWORD")
 	case "n8n":
-		setDefault("N8N_BASIC_AUTH_PASSWORD")
+		return setDefault("N8N_BASIC_AUTH_PASSWORD")
 	}
+	return nil
 }
 
-func randomHex(n int) string {
+func randomHex(n int) (string, error) {
 	buf := make([]byte, n)
-	if _, err := rand.Read(buf); err != nil {
-		return "change-me-" + fmt.Sprint(n)
+	// crypto/rand.Read terminates the process on entropy failure in current Go
+	// releases. Reading the exported Reader lets this request fail closed
+	// without taking the admin server down.
+	if _, err := io.ReadFull(rand.Reader, buf); err != nil {
+		return "", err
 	}
-	return hex.EncodeToString(buf)
+	return hex.EncodeToString(buf), nil
 }
 
 func envValue(req softwareInstallRequest, key, fallback string) string {

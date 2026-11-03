@@ -202,7 +202,17 @@ func (s *Server) handleSoftwareRestore(w http.ResponseWriter, r *http.Request) {
 		"sh", "-c", "tar -tzf /backup/"+backupName+" >/dev/null && { rm -rf /data/* /data/.[!.]* /data/..?* 2>/dev/null || true; tar -xzf /backup/"+backupName+" -C /data; }")
 	output.WriteString(out)
 	if err != nil {
-		jsonError(w, "restore volume "+volume+" failed: "+err.Error()+"\n"+out, http.StatusInternalServerError)
+		message := "restore volume " + volume + " failed: " + err.Error() + "\n" + out
+		// The service was stopped before validating/extracting the archive.
+		// Always attempt to bring it back after a restore failure; in the
+		// common corrupt-archive case the live volume was never touched and
+		// leaving the application stopped turns a rejected backup into downtime.
+		restartOut, restartErr := runSoftwareComposeEnsuringInstalled(inst, "up", "-d")
+		output.WriteString(restartOut)
+		if restartErr != nil {
+			message += "\ndocker compose up also failed: " + restartErr.Error() + "\n" + restartOut
+		}
+		jsonError(w, message, http.StatusInternalServerError)
 		return
 	}
 	if out, err := runSoftwareComposeEnsuringInstalled(inst, "up", "-d"); err != nil {

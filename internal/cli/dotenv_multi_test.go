@@ -30,3 +30,19 @@ func TestLoadDotEnvFilesMergesAllFirstWins(t *testing.T) {
 		t.Errorf("second file was not loaded: %q", os.Getenv("F53001_ONLY_B"))
 	}
 }
+
+func TestLoadDotEnvFilesPreservesExplicitEmptyEnvironment(t *testing.T) {
+	d := t.TempDir()
+	p := filepath.Join(d, "settings.env")
+	if err := os.WriteFile(p, []byte("F64009_DISABLED=from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("F64009_DISABLED", "")
+
+	loadDotEnvFiles([]string{p})
+
+	value, present := os.LookupEnv("F64009_DISABLED")
+	if !present || value != "" {
+		t.Fatalf("explicit empty environment value overwritten: present=%v value=%q", present, value)
+	}
+}

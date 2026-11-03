@@ -74,8 +74,11 @@ func (w *startedWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if !ok {
 		return nil, nil, fmt.Errorf("middleware: underlying ResponseWriter does not support Hijack")
 	}
-	w.started = true
-	return hj.Hijack()
+	conn, rw, err := hj.Hijack()
+	if err == nil {
+		w.started = true
+	}
+	return conn, rw, err
 }
 
 // Unwrap exposes the underlying writer to http.ResponseController.

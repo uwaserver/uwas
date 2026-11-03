@@ -2,13 +2,21 @@ package middleware
 
 import (
 	"crypto/rand"
+	"encoding/binary"
+	"io"
 	"net/http"
+	"sync/atomic"
 	"time"
 )
 
 // Pre-computed canonical header key — avoids per-request
 // textproto.CanonicalMIMEHeaderKey calls in Header.Get/Header.Set.
 var reqIDKey = http.CanonicalHeaderKey("X-Request-ID")
+
+// requestIDFallback supplies per-process uniqueness only when the operating
+// system entropy source fails. The timestamp prefix keeps restart generations
+// distinct in ordinary operation.
+var requestIDFallback atomic.Uint64
 
 // RequestID adds a unique request ID to each request/response.
 // Preserves incoming X-Request-ID if present.
@@ -65,8 +73,10 @@ func generateRequestID() string {
 	b[3] = byte(ms >> 16)
 	b[4] = byte(ms >> 8)
 	b[5] = byte(ms)
-	if _, err := rand.Read(b[6:]); err != nil {
-		// Fallback: timestamp prefix in bytes 0-5 already provides per-second uniqueness
+	// crypto/rand.Read terminates the process on entropy failure in current Go
+	// releases. Reading Reader directly keeps the fallback reachable.
+	if _, err := io.ReadFull(rand.Reader, b[6:]); err != nil {
+		binary.BigEndian.PutUint64(b[8:], requestIDFallback.Add(1))
 	}
 	b[6] = (b[6] & 0x0F) | 0x70
 	b[8] = (b[8] & 0x3F) | 0x80

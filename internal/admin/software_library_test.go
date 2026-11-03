@@ -1316,7 +1316,9 @@ func TestSoftwareComposeTemplatesAndSecrets(t *testing.T) {
 			Domain:     "flow.example.com",
 			Env:        map[string]string{},
 		}
-		fillSoftwareSecrets(tc.id, req.Env)
+		if err := fillSoftwareSecrets(tc.id, req.Env); err != nil {
+			t.Fatalf("%s secrets: %v", tc.id, err)
+		}
 		compose := tpl.compose(req, *tpl)
 		for _, want := range tc.contains {
 			if !strings.Contains(compose, want) {

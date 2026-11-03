@@ -14,9 +14,11 @@ import (
 
 // f4710stub runs the `sh -c` script a `docker run` call would run inside the
 // alpine container, with /data and /backup mapped to real temp directories.
-func f4710stub(t *testing.T, dataDir string) {
+func f4710stub(t *testing.T, dataDir string) *[]softwareExecCall {
 	orig := softwareComposeCommand
+	calls := []softwareExecCall{}
 	softwareComposeCommand = func(name string, args ...string) *exec.Cmd {
+		calls = append(calls, softwareExecCall{Name: name, Args: append([]string(nil), args...)})
 		if name == "docker" && len(args) > 0 && args[0] == "run" {
 			var backupDir string
 			for i, a := range args {
@@ -32,15 +34,16 @@ func f4710stub(t *testing.T, dataDir string) {
 		return exec.Command("true")
 	}
 	t.Cleanup(func() { softwareComposeCommand = orig })
+	return &calls
 }
 
-func f4710setup(t *testing.T, backupBytes []byte) (*Server, string, string) {
+func f4710setup(t *testing.T, backupBytes []byte) (*Server, string, string, *[]softwareExecCall) {
 	s := testServer()
 	root, backupRoot, dataDir := t.TempDir(), t.TempDir(), t.TempDir()
 	origRoot, origBackupRoot := softwareLibraryRoot, softwareBackupRoot
 	softwareLibraryRoot, softwareBackupRoot = root, backupRoot
 	t.Cleanup(func() { softwareLibraryRoot, softwareBackupRoot = origRoot, origBackupRoot })
-	f4710stub(t, dataDir)
+	calls := f4710stub(t, dataDir)
 	dir := filepath.Join(root, "kuma")
 	os.MkdirAll(dir, 0755)
 	inst := softwareInstance{Name: "kuma", TemplateID: "uptime-kuma", Template: "Uptime Kuma", Category: "Monitoring",
@@ -57,7 +60,7 @@ func f4710setup(t *testing.T, backupBytes []byte) (*Server, string, string) {
 		t.Fatal(err)
 	}
 	os.WriteFile(filepath.Join(dataDir, "live.db"), []byte("LIVE"), 0600)
-	return s, dataDir, name
+	return s, dataDir, name, calls
 }
 
 func f4710restore(s *Server, name string) int {
@@ -81,7 +84,7 @@ func TestSoftwareRestoreCorruptBackupKeepsLiveData(t *testing.T) {
 	valid := buf.Bytes()
 
 	// control: a valid archive restores and replaces the live data
-	s, dataDir, name := f4710setup(t, valid)
+	s, dataDir, name, _ := f4710setup(t, valid)
 	if code := f4710restore(s, name); code != 200 {
 		t.Fatalf("valid restore code = %d", code)
 	}
@@ -98,12 +101,15 @@ func TestSoftwareRestoreCorruptBackupKeepsLiveData(t *testing.T) {
 		"truncated": valid[:len(valid)/2],
 	} {
 		t.Run(label, func(t *testing.T) {
-			s, dataDir, name := f4710setup(t, data)
+			s, dataDir, name, calls := f4710setup(t, data)
 			if code := f4710restore(s, name); code != 500 {
 				t.Fatalf("restore code = %d, want 500", code)
 			}
 			if b, err := os.ReadFile(filepath.Join(dataDir, "live.db")); err != nil || string(b) != "LIVE" {
 				t.Fatalf("live data lost after failed restore: %q %v", b, err)
+			}
+			if !softwareCallsContain(calls, "compose -p uwas-kuma", "up -d") {
+				t.Fatalf("service was stopped for restore but not restarted after archive validation failed: %#v", *calls)
 			}
 		})
 	}

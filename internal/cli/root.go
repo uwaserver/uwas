@@ -175,8 +175,10 @@ func loadDotEnvFiles(paths []string) {
 			if k, v, ok := strings.Cut(line, "="); ok {
 				k = strings.TrimSpace(k)
 				v = strings.TrimSpace(v)
-				// Don't override existing env vars
-				if os.Getenv(k) == "" {
+				// Presence, not a non-empty value, makes the process environment
+				// authoritative. An explicit empty value may intentionally disable
+				// a credential or option.
+				if _, exists := os.LookupEnv(k); !exists {
 					os.Setenv(k, v)
 				}
 			}

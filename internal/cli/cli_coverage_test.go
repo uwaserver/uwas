@@ -1704,13 +1704,18 @@ func TestDetectConflicts_Windows(t *testing.T) {
 func TestDetectConflicts_NoneInstalled(t *testing.T) {
 	orig := conflictsRuntimeGOOS
 	origLookPath := conflictsExecLookPath
+	origExecCmd := conflictsExecCommand
 	conflictsRuntimeGOOS = "linux"
 	conflictsExecLookPath = func(file string) (string, error) {
 		return "", fmt.Errorf("not found")
 	}
+	conflictsExecCommand = func(string, ...string) *exec.Cmd {
+		return exec.Command("sh", "-c", "exit 1")
+	}
 	defer func() {
 		conflictsRuntimeGOOS = orig
 		conflictsExecLookPath = origLookPath
+		conflictsExecCommand = origExecCmd
 	}()
 
 	conflicts := DetectConflicts()
@@ -2959,7 +2964,7 @@ func TestDetectConflicts_RunningProcess(t *testing.T) {
 	}
 	// Mock pidof to return a PID for apache2.
 	conflictsExecCommand = func(name string, arg ...string) *exec.Cmd {
-		if name == "pidof" {
+		if name == "pidof" && len(arg) > 0 && arg[0] == "apache2" {
 			// On Windows, we can't easily mock pidof. Use Go test helper pattern.
 			return exec.Command("echo", "12345")
 		}

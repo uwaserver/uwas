@@ -112,7 +112,10 @@ func generateIDBytes(buf *[16]byte) {
 	buf[3] = byte(ms >> 16)
 	buf[4] = byte(ms >> 8)
 	buf[5] = byte(ms)
-	if _, err := rand.Read(buf[6:]); err != nil {
+	// crypto/rand.Read terminates the process on entropy failure in current Go
+	// releases, which made the fallback below unreachable. Reading Reader
+	// directly preserves the error path and keeps request handling alive.
+	if _, err := io.ReadFull(rand.Reader, buf[6:]); err != nil {
 		// Fallback to /dev/urandom on entropy failure
 		f, fErr := os.Open("/dev/urandom")
 		if fErr != nil {

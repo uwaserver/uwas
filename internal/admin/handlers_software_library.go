@@ -428,7 +428,10 @@ func (s *Server) handleSoftwareInstall(w http.ResponseWriter, r *http.Request) {
 	if req.Env == nil {
 		req.Env = map[string]string{}
 	}
-	fillSoftwareSecrets(tpl.ID, req.Env)
+	if err := fillSoftwareSecrets(tpl.ID, req.Env); err != nil {
+		jsonError(w, "generate software secret: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	dir := filepath.Join(softwareLibraryRoot, req.Name)
 	metaPath := filepath.Join(dir, "uwas-software.yaml")

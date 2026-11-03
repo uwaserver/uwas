@@ -53,10 +53,6 @@ func DetectConflicts() []ConflictingServer {
 				break
 			}
 		}
-		if !installed {
-			continue
-		}
-
 		cs := ConflictingServer{
 			Name:    c.name,
 			Service: c.services[0],
@@ -90,6 +86,12 @@ func DetectConflicts() []ConflictingServer {
 			}
 		}
 
+		// A service can be active even when its executable is outside the
+		// current user's PATH (common for /usr/sbin under a restricted login).
+		// Only drop the candidate after both installation and runtime checks.
+		if !installed && !cs.Running {
+			continue
+		}
 		found = append(found, cs)
 	}
 

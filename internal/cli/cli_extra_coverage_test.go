@@ -1055,9 +1055,9 @@ func TestDetectConflicts_SystemctlActiveFallback(t *testing.T) {
 		switch {
 		case name == "pidof":
 			return exec.Command("printf", "")
-		case name == "systemctl" && len(arg) >= 1 && arg[0] == "is-active":
+		case name == "systemctl" && len(arg) >= 2 && arg[0] == "is-active" && arg[1] == "nginx":
 			return exec.Command("printf", "active")
-		case name == "systemctl" && len(arg) >= 1 && arg[0] == "show":
+		case name == "systemctl" && len(arg) >= 5 && arg[0] == "show" && arg[4] == "nginx":
 			return exec.Command("printf", "777")
 		}
 		return exec.Command("true")
@@ -1098,9 +1098,9 @@ func TestDetectConflicts_SystemctlActiveZeroMainPID(t *testing.T) {
 		switch {
 		case name == "pidof":
 			return exec.Command("printf", "")
-		case name == "systemctl" && len(arg) >= 1 && arg[0] == "is-active":
+		case name == "systemctl" && len(arg) >= 2 && arg[0] == "is-active" && arg[1] == "caddy":
 			return exec.Command("printf", "active")
-		case name == "systemctl" && len(arg) >= 1 && arg[0] == "show":
+		case name == "systemctl" && len(arg) >= 5 && arg[0] == "show" && arg[4] == "caddy":
 			return exec.Command("printf", "0")
 		}
 		return exec.Command("true")
