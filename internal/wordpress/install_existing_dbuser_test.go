@@ -20,6 +20,16 @@ import (
 // succeeds for everything else, reading the SQL from stdin like the real client.
 func mysqlAccountCmd(count string) func(string, ...string) *exec.Cmd {
 	return func(name string, args ...string) *exec.Cmd {
+		if name == "tar" {
+			for i, arg := range args {
+				if arg == "-C" && i+1 < len(args) {
+					extracted := filepath.Join(args[i+1], "wordpress")
+					_ = os.MkdirAll(extracted, 0755)
+					_ = os.WriteFile(filepath.Join(extracted, "index.php"), []byte("<?php"), 0644)
+					break
+				}
+			}
+		}
 		return exec.Command("/bin/sh", "-c",
 			`in=$(cat); case "$in" in *"COUNT(*)"*) echo "$1";; esac; exit 0`, "sh", count)
 	}

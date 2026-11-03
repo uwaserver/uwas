@@ -123,6 +123,19 @@ func fakeOutputCmd(stdout, stderr string, exitCode int) *exec.Cmd {
 // fakeCmd returns a *exec.Cmd that just succeeds (exit 0) with optional stdout.
 func fakeCmd(stdout string) func(string, ...string) *exec.Cmd {
 	return func(name string, args ...string) *exec.Cmd {
+		// A successful real WordPress tar extraction creates wordpress/.
+		// Installer tests stub tar because extraction is outside their scope,
+		// so materialize its minimal documented result for those controls.
+		if name == "tar" {
+			for i, arg := range args {
+				if arg == "-C" && i+1 < len(args) {
+					extracted := filepath.Join(args[i+1], "wordpress")
+					_ = os.MkdirAll(extracted, 0755)
+					_ = os.WriteFile(filepath.Join(extracted, "index.php"), []byte("<?php"), 0644)
+					break
+				}
+			}
+		}
 		return fakeOutputCmd(stdout, "", 0)
 	}
 }

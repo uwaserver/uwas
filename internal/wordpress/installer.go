@@ -499,16 +499,20 @@ func downloadAndExtract(webRoot string, log *strings.Builder) error {
 
 	// Move wordpress/* to webRoot
 	extractedDir := filepath.Join(tmpDir, "wordpress")
-	if _, err := osStatFn(extractedDir); err == nil {
-		entries, _ := osReadDirFn(extractedDir)
-		for _, entry := range entries {
-			src := filepath.Join(extractedDir, entry.Name())
-			dst := filepath.Join(webRoot, entry.Name())
-			// Surface move failures (e.g. ENOTEMPTY when reinstalling over an
-			// existing install) instead of silently reporting success.
-			if err := osRenameFn(src, dst); err != nil {
-				return fmt.Errorf("move %s into %s: %w", entry.Name(), webRoot, err)
-			}
+	if _, err := osStatFn(extractedDir); err != nil {
+		return fmt.Errorf("extract WordPress: archive is missing wordpress directory: %w", err)
+	}
+	entries, err := osReadDirFn(extractedDir)
+	if err != nil {
+		return fmt.Errorf("extract WordPress: read wordpress directory: %w", err)
+	}
+	for _, entry := range entries {
+		src := filepath.Join(extractedDir, entry.Name())
+		dst := filepath.Join(webRoot, entry.Name())
+		// Surface move failures (e.g. ENOTEMPTY when reinstalling over an
+		// existing install) instead of silently reporting success.
+		if err := osRenameFn(src, dst); err != nil {
+			return fmt.Errorf("move %s into %s: %w", entry.Name(), webRoot, err)
 		}
 	}
 	log.WriteString(fmt.Sprintf("Extracted to %s\n", webRoot))
