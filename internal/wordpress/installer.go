@@ -452,10 +452,15 @@ func downloadAndExtract(webRoot string, log *strings.Builder) error {
 		}
 	}()
 	const maxWPDownload = 100 << 20 // 100MB safety cap
-	written, copyErr := io.Copy(f, io.LimitReader(resp.Body, maxWPDownload))
+	// Read one sentinel byte beyond the cap so an oversized response cannot be
+	// mistaken for an exactly 100 MiB archive after LimitReader reports EOF.
+	written, copyErr := io.Copy(f, io.LimitReader(resp.Body, maxWPDownload+1))
 	f.Close()
 	if copyErr != nil {
 		return fmt.Errorf("download WordPress: %w", copyErr)
+	}
+	if written > maxWPDownload {
+		return fmt.Errorf("download WordPress: archive exceeds %d bytes", maxWPDownload)
 	}
 	log.WriteString(fmt.Sprintf("Downloaded %.1f MB\n", float64(written)/1024/1024))
 
