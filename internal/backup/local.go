@@ -22,7 +22,10 @@ func NewLocalProvider(dir string) *LocalProvider {
 
 func (p *LocalProvider) Name() string { return "local" }
 
-func (p *LocalProvider) Upload(_ context.Context, filename string, data io.Reader) error {
+func (p *LocalProvider) Upload(ctx context.Context, filename string, data io.Reader) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// Backup archives bundle uwas.yaml (API keys, admin secrets) and the TLS
 	// certs directory (private keys), so both the directory and the files must
 	// be owner-only — 0755/0644 would expose credentials to every local user.
@@ -36,7 +39,7 @@ func (p *LocalProvider) Upload(_ context.Context, filename string, data io.Reade
 	}
 	tmp := f.Name()
 	defer os.Remove(tmp)
-	if _, err := io.Copy(f, data); err != nil {
+	if _, err := io.Copy(f, &localUploadReader{ctx: ctx, reader: data}); err != nil {
 		f.Close()
 		return err
 	}
@@ -45,10 +48,30 @@ func (p *LocalProvider) Upload(_ context.Context, filename string, data io.Reade
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("close backup file: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := os.Rename(tmp, dst); err != nil {
 		return fmt.Errorf("publish backup file: %w", err)
 	}
 	return nil
+}
+
+// localUploadReader observes cancellation between source reads and publication.
+type localUploadReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r *localUploadReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := r.reader.Read(p)
+	if canceled := r.ctx.Err(); canceled != nil {
+		return 0, canceled
+	}
+	return n, err
 }
 
 func (p *LocalProvider) Download(_ context.Context, filename string) (io.ReadCloser, error) {
