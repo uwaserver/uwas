@@ -2,6 +2,7 @@ package php
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,9 +14,12 @@ import (
 
 // fakeDeps models a domain user who may manage only `allowed` (or an admin).
 type fakeDeps struct {
-	mgr     *phpmanager.Manager
-	admin   bool
-	allowed map[string]bool
+	mgr             *phpmanager.Manager
+	admin           bool
+	allowed         map[string]bool
+	setFPMAddresses []string
+	persistErr      error
+	notifyCalls     int
 }
 
 func (d *fakeDeps) RequireAdmin(w http.ResponseWriter, r *http.Request) bool {
@@ -43,12 +47,14 @@ func (d *fakeDeps) TaskActive() *TaskInfo                           { return nil
 func (d *fakeDeps) TaskSubmit(_, _, _ string, _ func(func(string)) error) *TaskInfo {
 	return &TaskInfo{}
 }
-func (d *fakeDeps) TaskActiveByType(string) *TaskInfo    { return nil }
-func (d *fakeDeps) TaskLatestByType(string) *TaskInfo    { return nil }
-func (d *fakeDeps) DomainRoot(string) string             { return "" }
-func (d *fakeDeps) SetDomainFPMAddress(string, string)   {}
-func (d *fakeDeps) PersistConfig() error                 { return nil }
-func (d *fakeDeps) NotifyDomainChange()                  {}
+func (d *fakeDeps) TaskActiveByType(string) *TaskInfo { return nil }
+func (d *fakeDeps) TaskLatestByType(string) *TaskInfo { return nil }
+func (d *fakeDeps) DomainRoot(string) string          { return "" }
+func (d *fakeDeps) SetDomainFPMAddress(_, address string) {
+	d.setFPMAddresses = append(d.setFPMAddresses, address)
+}
+func (d *fakeDeps) PersistConfig() error                 { return d.persistErr }
+func (d *fakeDeps) NotifyDomainChange()                  { d.notifyCalls++ }
 func (d *fakeDeps) PersistDomainPHPOverrides(string)     {}
 func (d *fakeDeps) PHPManager() *phpmanager.Manager      { return d.mgr }
 func (d *fakeDeps) PhpRunInstall(string) (string, error) { return "", nil }
@@ -97,5 +103,55 @@ func TestConfigRawGetRequiresAdmin(t *testing.T) {
 	New(&fakeDeps{mgr: twoTenantMgr(), allowed: map[string]bool{"tenant-a.com": true}}).ConfigRawGet(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("non-admin raw php.ini read status = %d, want 403", rec.Code)
+	}
+}
+
+func TestDomainUnassignClearsAndPersistsRouting(t *testing.T) {
+	d := &fakeDeps{mgr: twoTenantMgr(), allowed: map[string]bool{"tenant-a.com": true}}
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/php/domains/tenant-a.com", nil)
+	req.SetPathValue("domain", "tenant-a.com")
+	rec := httptest.NewRecorder()
+
+	New(d).DomainUnassign(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unassign status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if len(d.setFPMAddresses) != 1 || d.setFPMAddresses[0] != "" {
+		t.Fatalf("PROBLEM CONFIRMED: routing updates = %q, want one persisted empty FPM address", d.setFPMAddresses)
+	}
+	if d.notifyCalls != 1 {
+		t.Fatalf("domain change notifications = %d, want 1", d.notifyCalls)
+	}
+	for _, got := range d.mgr.GetDomainInstances() {
+		if got.Domain == "tenant-a.com" {
+			t.Fatal("unassigned domain remains in PHP manager")
+		}
+	}
+}
+
+func TestDomainUnassignPersistFailureKeepsAssignment(t *testing.T) {
+	d := &fakeDeps{mgr: twoTenantMgr(), allowed: map[string]bool{"tenant-a.com": true}, persistErr: errors.New("disk full")}
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/php/domains/tenant-a.com", nil)
+	req.SetPathValue("domain", "tenant-a.com")
+	rec := httptest.NewRecorder()
+
+	New(d).DomainUnassign(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("persist failure status = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if got := d.setFPMAddresses; len(got) != 2 || got[0] != "" || got[1] != "unix:/run/php/a.sock" {
+		t.Fatalf("routing updates = %q, want clear followed by rollback", got)
+	}
+	if d.notifyCalls != 0 {
+		t.Fatalf("notifications after persistence failure = %d, want 0", d.notifyCalls)
+	}
+	found := false
+	for _, got := range d.mgr.GetDomainInstances() {
+		found = found || got.Domain == "tenant-a.com"
+	}
+	if !found {
+		t.Fatal("assignment was removed even though persistence failed")
 	}
 }

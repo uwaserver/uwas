@@ -108,7 +108,10 @@ func (p *S3Provider) Download(ctx context.Context, filename string) (io.ReadClos
 		return nil, err
 	}
 	if resp.StatusCode >= 300 {
-		io.Copy(io.Discard, resp.Body)
+		// Error bodies are controlled by the remote object store and may be an
+		// endless stream. Drain enough for ordinary keep-alive reuse without
+		// letting a failed download consume unbounded bandwidth or time.
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		resp.Body.Close()
 		return nil, fmt.Errorf("s3 download %s: %s", filename, resp.Status)
 	}

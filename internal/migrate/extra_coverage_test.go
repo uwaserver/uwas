@@ -31,7 +31,6 @@ func cloneTestRoots(t *testing.T) (src, dst string) {
 	return "src", "dst"
 }
 
-
 // --- validateSSHInput edge cases ---
 
 func TestValidateSSHInputBadPort(t *testing.T) {
@@ -552,14 +551,10 @@ func TestImportCPanelBackupAddonTypeFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var addon *CPanelDomain
-	for i := range res.Domains {
-		if res.Domains[i].Domain == "addon.io" {
-			addon = &res.Domains[i]
+	for _, d := range res.Domains {
+		if d.Domain == "addon.io" {
+			t.Fatalf("missing addon document root was registered: %+v", d)
 		}
-	}
-	if addon == nil || addon.Type != "addon" {
-		t.Fatalf("expected addon.io type addon, got %+v", res.Domains)
 	}
 }
 

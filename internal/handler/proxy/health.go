@@ -168,6 +168,12 @@ func (hc *HealthChecker) Stop() {
 // maxConcurrentProbes bounds the probes one round runs at once.
 const maxConcurrentProbes = 32
 
+// maxHealthProbeBodyBytes lets the transport reuse a connection without
+// requiring a successful backend to terminate a streaming response. Health is
+// decided by the status code; body errors within this small drain budget still
+// signal a broken response.
+const maxHealthProbeBodyBytes = 64 << 10
+
 // checkAll probes the backends concurrently: a round that probed them one by
 // one let each unresponsive backend delay the others by a full timeout, so a
 // few dead backends made detection of the rest slower than the interval
@@ -248,7 +254,7 @@ func (hc *HealthChecker) checkOneGeneration(b *Backend, generation uint64) {
 	if err != nil {
 		return
 	}
-	_, bodyErr := io.Copy(io.Discard, resp.Body)
+	_, bodyErr := io.Copy(io.Discard, io.LimitReader(resp.Body, maxHealthProbeBodyBytes))
 	resp.Body.Close()
 	if bodyErr != nil {
 		return

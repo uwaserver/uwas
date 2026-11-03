@@ -10,12 +10,12 @@
 package database
 
 import (
-	"os"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -79,7 +79,6 @@ func dbErrStatus(err error) int {
 	}
 	return http.StatusInternalServerError
 }
-
 
 // jsonEncode writes v as JSON to w, logging on write failure so truncated
 // responses never silently corrupt client state.
@@ -184,6 +183,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.deps.CreateDB(req.Name, req.User, req.Password, req.Host)
 	if err != nil {
+		if errors.Is(err, dbpkg.ErrDatabaseExists) {
+			jsonError(w, "database already exists; choose a different database name", http.StatusConflict)
+			return
+		}
 		if errors.Is(err, dbpkg.ErrUserExists) {
 			jsonError(w, "database user already exists; choose a different user name", http.StatusConflict)
 			return
@@ -698,6 +701,10 @@ func (h *Handler) DockerCreateDatabase(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := dbpkg.DockerDBCreateDatabase(name, req.DBName, req.User, req.Password)
 	if err != nil {
+		if errors.Is(err, dbpkg.ErrDatabaseExists) {
+			jsonError(w, "database already exists; choose a different database name", http.StatusConflict)
+			return
+		}
 		if errors.Is(err, dbpkg.ErrUserExists) {
 			jsonError(w, "database user already exists; choose a different user name", http.StatusConflict)
 			return

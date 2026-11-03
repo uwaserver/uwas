@@ -23,12 +23,13 @@ import (
 )
 
 type tsDeps struct {
-	mu       sync.Mutex
-	st       *State
-	running  map[string]bool
-	stops    []string
-	forgets  []string
-	createFn func(name, hostname string) (Tunnel, error)
+	mu        sync.Mutex
+	st        *State
+	running   map[string]bool
+	stops     []string
+	forgets   []string
+	deleteErr error
+	createFn  func(name, hostname string) (Tunnel, error)
 }
 
 func newTSDeps(st *State) *tsDeps {
@@ -81,7 +82,7 @@ func (d *tsDeps) CreateTunnelAPI(token, accountID, name, hostname, localTarget s
 	}
 	return Tunnel{ID: "id-" + name, Name: name, Hostname: hostname, LocalTarget: localTarget, ConnectorToken: "tok"}, nil
 }
-func (d *tsDeps) DeleteTunnelAPI(string, string, string) error { return nil }
+func (d *tsDeps) DeleteTunnelAPI(string, string, string) error { return d.deleteErr }
 func (d *tsDeps) TunnelStatusOf(id string) (bool, int, string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -187,6 +188,27 @@ func TestReconnectStopsDroppedTunnels(t *testing.T) {
 	}
 	if d.isRunning("t3") {
 		t.Fatal("tunnel t3 still running after reconnect dropped it from state")
+	}
+}
+
+func TestTunnelDeleteKeepsLocalStateWhenRemoteDeleteFails(t *testing.T) {
+	d := newTSDeps(&State{Token: "t", AccountID: "acc", Connected: true, Tunnels: []Tunnel{
+		{ID: "t1", Name: "one", ConnectorToken: "c1"},
+	}})
+	d.deleteErr = fmt.Errorf("cloudflare unavailable")
+	h := New(d)
+	w := httptest.NewRecorder()
+
+	h.TunnelDelete(w, tsReq("DELETE", "", "t1"))
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("delete status = %d, want %d", w.Code, http.StatusBadGateway)
+	}
+	if got := strings.Join(d.tunnelNames(), ","); got != "one" {
+		t.Fatalf("tunnels = %q, want remote-failed tunnel retained", got)
+	}
+	if len(d.stops) != 0 || len(d.forgets) != 0 {
+		t.Fatalf("local cleanup ran after remote failure: stops=%v forgets=%v", d.stops, d.forgets)
 	}
 }
 

@@ -400,6 +400,7 @@ func TestRemoveSSHKey_ByFingerprint(t *testing.T) {
 
 	osReadFileFn = os.ReadFile
 	osWriteFileFn = os.WriteFile
+	execCommandFn = fakeExecCommand
 
 	// Compute the SHA256 fingerprint of key1 and remove by that.
 	parsed, _, _, _, err := ssh.ParseAuthorizedKey([]byte(testSSHKey1))

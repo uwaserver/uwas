@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,8 +23,18 @@ func NewLocalProvider(dir string) *LocalProvider {
 
 func (p *LocalProvider) Name() string { return "local" }
 
+func validateLocalBackupFilename(filename string) error {
+	if filename == "." {
+		return errors.New("invalid backup filename")
+	}
+	return safeBackupFilename(filename)
+}
+
 func (p *LocalProvider) Upload(ctx context.Context, filename string, data io.Reader) error {
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateLocalBackupFilename(filename); err != nil {
 		return err
 	}
 	// Backup archives bundle uwas.yaml (API keys, admin secrets) and the TLS
@@ -75,7 +86,10 @@ func (r *localUploadReader) Read(p []byte) (int, error) {
 }
 
 func (p *LocalProvider) Download(_ context.Context, filename string) (io.ReadCloser, error) {
-	path := filepath.Join(p.dir, filepath.Base(filename))
+	if err := validateLocalBackupFilename(filename); err != nil {
+		return nil, err
+	}
+	path := filepath.Join(p.dir, filename)
 	return os.Open(path)
 }
 
@@ -110,6 +124,9 @@ func (p *LocalProvider) List(_ context.Context) ([]BackupInfo, error) {
 }
 
 func (p *LocalProvider) Delete(_ context.Context, filename string) error {
-	path := filepath.Join(p.dir, filepath.Base(filename))
+	if err := validateLocalBackupFilename(filename); err != nil {
+		return err
+	}
+	path := filepath.Join(p.dir, filename)
 	return os.Remove(path)
 }

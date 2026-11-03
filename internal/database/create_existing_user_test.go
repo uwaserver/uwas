@@ -11,6 +11,9 @@ import (
 func fakeUserServer(existing map[string]bool) (func(string) (string, error), *[]string) {
 	var writes []string
 	return func(sql string) (string, error) {
+		if strings.Contains(sql, "information_schema.SCHEMATA") {
+			return "", nil
+		}
 		if strings.Contains(sql, "FROM mysql.user") {
 			for u := range existing {
 				if strings.Contains(sql, "User = '"+u+"'") || strings.Contains(sql, "User='"+u+"'") {

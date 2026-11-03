@@ -489,7 +489,8 @@ func (h *Handler) DomainAssign(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DomainUnassign(w http.ResponseWriter, r *http.Request) {
-	if h.deps.PHPManager() == nil {
+	mgr := h.deps.PHPManager()
+	if mgr == nil {
 		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -497,7 +498,25 @@ func (h *Handler) DomainUnassign(w http.ResponseWriter, r *http.Request) {
 	if !h.deps.RequireDomainAccess(w, r, domain, "php.unassign") {
 		return
 	}
-	h.deps.PHPManager().UnassignDomain(domain)
+	oldAddress := ""
+	for _, dp := range mgr.GetDomainInstances() {
+		if dp.Domain == domain {
+			oldAddress = dp.ListenAddr
+			break
+		}
+	}
+	// Remove the persisted routing first. If persistence fails, restore the
+	// in-memory config and leave the live PHP assignment untouched so the
+	// request cannot report failure while a restart resurrects the old route.
+	h.deps.SetDomainFPMAddress(domain, "")
+	if err := h.deps.PersistConfig(); err != nil {
+		h.deps.SetDomainFPMAddress(domain, oldAddress)
+		h.deps.RecordAudit(r, "php.unassign", "domain: "+domain+": "+err.Error(), false)
+		jsonError(w, "failed to persist config", http.StatusInternalServerError)
+		return
+	}
+	h.deps.NotifyDomainChange()
+	mgr.UnassignDomain(domain)
 	h.deps.RecordAudit(r, "php.unassign", "domain: "+domain, true)
 	jsonResponse(w, map[string]string{"status": "unassigned", "domain": domain})
 }

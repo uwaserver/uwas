@@ -98,6 +98,10 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 			root = filepath.Join(webRoot, req.Domain, "public_html")
 		}
 	}
+	if root == "" {
+		jsonError(w, "domain document root is not configured", http.StatusInternalServerError)
+		return
+	}
 	if req.WebRoot != "" && filepath.Clean(req.WebRoot) != filepath.Clean(root) {
 		jsonError(w, "web_root must be the domain's document root", http.StatusBadRequest)
 		return

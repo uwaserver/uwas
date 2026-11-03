@@ -501,6 +501,9 @@ func (h *Handler) TunnelDelete(w http.ResponseWriter, r *http.Request) {
 	// Delete via CF API
 	if err := h.deps.DeleteTunnelAPI(st.Token, st.AccountID, id); err != nil {
 		h.deps.LogWarn("CF tunnel delete failed", "id", id, "error", err)
+		h.deps.RecordAudit(r, "cloudflare.tunnel.delete", "id: "+id, false)
+		jsonError(w, "failed to delete tunnel from Cloudflare: "+err.Error(), http.StatusBadGateway)
+		return
 	}
 	st.Tunnels = newTunnels
 	st.UpdatedAt = time.Now()

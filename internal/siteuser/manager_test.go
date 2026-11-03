@@ -939,6 +939,7 @@ func TestRemoveSSHKey_Success(t *testing.T) {
 
 	osReadFileFn = os.ReadFile
 	osWriteFileFn = os.WriteFile
+	execCommandFn = fakeExecCommand
 
 	// Remove key1 by exact key match (substring matching is intentionally
 	// no longer supported, to avoid deleting unintended keys).

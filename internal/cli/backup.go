@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/uwaserver/uwas/internal/backup"
+	"github.com/uwaserver/uwas/internal/pathsafe"
 )
 
 // BackupCommand creates a backup archive of UWAS config and certs.
@@ -133,7 +134,7 @@ func createBackupCount(output, configPath, certsDir string) (int, error) {
 					continue
 				}
 				src := filepath.Join(domainsDir, name)
-				if err := addFileToTar(tw, src, "config/domains.d/"+name); err != nil {
+				if err := addFileToTarWithin(tw, src, "config/domains.d/"+name, domainsDir); err != nil {
 					fmt.Fprintf(os.Stderr, "warning: could not add %s: %v\n", src, err)
 				} else {
 					fileCount++
@@ -153,7 +154,7 @@ func createBackupCount(output, configPath, certsDir string) (int, error) {
 			}
 			relPath, _ := filepath.Rel(certsDir, path)
 			tarPath := "certs/" + filepath.ToSlash(relPath)
-			if err := addFileToTar(tw, path, tarPath); err != nil {
+			if err := addFileToTarWithin(tw, path, tarPath, certsDir); err != nil {
 				fmt.Fprintln(os.Stderr, "warning: could not add", path, ":", err)
 			} else {
 				fileCount++
@@ -177,6 +178,10 @@ func createBackupCount(output, configPath, certsDir string) (int, error) {
 }
 
 func addFileToTar(tw *tar.Writer, srcPath, tarName string) error {
+	return addFileToTarWithin(tw, srcPath, tarName, "")
+}
+
+func addFileToTarWithin(tw *tar.Writer, srcPath, tarName, base string) error {
 	file, err := os.Open(srcPath)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", srcPath, err)
@@ -186,6 +191,9 @@ func addFileToTar(tw *tar.Writer, srcPath, tarName string) error {
 	info, err := file.Stat()
 	if err != nil {
 		return fmt.Errorf("stat %s: %w", srcPath, err)
+	}
+	if base != "" && !pathsafe.OpenedWithin(base, srcPath, file) {
+		return fmt.Errorf("%s resolves outside backup source", srcPath)
 	}
 	// Decide before the header goes out: a directory (a symlink to one is
 	// not walked into) or other special file would announce its stat size

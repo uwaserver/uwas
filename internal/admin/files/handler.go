@@ -492,6 +492,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "parse form: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	defer r.MultipartForm.RemoveAll()
 	dir := r.FormValue("path")
 	if dir == "" {
 		dir = "."

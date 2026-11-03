@@ -25,3 +25,15 @@ func TestDisambiguatedName(t *testing.T) {
 		t.Errorf("%q is not a valid identifier", long)
 	}
 }
+
+func TestDisambiguatedNameRespectsTinyLimits(t *testing.T) {
+	for max := 0; max <= 9; max++ {
+		got := DisambiguatedName("database", "tenant.example", max)
+		if len(got) > max {
+			t.Fatalf("max %d: len(%q) = %d", max, got, len(got))
+		}
+	}
+	if got := DisambiguatedName("database", "tenant.example", 8); got == "" {
+		t.Fatal("positive hash-sized limit lost all disambiguation")
+	}
+}

@@ -345,6 +345,19 @@ func DockerDBCreateDatabase(containerName, dbName, user, password string) (*Crea
 	if strings.ContainsRune(password, 0) {
 		return nil, invalidInputf("invalid password: null byte not allowed")
 	}
+	// IF NOT EXISTS would silently attach the new account to a schema that may
+	// belong to another site. Refuse an existing schema before creating or
+	// granting anything, matching the native database path.
+	dbExistsOut, err := DockerDBExecSQL(containerName, fmt.Sprintf(
+		"SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '%s'", escapeSQL(dbName)))
+	if err != nil {
+		return nil, fmt.Errorf("create database %q in container %q: look up database: %w", dbName, containerName, err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(dbExistsOut), "\n") {
+		if n, convErr := strconv.Atoi(strings.TrimSpace(line)); convErr == nil && n > 0 {
+			return nil, fmt.Errorf("create database %q in container %q: %w", dbName, containerName, ErrDatabaseExists)
+		}
+	}
 	// CREATE USER IF NOT EXISTS leaves an existing account untouched, so the
 	// password returned below would never have been set while that account
 	// (possibly another site's) was granted on the new database; refuse it
@@ -360,8 +373,8 @@ func DockerDBCreateDatabase(containerName, dbName, user, password string) (*Crea
 		}
 	}
 	sql := fmt.Sprintf(
-		"CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; "+
-			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
+		"CREATE DATABASE %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; "+
+			"CREATE USER '%s'@'%%' IDENTIFIED BY '%s'; "+
 			"GRANT ALL ON %s.* TO '%s'@'%%'; FLUSH PRIVILEGES;",
 		backtick(dbName), escapeSQL(user), escapeSQL(password), grantDBIdent(dbName), escapeSQL(user))
 

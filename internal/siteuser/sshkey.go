@@ -151,8 +151,12 @@ func AddSSHKeyForWebDir(webDir, hostname, pubKey string) error {
 	}
 
 	// Fix ownership
-	chown(sshDir, username, username)
-	chown(authKeys, username, username)
+	if err := chown(sshDir, username, username); err != nil {
+		return fmt.Errorf("chown %s: %w", sshDir, err)
+	}
+	if err := chown(authKeys, username, username); err != nil {
+		return fmt.Errorf("chown %s: %w", authKeys, err)
+	}
 
 	return nil
 }
@@ -248,7 +252,9 @@ func replaceAuthKeys(path string, content []byte, username string) error {
 		os.Remove(tmpName)
 		return err
 	}
-	chown(path, username, username)
+	if err := chown(path, username, username); err != nil {
+		return fmt.Errorf("chown %s: %w", path, err)
+	}
 	return nil
 }
 

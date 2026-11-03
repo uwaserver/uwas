@@ -1201,7 +1201,10 @@ func (m *Manager) loadUsers() error {
 		return fmt.Errorf("parse %s: expected a user array, got null", file)
 	}
 
-	for _, user := range users {
+	for i, user := range users {
+		if user == nil {
+			return fmt.Errorf("parse %s: user entry %d is null", file, i)
+		}
 		m.users[user.Username] = user
 		m.usersByID[user.ID] = user
 		if user.APIKeyHash != "" {

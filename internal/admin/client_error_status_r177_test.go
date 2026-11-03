@@ -36,6 +36,15 @@ func sshKeyServer(t *testing.T) (*Server, string) {
 	return s, filepath.Dir(root)
 }
 
+func fakeChownOnPath(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "chown"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func TestSSHKeyAddMalformedKeyIs400AndLeavesNoDirectory(t *testing.T) {
 	s, domainDir := sshKeyServer(t)
 	cases := []struct {
@@ -63,6 +72,7 @@ func TestSSHKeyAddMalformedKeyIs400AndLeavesNoDirectory(t *testing.T) {
 
 // Control: a valid key is still accepted.
 func TestSSHKeyAddValidKeyStillAccepted(t *testing.T) {
+	fakeChownOnPath(t)
 	s, _ := sshKeyServer(t)
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/users/keys.example/ssh-keys",

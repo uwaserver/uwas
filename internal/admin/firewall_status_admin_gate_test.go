@@ -58,6 +58,7 @@ func TestFirewallStatusRequiresAdmin(t *testing.T) {
 // TestSSHKeyAddAcceptsECDSA: ecdsa-sha2-* is a valid OpenSSH key type that
 // does not start with "ssh-".
 func TestSSHKeyAddAcceptsECDSA(t *testing.T) {
+	fakeChownOnPath(t)
 	s := testServer()
 	base := t.TempDir()
 	root := filepath.Join(base, "keys.example", "public_html")

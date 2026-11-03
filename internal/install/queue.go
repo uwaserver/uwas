@@ -85,16 +85,17 @@ func appendBoundedTaskOutput(current, line string) string {
 	if truncated {
 		current = strings.TrimPrefix(current, taskOutputTruncated)
 	}
-	if len(current)+len(line) <= maxTaskOutput {
-		if truncated {
-			return taskOutputTruncated + current + line
-		}
+	if !truncated && len(current)+len(line) <= maxTaskOutput {
 		return current + line
 	}
-	if len(line) >= maxTaskOutput {
-		return taskOutputTruncated + line[len(line)-maxTaskOutput:]
+	payloadLimit := maxTaskOutput - len(taskOutputTruncated)
+	if truncated && len(current)+len(line) <= payloadLimit {
+		return taskOutputTruncated + current + line
 	}
-	keep := maxTaskOutput - len(line)
+	if len(line) >= payloadLimit {
+		return taskOutputTruncated + line[len(line)-payloadLimit:]
+	}
+	keep := payloadLimit - len(line)
 	if keep > len(current) {
 		keep = len(current)
 	}

@@ -16,12 +16,27 @@ func (d *existingUserDeps) CreateDB(name, user, _, host string) (*dbpkg.CreateRe
 	return nil, fmt.Errorf("create database %q: %w: %s@%s", name, dbpkg.ErrUserExists, user, host)
 }
 
+type existingSchemaDeps struct{ guardDeps }
+
+func (d *existingSchemaDeps) CreateDB(name, user, _, host string) (*dbpkg.CreateResult, error) {
+	return nil, fmt.Errorf("create database %q: %w", name, dbpkg.ErrDatabaseExists)
+}
+
 // F11900: an existing account answers 409 instead of a generic 500 so the
 // operator picks another user name.
 func TestCreateExistingUserIsConflict(t *testing.T) {
 	rec := httptest.NewRecorder()
 	New(&existingUserDeps{}).Create(rec, httptest.NewRequest(http.MethodPost, "/",
 		strings.NewReader(`{"name":"shop","user":"shared","host":"localhost"}`)))
+	if rec.Code != http.StatusConflict {
+		t.Errorf("status = %d, want 409 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateExistingSchemaIsConflict(t *testing.T) {
+	rec := httptest.NewRecorder()
+	New(&existingSchemaDeps{}).Create(rec, httptest.NewRequest(http.MethodPost, "/",
+		strings.NewReader(`{"name":"shop","user":"shop_user","host":"localhost"}`)))
 	if rec.Code != http.StatusConflict {
 		t.Errorf("status = %d, want 409 (%s)", rec.Code, rec.Body.String())
 	}

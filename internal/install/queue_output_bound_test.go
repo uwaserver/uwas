@@ -34,3 +34,18 @@ func TestTaskOutputIsBoundedAndKeepsLatestProgress(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+func TestAppendBoundedTaskOutputHonorsExactByteCap(t *testing.T) {
+	control := "ordinary progress\n"
+	if got := appendBoundedTaskOutput("", control); got != control {
+		t.Fatalf("control output = %q, want %q", got, control)
+	}
+
+	got := appendBoundedTaskOutput("", strings.Repeat("x", maxTaskOutput+1))
+	if len(got) > maxTaskOutput {
+		t.Fatalf("PROBLEM CONFIRMED: bounded output retained %d bytes, cap is %d", len(got), maxTaskOutput)
+	}
+	if !strings.HasPrefix(got, taskOutputTruncated) {
+		t.Fatal("truncated output lacks marker")
+	}
+}

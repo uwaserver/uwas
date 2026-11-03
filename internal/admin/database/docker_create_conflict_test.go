@@ -66,3 +66,29 @@ func TestDockerCreateDatabaseExistingUserIsConflict(t *testing.T) {
 		t.Errorf("conflict response leaks internal detail: %s", rec.Body.String())
 	}
 }
+
+func TestDockerCreateDatabaseExistingSchemaIsConflict(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fake docker")
+	}
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = inspect ]; then echo mariadb:11; exit 0; fi\n" +
+		"if [ \"$1\" = exec ]; then\n" +
+		"  sql=$(cat)\n" +
+		"  case \"$sql\" in *information_schema.SCHEMATA*) echo 1;; *) echo 0;; esac\n" +
+		"fi\n" +
+		"exit 0\n"
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	rec := dockerCreateDB(t, `{"name":"existing","user":"fresh","password":"pw"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("existing schema status = %d, want 409 (%s)", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "container") {
+		t.Errorf("conflict response leaks internal detail: %s", rec.Body.String())
+	}
+}

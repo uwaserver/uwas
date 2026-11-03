@@ -292,6 +292,10 @@ func (h *Handler) NotifyPrefsPut(w http.ResponseWriter, r *http.Request) {
 	// send "webhooks": [] to remove every webhook.
 	h.deps.LockConfig()
 	g := &h.deps.ConfigPtr().Global
+	prevAlerting := g.Alerting
+	prevWebhooks := append([]config.WebhookConfig(nil), g.Webhooks...)
+	alertingChanged := req.Alerting != nil
+	webhooksChanged := req.Webhooks != nil
 	if req.Webhooks != nil {
 		// Masked secrets (as returned by NotifyPrefsGet) are restored from the
 		// live webhook with the same URL: the n-th submitted entry for a URL
@@ -344,18 +348,27 @@ func (h *Handler) NotifyPrefsPut(w http.ResponseWriter, r *http.Request) {
 		g.Webhooks = req.Webhooks
 	}
 	h.deps.UnlockConfig()
-	// The live webhook manager keeps its own copy of the webhook list; without
-	// this, a webhook removed or disabled here kept receiving every event until
-	// the next reload.
-	if req.Webhooks != nil {
-		if n, ok := h.deps.(interface{ WebhooksChanged() }); ok {
-			n.WebhooksChanged()
-		}
-	}
 	if err := h.deps.PersistConfig(); err != nil {
+		// A failed save must not leave settings active only until restart while
+		// telling the caller they were rejected.
+		h.deps.LockConfig()
+		if alertingChanged {
+			h.deps.ConfigPtr().Global.Alerting = prevAlerting
+		}
+		if webhooksChanged {
+			h.deps.ConfigPtr().Global.Webhooks = prevWebhooks
+		}
+		h.deps.UnlockConfig()
 		h.deps.RecordAudit(r, "settings.notifications", err.Error(), false)
 		jsonError(w, "failed to persist settings", http.StatusInternalServerError)
 		return
+	}
+	// The live webhook manager keeps its own copy of the webhook list. Publish
+	// only after persistence succeeds so a rejected update never goes live.
+	if webhooksChanged {
+		if n, ok := h.deps.(interface{ WebhooksChanged() }); ok {
+			n.WebhooksChanged()
+		}
 	}
 	h.deps.RecordAudit(r, "settings.notifications", "updated", true)
 	jsonResponse(w, map[string]string{"status": "saved"})

@@ -13,7 +13,14 @@ import (
 // apart while the plain name stays in use wherever it is not yet taken.
 func DisambiguatedName(name, host string, max int) string {
 	sum := sha256.Sum256([]byte(strings.ToLower(host)))
-	suffix := "_" + hex.EncodeToString(sum[:])[:8]
+	hash := hex.EncodeToString(sum[:])[:8]
+	if max <= 0 {
+		return ""
+	}
+	if max <= len(hash) {
+		return hash[:max]
+	}
+	suffix := "_" + hash
 	if len(name)+len(suffix) > max {
 		name = name[:max-len(suffix)]
 	}

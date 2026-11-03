@@ -260,6 +260,12 @@ func ImportCPanelBackup(backupPath, targetDir string, importDB bool) (*CPanelRes
 			}
 		} else {
 			result.Errors = append(result.Errors, "no files for "+dom.Domain+": "+srcRoot)
+			// Do not advertise an empty site as successfully imported. The
+			// destination was empty before this attempt, so remove the root we
+			// just created (while preserving a pre-existing empty directory) and
+			// omit the domain from the result, just as a failed copy does.
+			discardPartialClone(dstRoot, dstExisted)
+			continue
 		}
 
 		// Certificate: matched by the names inside it, wherever pkgacct put it.

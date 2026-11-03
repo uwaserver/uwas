@@ -64,6 +64,14 @@ func TestCPanelImportMissingDocRootDoesNotCopyMainSite(t *testing.T) {
 	if got := readImported(dst, "blog.main.test", "wp-config.php"); got != "" {
 		t.Errorf("EXPECTED: no main-site files under blog.main.test\nACTUAL: wp-config.php=%q", got)
 	}
+	for _, d := range res.Domains {
+		if d.Domain == "blog.main.test" {
+			t.Errorf("missing document root was still registered as an imported domain: %+v", d)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dst, "blog.main.test", "public_html")); !os.IsNotExist(err) {
+		t.Errorf("empty target left behind for missing document root: err=%v", err)
+	}
 	reported := false
 	for _, e := range res.Errors {
 		reported = reported || strings.Contains(e, "no files for blog.main.test")

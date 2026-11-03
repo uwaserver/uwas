@@ -486,6 +486,20 @@ func CreateDatabase(name, user, password, host string) (*CreateResult, error) {
 	if !validDBIdentifier(user) {
 		return nil, invalidInputf("invalid username: only letters, digits and underscore allowed (max 64 chars)")
 	}
+	if host == "" {
+		host = "localhost"
+	}
+	if strings.ContainsRune(password, 0) || strings.ContainsRune(host, 0) {
+		return nil, invalidInputf("invalid password or host: null byte not allowed")
+	}
+	// CREATE DATABASE IF NOT EXISTS silently reuses an existing schema. The
+	// GRANT below would then give a newly-created account access to another
+	// site's data while reporting a fresh database to the caller.
+	if exists, err := DatabaseExists(name); err != nil {
+		return nil, fmt.Errorf("look up database %q: %w", name, err)
+	} else if exists {
+		return nil, fmt.Errorf("create database %q: %w", name, ErrDatabaseExists)
+	}
 	if password == "" {
 		var err error
 		password, err = generateDBPassword()
@@ -493,13 +507,6 @@ func CreateDatabase(name, user, password, host string) (*CreateResult, error) {
 			return nil, fmt.Errorf("create database %q: %w", name, err)
 		}
 	}
-	if host == "" {
-		host = "localhost"
-	}
-	if strings.ContainsRune(password, 0) || strings.ContainsRune(host, 0) {
-		return nil, invalidInputf("invalid password or host: null byte not allowed")
-	}
-
 	// CREATE USER IF NOT EXISTS leaves an existing account untouched, so the
 	// password returned below would never have been set while that account
 	// (possibly another site's) was granted on the new database (F11900).
@@ -510,8 +517,8 @@ func CreateDatabase(name, user, password, host string) (*CreateResult, error) {
 	}
 
 	sql := fmt.Sprintf(`
-		CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-		CREATE USER IF NOT EXISTS '%s'@'%s' IDENTIFIED BY '%s';
+		CREATE DATABASE %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+		CREATE USER '%s'@'%s' IDENTIFIED BY '%s';
 		GRANT ALL PRIVILEGES ON %s.* TO '%s'@'%s';
 		FLUSH PRIVILEGES;
 	`, backtick(name), escapeSQL(user), escapeSQL(host), escapeSQL(password), grantDBIdent(name), escapeSQL(user), escapeSQL(host))
@@ -540,6 +547,10 @@ func invalidInputf(format string, args ...any) error {
 // ErrContainerExists reports that a Docker database container with the
 // requested name already exists (a conflict, not a server fault).
 var ErrContainerExists = errors.New("container already exists")
+
+// ErrDatabaseExists reports that CreateDatabase was asked to reuse an
+// existing schema, which could expose that schema to the new account.
+var ErrDatabaseExists = errors.New("database already exists")
 
 type conflictError string
 
