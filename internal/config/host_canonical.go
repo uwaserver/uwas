@@ -15,10 +15,7 @@ import (
 // A wildcard prefix and a port are kept. A name IDNA rejects, and any
 // all-ASCII name, comes back lower-cased but otherwise unchanged.
 func CanonicalHost(host string) string {
-	h := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
-	if isASCII(h) {
-		return h
-	}
+	h := strings.ToLower(strings.TrimSpace(host))
 	prefix := ""
 	if strings.HasPrefix(h, "*.") {
 		prefix, h = "*.", h[2:]
@@ -26,6 +23,10 @@ func CanonicalHost(host string) string {
 	port := ""
 	if i := strings.LastIndex(h, ":"); i != -1 && isASCII(h[i:]) && !strings.Contains(h[i:], "]") {
 		h, port = h[:i], h[i:]
+	}
+	h = strings.TrimSuffix(h, ".")
+	if isASCII(h) {
+		return prefix + h + port
 	}
 	ascii, err := idna.Lookup.ToASCII(h)
 	if err != nil {
