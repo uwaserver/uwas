@@ -263,15 +263,21 @@ func sendTelegram(botToken, chatID string, msg Message) (err error) {
 	if err != nil {
 		return err
 	}
-	// Only the status matters; read a bounded prefix like the webhook and Slack
-	// channels do instead of whatever the endpoint streams within the timeout.
-	_, readErr := io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+	// Read a bounded response: Telegram can report an application-level failure
+	// as JSON even when the HTTP request itself succeeded.
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 	resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("telegram API returned %d", resp.StatusCode)
 	}
 	if readErr != nil {
 		return fmt.Errorf("read telegram response: %w", readErr)
+	}
+	var apiResult struct {
+		OK *bool `json:"ok"`
+	}
+	if json.Unmarshal(body, &apiResult) == nil && apiResult.OK != nil && !*apiResult.OK {
+		return fmt.Errorf("telegram API reported ok=false")
 	}
 	return nil
 }
