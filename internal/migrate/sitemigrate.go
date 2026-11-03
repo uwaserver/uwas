@@ -161,7 +161,14 @@ func Migrate(req MigrateRequest) *MigrateResult {
 	wpConfig := filepath.Join(req.LocalRoot, "wp-config.php")
 	if _, err := os.Stat(wpConfig); err == nil && req.DBName != "" {
 		log.WriteString("\n=== Updating wp-config.php ===\n")
-		updateWPConfigDB(wpConfig, req.DBName, req.DBUser, req.DBPass, &log)
+		if configErr := updateWPConfigDB(wpConfig, req.DBName, req.DBUser, req.DBPass, &log); configErr != nil {
+			message := "wp-config update failed: " + configErr.Error()
+			if result.Error == "" {
+				result.Error = message
+			} else {
+				result.Error += "; " + message
+			}
+		}
 	}
 
 	result.Status = "done"
@@ -367,15 +374,16 @@ func migrateDBReal(req MigrateRequest, log *strings.Builder) string {
 }
 
 // updateWPConfigDB updates database credentials in wp-config.php.
-func updateWPConfigDB(path, dbName, dbUser, dbPass string, log *strings.Builder) {
+func updateWPConfigDB(path, dbName, dbUser, dbPass string, log *strings.Builder) error {
 	data, err := readWPConfigNoFollow(path)
 	if err != nil {
 		if isSymlink(path) {
-			log.WriteString("wp-config.php is a symlink — local DB credentials not written\n")
-			return
+			message := "wp-config.php is a symlink — local DB credentials not written"
+			log.WriteString(message + "\n")
+			return fmt.Errorf("wp-config.php is a symlink")
 		}
 		log.WriteString(fmt.Sprintf("read wp-config: %s\n", err))
-		return
+		return fmt.Errorf("read wp-config: %w", err)
 	}
 	content := string(data)
 
@@ -442,7 +450,8 @@ func updateWPConfigDB(path, dbName, dbUser, dbPass string, log *strings.Builder)
 	// must not redirect root's write to another tenant's config (F45301).
 	if err := writeWPConfigNoFollow(path, []byte(content), 0600); err != nil {
 		log.WriteString(fmt.Sprintf("write wp-config: %s\n", err))
-		return
+		return fmt.Errorf("write wp-config: %w", err)
 	}
 	log.WriteString("wp-config.php updated with local DB credentials\n")
+	return nil
 }
