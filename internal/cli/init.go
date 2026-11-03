@@ -136,7 +136,13 @@ func ensureDefaultConfig(httpPort, adminPort, adminBind, webRoot, acmeEmail stri
 		return "", fmt.Errorf("ensure default config: %w", err)
 	}
 	envContent := fmt.Sprintf("UWAS_ADMIN_KEY=%s\nUWAS_ADMIN_PIN=%s\nUWAS_PURGE_KEY=%s\n", apiKey, pinCode, purgeKey)
-	os.WriteFile(envPath, []byte(envContent), 0600)
+	if err := os.WriteFile(envPath, []byte(envContent), 0600); err != nil {
+		// The config embeds credentials whose durable CLI copy is this file. Do
+		// not leave a config that makes the next first-run attempt return early
+		// and silently skip recreating the missing credential file.
+		_ = os.Remove(cfgPath)
+		return "", fmt.Errorf("write %s: %w", envPath, err)
+	}
 
 	fmt.Printf("\n  %s Created default configuration\n", colorize("*", "green"))
 	fmt.Printf("    Config:    %s\n", cfgPath)
