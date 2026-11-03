@@ -139,7 +139,6 @@ func New(deps Deps) *Handler {
 
 // ── Helpers ──
 
-
 // jsonEncode writes v as JSON to w, logging on write failure so truncated
 // responses never silently corrupt client state.
 func jsonEncode(w http.ResponseWriter, v any) {
@@ -853,7 +852,7 @@ func ValidateTokenWithClient(client *http.Client, token, accountID string) (stri
 			Name string `json:"name"`
 		} `json:"result"`
 	}
-	if err := json.NewDecoder(resp2.Body).Decode(&acc); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp2.Body, 8<<20)).Decode(&acc); err != nil {
 		return "", fmt.Errorf("account fetch: malformed response: %w", err)
 	}
 	if !acc.Success {
