@@ -49,8 +49,8 @@ func (d *deployDeps) Reload() error {
 	}
 	return d.s.reloadFn()
 }
-func (d *deployDeps) AppCompleteDeploy(name string, def *apps.App, skipStart bool) error {
-	return d.s.completeDeployedApp(name, def, skipStart)
+func (d *deployDeps) AppCompleteDeploy(name string, def *apps.App, skipStart bool, healthPath string) error {
+	return d.s.completeDeployedApp(name, def, skipStart, healthPath)
 }
 func (d *deployDeps) AppRollback(ctx context.Context, name string, def *apps.App, rollbackSHA string, deployCfg apps.DeployConfig, env map[string]string, restart bool, logBuf deployadmin.LogSink) (bool, string, string) {
 	return d.s.rollbackDeployedApp(ctx, name, def, rollbackSHA, deployCfg, env, restart, logBuf)
@@ -217,7 +217,7 @@ func (s *Server) runWebhookDeploy(name, ref string) {
 		status.CommitSHA = strings.TrimSpace(sha)
 	}
 
-	if err := s.completeDeployedApp(name, def, false); err != nil {
+	if err := s.completeDeployedApp(name, def, false, def.Deploy.HealthPath); err != nil {
 		status.OK = false
 		status.Error = err.Error()
 		if rollbackSHA != "" {
@@ -359,7 +359,7 @@ func validateDeployConfig(def *apps.App) error {
 	return deployValidateDeployConfig(def)
 }
 
-func (s *Server) completeDeployedApp(name string, def *apps.App, skipStart bool) error {
+func (s *Server) completeDeployedApp(name string, def *apps.App, skipStart bool, healthPath string) error {
 	if s.appsMgr == nil {
 		return nil
 	}
@@ -380,7 +380,7 @@ func (s *Server) completeDeployedApp(name string, def *apps.App, skipStart bool)
 	if err := s.appsMgr.WaitListening(name, deployListeningProbeTimeout); err != nil {
 		return fmt.Errorf("deploy succeeded and process started, but app is not listening: %w", err)
 	}
-	if err := deployadmin.ProbeAppHealth(def, def.Deploy.HealthPath); err != nil {
+	if err := deployadmin.ProbeAppHealth(def, healthPath); err != nil {
 		return fmt.Errorf("deploy succeeded and process is listening, but health check failed: %w", err)
 	}
 	return nil

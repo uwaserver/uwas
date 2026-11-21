@@ -20,7 +20,7 @@ type disconnectDeps struct {
 	rollbackErr   error
 }
 
-func (d *disconnectDeps) AppCompleteDeploy(string, *apps.App, bool) error {
+func (d *disconnectDeps) AppCompleteDeploy(string, *apps.App, bool, string) error {
 	d.completeCalls++
 	if d.completeCalls == 1 {
 		return nil

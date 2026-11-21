@@ -40,7 +40,9 @@ type Deps interface {
 	// Reload
 	Reload() error
 	// App lifecycle (for post-deploy restart)
-	AppCompleteDeploy(name string, def *apps.App, skipStart bool) error
+	// healthPath is probed after start ("" skips it); it is passed rather than
+	// set on def because completing a deploy persists def (F66001).
+	AppCompleteDeploy(name string, def *apps.App, skipStart bool, healthPath string) error
 	AppRollback(ctx context.Context, name string, def *apps.App, rollbackSHA string, deployCfg apps.DeployConfig, env map[string]string, restart bool, logBuf LogSink) (bool, string, string)
 }
 
@@ -214,6 +216,7 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		Env       map[string]string `json:"env"`
 		SSHKey    string            `json:"ssh_key_path"`
 		GitToken  string            `json:"git_token"`
+		Health    string            `json:"health_path"`
 		SkipStart bool              `json:"skip_start"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -243,6 +246,11 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.GitToken != "" {
 		validationDef.Deploy.GitToken = req.GitToken
+	}
+	// The deploy modal sends health_path with the other one-off overrides; it
+	// was dropped and the stored path (or none) gated the deploy (F66001).
+	if req.Health != "" {
+		validationDef.Deploy.HealthPath = req.Health
 	}
 	if req.Env != nil {
 		validationDef.Env = apps.EnvFromMap(req.Env)
@@ -343,7 +351,7 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		commitSHA = strings.TrimSpace(sha)
 	}
 
-	if err := h.deps.AppCompleteDeploy(name, def, req.SkipStart); err != nil {
+	if err := h.deps.AppCompleteDeploy(name, def, req.SkipStart, validationDef.Deploy.HealthPath); err != nil {
 		resp := &AppDeployResponse{OK: false, CommitSHA: commitSHA, Error: err.Error(), Log: logBuf.String(), LogTail: tailString(logBuf.String(), 4096), RollbackSHA: rollbackSHA}
 		if rollbackSHA != "" {
 			// skip_start asked for the app to stay stopped; the rollback must
@@ -731,7 +739,7 @@ func (h *Handler) runWebhookDeploy(name, ref string) {
 		status.CommitSHA = strings.TrimSpace(sha)
 	}
 
-	if err := h.deps.AppCompleteDeploy(name, def, false); err != nil {
+	if err := h.deps.AppCompleteDeploy(name, def, false, def.Deploy.HealthPath); err != nil {
 		status.OK = false
 		status.Error = err.Error()
 		if rollbackSHA != "" {

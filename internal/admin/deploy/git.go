@@ -587,7 +587,9 @@ func probeAppHealth(def *apps.App, path string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 500 {
+	// README promises a 2xx/3xx response; failing only on 5xx let a 404/403
+	// health path (missing route, wrong app, auth wall) pass the deploy (F66000).
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusBadRequest {
 		return fmt.Errorf("health check returned %d", resp.StatusCode)
 	}
 	return nil

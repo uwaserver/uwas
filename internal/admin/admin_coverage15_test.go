@@ -1524,7 +1524,7 @@ func TestCompleteDeployedApp(t *testing.T) {
 	}, logger.New("error", "text"), metrics.New())
 	s.appsMgr = appMgr
 
-	err := s.completeDeployedApp("testcomplete", app, false)
+	err := s.completeDeployedApp("testcomplete", app, false, app.Deploy.HealthPath)
 	if err != nil {
 		// Expected: start may fail or WaitListening may time out
 		t.Logf("completeDeployedApp error (expected in CI): %v", err)
@@ -1555,7 +1555,7 @@ func TestCompleteDeployedAppSkipStart(t *testing.T) {
 	s.appsMgr = appMgr
 
 	// skipStart = true should cause Disabled to be true, then return nil
-	err := s.completeDeployedApp("testskipped", app, true)
+	err := s.completeDeployedApp("testskipped", app, true, app.Deploy.HealthPath)
 	if err != nil {
 		t.Errorf("unexpected error with skipStart=true: %v", err)
 	}

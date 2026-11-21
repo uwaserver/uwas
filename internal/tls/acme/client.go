@@ -66,6 +66,64 @@ type Client struct {
 
 	// HTTP-01 challenge tokens: token → keyAuthorization
 	httpTokens sync.Map
+	// tokenRefs counts the solveChallenge calls serving each token: a CA may
+	// hand overlapping orders the same pending authorization, so one order
+	// ending must not withdraw the token another is still validated on
+	// (F66100).
+	tokenMu   sync.Mutex
+	tokenRefs map[string]int
+	dnsRefs   map[string]int // F66101: same, per DNS-01 TXT record value
+}
+
+func (c *Client) publishHTTPToken(token, keyAuth string) {
+	c.tokenMu.Lock()
+	defer c.tokenMu.Unlock()
+	if c.tokenRefs == nil {
+		c.tokenRefs = make(map[string]int)
+	}
+	c.tokenRefs[token]++
+	c.httpTokens.Store(token, keyAuth)
+}
+
+func (c *Client) releaseHTTPToken(token string) {
+	c.tokenMu.Lock()
+	defer c.tokenMu.Unlock()
+	if c.tokenRefs[token] > 1 {
+		c.tokenRefs[token]--
+		return
+	}
+	delete(c.tokenRefs, token)
+	c.httpTokens.Delete(token)
+}
+
+// acquireDNSRecord and releaseDNSRecord count the DNS-01 solves relying on
+// one TXT value; it is removed only when the last of them ends (F66101).
+func (c *Client) acquireDNSRecord(name, keyAuth string) {
+	c.tokenMu.Lock()
+	defer c.tokenMu.Unlock()
+	if c.dnsRefs == nil {
+		c.dnsRefs = make(map[string]int)
+	}
+	c.dnsRefs[name+"\x00"+keyAuth]++
+}
+
+func (c *Client) releaseDNSRecord(name, keyAuth string) (last bool) {
+	c.tokenMu.Lock()
+	defer c.tokenMu.Unlock()
+	key := name + "\x00" + keyAuth
+	if c.dnsRefs[key] > 1 {
+		c.dnsRefs[key]--
+		return false
+	}
+	delete(c.dnsRefs, key)
+	return true
+}
+
+func (c *Client) cleanupDNSRecord(name, token, keyAuth string) error {
+	if !c.releaseDNSRecord(name, keyAuth) {
+		return nil
+	}
+	return c.dnsProvider.CleanupDNSChallenge(name, token, keyAuth)
 }
 
 // Directory contains ACME server endpoint URLs.
@@ -507,8 +565,8 @@ func (c *Client) solveChallenge(ctx context.Context, authz *Authorization) error
 	}
 
 	// Handle HTTP-01 challenge.
-	c.httpTokens.Store(challenge.Token, keyAuth)
-	defer c.httpTokens.Delete(challenge.Token)
+	c.publishHTTPToken(challenge.Token, keyAuth)
+	defer c.releaseHTTPToken(challenge.Token)
 
 	// Tell ACME server we're ready
 	resp, err := c.signedRequest(ctx, challenge.URL, map[string]any{})
@@ -532,32 +590,34 @@ func (c *Client) solveChallenge(ctx context.Context, authz *Authorization) error
 func (c *Client) solveDNS01(ctx context.Context, domain string, challenge *Challenge, keyAuth string) error {
 	// Create TXT record for _acme-challenge.<domain>
 	dnsName := "_acme-challenge." + domain
+	c.acquireDNSRecord(dnsName, keyAuth)
 	if err := c.dnsProvider.PresentDNSChallenge(dnsName, challenge.Token, keyAuth); err != nil {
+		c.releaseDNSRecord(dnsName, keyAuth)
 		return fmt.Errorf("dns-01 present: %w", err)
 	}
 
 	// Tell ACME server we're ready
 	resp, err := c.signedRequest(ctx, challenge.URL, map[string]any{})
 	if err != nil {
-		c.dnsProvider.CleanupDNSChallenge(dnsName, challenge.Token, keyAuth)
+		c.cleanupDNSRecord(dnsName, challenge.Token, keyAuth)
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		body := readErrorBody(resp.Body)
-		c.dnsProvider.CleanupDNSChallenge(dnsName, challenge.Token, keyAuth)
+		c.cleanupDNSRecord(dnsName, challenge.Token, keyAuth)
 		return acmeError(resp.StatusCode, body)
 	}
 
 	// Wait for challenge validation
 	_, err = c.waitForStatus(ctx, challenge.URL, "valid", 30)
 	if err != nil {
-		c.dnsProvider.CleanupDNSChallenge(dnsName, challenge.Token, keyAuth)
+		c.cleanupDNSRecord(dnsName, challenge.Token, keyAuth)
 		return err
 	}
 
 	// Clean up the TXT record after successful validation.
-	if err := c.dnsProvider.CleanupDNSChallenge(dnsName, challenge.Token, keyAuth); err != nil {
+	if err := c.cleanupDNSRecord(dnsName, challenge.Token, keyAuth); err != nil {
 		c.logger.Warn("failed to cleanup dns-01 challenge", "domain", domain, "error", err)
 	}
 

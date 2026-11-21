@@ -56,11 +56,11 @@ func (d *branchFilterDeps) RecordAudit(_ *http.Request, action, _ string, _ bool
 	defer d.mu.Unlock()
 	d.audited = append(d.audited, action)
 }
-func (d *branchFilterDeps) AppsManager() *apps.Manager                      { return d.mgr }
-func (d *branchFilterDeps) ConfigPath() string                              { return "" }
-func (d *branchFilterDeps) ValidateDeployConfig(*apps.App) error            { return nil }
-func (d *branchFilterDeps) Reload() error                                   { return nil }
-func (d *branchFilterDeps) AppCompleteDeploy(string, *apps.App, bool) error { return nil }
+func (d *branchFilterDeps) AppsManager() *apps.Manager                              { return d.mgr }
+func (d *branchFilterDeps) ConfigPath() string                                      { return "" }
+func (d *branchFilterDeps) ValidateDeployConfig(*apps.App) error                    { return nil }
+func (d *branchFilterDeps) Reload() error                                           { return nil }
+func (d *branchFilterDeps) AppCompleteDeploy(string, *apps.App, bool, string) error { return nil }
 func (d *branchFilterDeps) AppRollback(context.Context, string, *apps.App, string, apps.DeployConfig, map[string]string, bool, LogSink) (bool, string, string) {
 	return false, "", ""
 }

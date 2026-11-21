@@ -32,16 +32,16 @@ type deployKeyRaceDeps struct {
 	release map[int]chan struct{}
 }
 
-func (d *deployKeyRaceDeps) RequireAdmin(http.ResponseWriter, *http.Request) bool { return true }
-func (d *deployKeyRaceDeps) RequirePin(http.ResponseWriter, *http.Request) bool   { return true }
-func (d *deployKeyRaceDeps) LogInfo(string, ...any)                               {}
-func (d *deployKeyRaceDeps) LogWarn(string, ...any)                               {}
-func (d *deployKeyRaceDeps) LogError(string, ...any)                              {}
-func (d *deployKeyRaceDeps) RecordAudit(*http.Request, string, string, bool)      {}
-func (d *deployKeyRaceDeps) AppsManager() *apps.Manager                           { return d.mgr }
-func (d *deployKeyRaceDeps) ConfigPath() string                                   { return "" }
-func (d *deployKeyRaceDeps) Reload() error                                        { return nil }
-func (d *deployKeyRaceDeps) AppCompleteDeploy(string, *apps.App, bool) error      { return nil }
+func (d *deployKeyRaceDeps) RequireAdmin(http.ResponseWriter, *http.Request) bool    { return true }
+func (d *deployKeyRaceDeps) RequirePin(http.ResponseWriter, *http.Request) bool      { return true }
+func (d *deployKeyRaceDeps) LogInfo(string, ...any)                                  {}
+func (d *deployKeyRaceDeps) LogWarn(string, ...any)                                  {}
+func (d *deployKeyRaceDeps) LogError(string, ...any)                                 {}
+func (d *deployKeyRaceDeps) RecordAudit(*http.Request, string, string, bool)         {}
+func (d *deployKeyRaceDeps) AppsManager() *apps.Manager                              { return d.mgr }
+func (d *deployKeyRaceDeps) ConfigPath() string                                      { return "" }
+func (d *deployKeyRaceDeps) Reload() error                                           { return nil }
+func (d *deployKeyRaceDeps) AppCompleteDeploy(string, *apps.App, bool, string) error { return nil }
 func (d *deployKeyRaceDeps) AppRollback(context.Context, string, *apps.App, string, apps.DeployConfig, map[string]string, bool, LogSink) (bool, string, string) {
 	return false, "", ""
 }

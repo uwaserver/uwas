@@ -322,9 +322,19 @@ func (m *Monitor) checkDomainGeneration(ctx context.Context, d config.Domain, st
 	// to probe loopback / private / cloud-metadata addresses keeps a typo or
 	// stale entry (e.g. Host: "169.254.169.254") from turning the monitor
 	// into an internal-network scanner.
-	if err := monitorURLSafetyCheck(url); err != nil {
-		m.logger.Debug("monitor skipping unsafe host", "domain", d.Host, "error", err)
-		return
+	probeErr := monitorURLSafetyCheck(url)
+	if probeErr != nil {
+		// A host that was already reported and now fails the check (its DNS
+		// stopped resolving, or it moved into a blocked range) records a
+		// failed check: skipping it left its last "up" on the board for good
+		// (F66200). A host never reported stays off the board as before.
+		m.resultsMu.RLock()
+		_, reported := m.results[d.Host]
+		m.resultsMu.RUnlock()
+		if !reported {
+			m.logger.Debug("monitor skipping unsafe host", "domain", d.Host, "error", probeErr)
+			return
+		}
 	}
 
 	// Per-check deadline bounded by both checkTimeout and the parent context
@@ -333,12 +343,16 @@ func (m *Monitor) checkDomainGeneration(ctx context.Context, d config.Domain, st
 	defer cancel()
 
 	start := time.Now()
-	req, reqErr := http.NewRequestWithContext(reqCtx, "GET", url, nil)
-	if reqErr != nil {
-		return
+	var resp *http.Response
+	err := probeErr
+	if err == nil {
+		req, reqErr := http.NewRequestWithContext(reqCtx, "GET", url, nil)
+		if reqErr != nil {
+			return
+		}
+		req.Header.Set("User-Agent", monitorUserAgent)
+		resp, err = m.client.Do(req)
 	}
-	req.Header.Set("User-Agent", monitorUserAgent)
-	resp, err := m.client.Do(req)
 	elapsed := time.Since(start).Milliseconds()
 
 	check := Check{

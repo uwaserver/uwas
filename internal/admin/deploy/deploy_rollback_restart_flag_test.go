@@ -21,7 +21,7 @@ type rollbackFlagDeps struct {
 	restarts    []bool
 }
 
-func (d *rollbackFlagDeps) AppCompleteDeploy(string, *apps.App, bool) error {
+func (d *rollbackFlagDeps) AppCompleteDeploy(string, *apps.App, bool, string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.completeErr

@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Renaming a domain moves its cron jobs and cron history to the new host, so deleting the renamed domain with cleanup no longer leaves its cron jobs running (F65401).
 - The PHP status poll no longer drops a version's start-in-progress marker, which let a second start of the same version leave an untracked duplicate php-cgi worker running (F65800).
 - Concurrent webhook create/delete requests no longer leave the live webhook list behind the saved config, where a new webhook never fired or a deleted one kept receiving events; `PUT /settings/notifications` restores masked webhook header values from the same webhook as the masked secret, so dropping or reordering same-URL webhooks no longer crosses their header tokens (F65900/F65901).
+- App deploy health checks again require a 2xx/3xx response as documented: a `health_path` answering 404, 403 or 401 no longer reports the deploy successful and skips the rollback; a manual deploy honours the `health_path` sent from the dashboard deploy form as a one-off override, as it already did for git URL, branch and build command (F66000/F66001).
+- When a CA gives overlapping certificate orders the same pending authorization, the order that gives up first no longer withdraws the HTTP-01 token or the shared `_acme-challenge` TXT value the other order is still being validated on (F66100/F66101).
+- The uptime monitor reports a site as down when its domain stops resolving (or now resolves to a blocked address) instead of showing its last "up" result forever (F66200).
 - A failed `PUT /settings/notifications` no longer rolls back a webhook or alerting change another request made meanwhile; a masked webhook secret is restored from the webhook its mask came from, so removing or reordering one of two webhooks with the same URL no longer gives the other the wrong signing secret (F65500/F65501).
 
 ## [0.11.41] - 2026-11-02

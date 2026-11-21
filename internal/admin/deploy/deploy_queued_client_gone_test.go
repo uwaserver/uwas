@@ -17,7 +17,7 @@ type countDeps struct {
 	completes atomic.Int32
 }
 
-func (d *countDeps) AppCompleteDeploy(string, *apps.App, bool) error {
+func (d *countDeps) AppCompleteDeploy(string, *apps.App, bool, string) error {
 	d.completes.Add(1)
 	return nil
 }
