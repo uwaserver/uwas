@@ -35,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A bandwidth block ends when its daily/monthly window does: the first request of the new window is no longer refused with 503, and the dashboard no longer shows an idle domain as blocked with the previous window's usage (F67000).
 - A request still in flight when its domain is deleted no longer re-creates that domain's analytics, which a re-added hostname then showed to its new owner (F67001).
 - PostgreSQL Docker databases: create and drop no longer report success when psql rejected the statement, and the database list shows the container's databases instead of its schemas (F67100/F67101).
+- A request still in flight when its domain is deleted no longer re-creates that domain's request/bandwidth counters, which a re-added hostname then showed to its new owner (F67200).
+- Self-update installs only the asset built for the running platform: a 32-bit ARM host no longer gets (and installs) the arm64 binary, which left UWAS unable to restart (F67300).
+- The dashboard no longer offers an older release as an update to a host running a newer build (a pre-release, an unreleased patch, or a `git describe` build such as `v0.11.41-7-g…`); versions are compared by semver (F67301).
+- An idle SFTP client no longer keeps UWAS from shutting down: shutdown closes logged-in SFTP sessions instead of waiting for clients to disconnect (F67400).
+- SFTP OPEN, OPENDIR and SETSTAT on a FIFO in a site's tree no longer hang the session and pin an OS thread forever; FIFOs are refused as transfer targets (F67401).
+- The SFTP server refuses SSH subsystems other than `sftp` instead of accepting them and serving nothing (F67402).
 - A failed `PUT /settings/notifications` no longer rolls back a webhook or alerting change another request made meanwhile; a masked webhook secret is restored from the webhook its mask came from, so removing or reordering one of two webhooks with the same URL no longer gives the other the wrong signing secret (F65500/F65501).
 
 ## [0.11.41] - 2026-11-02

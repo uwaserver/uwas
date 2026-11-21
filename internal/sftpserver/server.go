@@ -62,6 +62,12 @@ type Server struct {
 
 	// hs bounds connections that are still in the SSH handshake (F15200).
 	hs handshakeGate
+
+	// conns are the authenticated connections Shutdown closes; closing is set
+	// once it has, so a handshake finishing afterwards is not served (F67400).
+	connsMu sync.Mutex
+	conns   map[*ssh.ServerConn]struct{}
+	closing bool
 }
 
 // New creates a new SFTP server.
@@ -148,10 +154,40 @@ func (s *Server) Stop() {
 	}
 }
 
-// Shutdown waits for all active connections to finish before returning.
+// Shutdown stops accepting, closes the authenticated connections and waits
+// for every connection goroutine to finish. Waiting for clients to leave on
+// their own let one idle SFTP session hold UWAS's stop open indefinitely
+// (F67400); handshakes still in progress end within handshakeTimeout.
 func (s *Server) Shutdown() {
 	s.Stop()
+	s.connsMu.Lock()
+	s.closing = true
+	for c := range s.conns {
+		c.Close()
+	}
+	s.connsMu.Unlock()
 	s.wg.Wait()
+}
+
+// trackConn registers an authenticated connection for Shutdown; false means
+// Shutdown already ran and the connection must not be served.
+func (s *Server) trackConn(c *ssh.ServerConn) bool {
+	s.connsMu.Lock()
+	defer s.connsMu.Unlock()
+	if s.closing {
+		return false
+	}
+	if s.conns == nil {
+		s.conns = make(map[*ssh.ServerConn]struct{})
+	}
+	s.conns[c] = struct{}{}
+	return true
+}
+
+func (s *Server) untrackConn(c *ssh.ServerConn) {
+	s.connsMu.Lock()
+	delete(s.conns, c)
+	s.connsMu.Unlock()
 }
 
 // acceptSeam is a test-only pause point between Accept returning a connection
@@ -226,6 +262,10 @@ func (s *Server) handleConn(nConn net.Conn) {
 		return
 	}
 	defer sshConn.Close()
+	if !s.trackConn(sshConn) {
+		return
+	}
+	defer s.untrackConn(sshConn)
 	_ = nConn.SetDeadline(time.Time{})
 
 	s.logger.Info("SFTP login", "user", sshConn.User(), "remote", nConn.RemoteAddr())
@@ -272,8 +312,10 @@ func (s *Server) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request, perms *
 
 	for req := range reqs {
 		if req.Type != "subsystem" || len(req.Payload) < 4 || string(req.Payload[4:]) != "sftp" {
+			// Only the sftp subsystem is served; accepting another one left the
+			// client waiting on a channel nothing answers (F67402).
 			if req.WantReply {
-				req.Reply(req.Type == "subsystem", nil)
+				req.Reply(false, nil)
 			}
 			continue
 		}
@@ -834,7 +876,7 @@ func (sess *sftpSession) handleOpenDir(id uint32, payload []byte) {
 		sess.sendStatus(id, sshFXNoSuchFile, "not a directory")
 		return
 	}
-	dir, err := rh.Open(rel)
+	dir, err := rh.OpenFile(rel, os.O_RDONLY|nonBlockFlag, 0)
 	if err != nil {
 		sess.sendStatus(id, sshFXNoSuchFile, "not a directory")
 		return
@@ -971,9 +1013,15 @@ func (sess *sftpSession) handleOpen(id uint32, payload []byte) {
 		sess.sendStatus(id, sshFXNoSuchFile, err.Error())
 		return
 	}
-	f, err := rh.OpenFile(rel, flags|noFollowFlag, 0644)
+	f, err := rh.OpenFile(rel, flags|noFollowFlag|nonBlockFlag, 0644)
 	if err != nil {
 		sess.sendStatus(id, sshFXNoSuchFile, err.Error())
+		return
+	}
+	// Opened without blocking (F67401); a FIFO is not a file to transfer.
+	if info, err := f.Stat(); err != nil || info.Mode()&os.ModeNamedPipe != 0 {
+		f.Close()
+		sess.sendStatus(id, sshFXFailure, "not a regular file")
 		return
 	}
 	handle := sess.newHandle(&openHandle{path: safe, file: f, append: pflags&sshFXFAppend != 0})
@@ -1159,7 +1207,7 @@ func (sess *sftpSession) handleSetStat(id uint32, payload []byte) {
 		sess.sendStatus(id, sshFXNoSuchFile, err.Error())
 		return
 	}
-	f, err := rh.OpenFile(rel, flags|noFollowFlag, 0)
+	f, err := rh.OpenFile(rel, flags|noFollowFlag|nonBlockFlag, 0)
 	if err != nil {
 		sess.sendStatus(id, sshFXNoSuchFile, err.Error())
 		return

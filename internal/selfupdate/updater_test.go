@@ -318,7 +318,7 @@ func TestCheckUpdate_VersionComparison(t *testing.T) {
 		{"same with v prefix", "v1.0.0", "v1.0.0", false},
 		{"different versions", "1.0.0", "v1.1.0", true},
 		{"dev version", "dev", "v2.0.0", false},
-		{"newer local (downgrade scenario)", "2.0.0", "v1.0.0", true}, // simple string compare, not semver
+		{"newer local (downgrade scenario)", "2.0.0", "v1.0.0", false}, // never offer a downgrade (F67301)
 	}
 
 	for _, tt := range tests {

@@ -3121,9 +3121,8 @@ func TestSFTP_NonSessionChannel(t *testing.T) {
 }
 
 func TestSFTP_NonSftpSubsystem(t *testing.T) {
-	// Test that non-sftp subsystem requests are handled.
-	// The server replies true for subsystem type (even non-sftp ones) but
-	// doesn't start the SFTP handler - it just continues the request loop.
+	// A subsystem other than sftp is refused (RFC 4254 6.5), so the client
+	// does not wait on a channel nothing serves (F67402).
 	root := t.TempDir()
 	s, addr := startTestServer(t, map[string]User{
 		"user": {Password: "pass", Root: root},
@@ -3144,16 +3143,13 @@ func TestSFTP_NonSftpSubsystem(t *testing.T) {
 	defer session.Close()
 	go ssh.DiscardRequests(reqs)
 
-	// Request a non-sftp subsystem. The server's handleSession code replies
-	// true when req.Type == "subsystem" (regardless of the subsystem name),
-	// but continues without starting SFTP.
+	// Request a non-sftp subsystem.
 	ok, err := session.SendRequest("subsystem", true, append(marshalUint32(4), []byte("exec")...))
 	if err != nil {
 		t.Fatalf("subsystem request: %v", err)
 	}
-	// The reply is true because req.Type == "subsystem"
-	if !ok {
-		t.Error("expected subsystem request to get true reply (it's still a subsystem type)")
+	if ok {
+		t.Error("non-sftp subsystem request was accepted; want a failure reply")
 	}
 }
 

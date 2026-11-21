@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -122,22 +123,126 @@ func CheckUpdate(currentVersion string) (*ReleaseInfo, error) {
 	info := &ReleaseInfo{
 		CurrentVersion: current,
 		LatestVersion:  latest,
-		UpdateAvail:    latest != current && current != "dev",
+		UpdateAvail:    current != "dev" && versionNewer(latest, current),
 		ReleaseURL:     release.HTMLURL,
 		PublishedAt:    release.PublishedAt,
 		ReleaseNotes:   release.Body,
 	}
 
-	// Find matching asset for this platform
+	// Find matching asset for this platform. The name must match exactly: a
+	// substring match gave linux/arm the published uwas-linux-arm64, which
+	// Update installed in place of a runnable binary (F67300).
 	wantName := fmt.Sprintf("uwas-%s-%s", runtimeGOOS, runtimeGOARCH)
 	for _, asset := range release.Assets {
-		if strings.Contains(asset.Name, wantName) {
+		if asset.Name == wantName || asset.Name == wantName+".exe" {
 			info.DownloadURL = asset.BrowserDownloadURL
 			break
 		}
 	}
 
 	return info, nil
+}
+
+// versionNewer reports whether release latest is newer than the running
+// current (both without the "v" prefix), by semver precedence. A plain
+// inequality offered a host running a newer build (a pre-release, an
+// unreleased patch, a `git describe` build such as 0.11.41-7-gabc) an
+// "update" that downgraded it (F67301). Versions that do not parse keep the
+// old any-difference rule.
+func versionNewer(latest, current string) bool {
+	lCore, lPre, lok := parseVersion(latest)
+	cCore, cPre, cok := parseVersion(current)
+	if !lok || !cok {
+		return latest != current
+	}
+	for i := range lCore {
+		if lCore[i] != cCore[i] {
+			return lCore[i] > cCore[i]
+		}
+	}
+	// `git describe` stamps N commits after a tag as <tag>-N-g<hash>: newer
+	// than that tag, older than anything after it.
+	if base, ok := strings.CutSuffix(cPre, describeSuffix(cPre)); ok && base != cPre {
+		if lPre == base {
+			return false
+		}
+		cPre = base
+	}
+	switch {
+	case lPre == cPre:
+		return false
+	case lPre == "":
+		return true // final release of the running pre-release
+	case cPre == "":
+		return false
+	}
+	return comparePrerelease(lPre, cPre) > 0
+}
+
+// parseVersion splits "1.2.3-rc.1+meta" into its numeric core and
+// pre-release; ok is false when the core is not 1-3 dot-separated numbers.
+func parseVersion(v string) (core [3]int, pre string, ok bool) {
+	v, _, _ = strings.Cut(v, "+")
+	v, pre, _ = strings.Cut(v, "-")
+	parts := strings.Split(v, ".")
+	if len(parts) > 3 {
+		return core, "", false
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 || p == "" {
+			return core, "", false
+		}
+		core[i] = n
+	}
+	return core, pre, true
+}
+
+// describeSuffix returns the "-N-g<hex>" (or bare "N-g<hex>") tail `git
+// describe` appends to a pre-release field, or "".
+func describeSuffix(pre string) string {
+	fields := strings.Split(pre, "-")
+	if len(fields) < 2 {
+		return ""
+	}
+	n, hash := fields[len(fields)-2], fields[len(fields)-1]
+	if _, err := strconv.Atoi(n); err != nil || len(hash) < 2 || hash[0] != 'g' {
+		return ""
+	}
+	if _, err := strconv.ParseUint(hash[1:], 16, 64); err != nil {
+		return ""
+	}
+	if len(fields) == 2 {
+		return pre
+	}
+	return "-" + n + "-" + hash
+}
+
+// comparePrerelease orders two non-empty pre-release fields by semver rules.
+func comparePrerelease(a, b string) int {
+	as, bs := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(as) && i < len(bs); i++ {
+		an, aErr := strconv.Atoi(as[i])
+		bn, bErr := strconv.Atoi(bs[i])
+		switch {
+		case aErr == nil && bErr == nil:
+			if an != bn {
+				if an > bn {
+					return 1
+				}
+				return -1
+			}
+		case aErr == nil:
+			return -1
+		case bErr == nil:
+			return 1
+		default:
+			if c := strings.Compare(as[i], bs[i]); c != 0 {
+				return c
+			}
+		}
+	}
+	return len(as) - len(bs)
 }
 
 // Update downloads and replaces the current binary.

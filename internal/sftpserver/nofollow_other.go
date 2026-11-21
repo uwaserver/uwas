@@ -7,3 +7,7 @@ package sftpserver
 // chroot-style jail and POSIX symlinks; the Windows file-system semantics
 // make the equivalent attack uninteresting.
 const noFollowFlag = 0
+
+// nonBlockFlag is a no-op where FIFOs cannot be opened by path (see the unix
+// variant).
+const nonBlockFlag = 0

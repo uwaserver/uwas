@@ -49,6 +49,15 @@ type Collector struct {
 
 	// Per-domain bandwidth and request tracking
 	domainStats sync.Map // host → *DomainStats
+
+	// removedDomains holds the hosts RetainDomains dropped (host → struct{})
+	// until a later RetainDomains lists them again. A request still in flight
+	// across the removal must not re-create the entry: if the next domain
+	// change re-added the hostname for another tenant, it kept that entry and
+	// the new owner inherited the old one's counters (F67200).
+	removedDomains sync.Map
+	retainMu       sync.Mutex
+	retained       map[string]bool // host set of the last RetainDomains call
 }
 
 const handlerLatencyBufSize = 2048
@@ -269,6 +278,24 @@ func (c *Collector) RetainDomains(hosts []string) {
 			keep[k] = true
 		}
 	}
+	c.retainMu.Lock()
+	defer c.retainMu.Unlock()
+	// Mark the dropped hosts before deleting their entries (see RecordDomain).
+	for h := range c.retained {
+		if !keep[h] {
+			c.removedDomains.Store(h, struct{}{})
+		}
+	}
+	c.domainStats.Range(func(key, _ any) bool {
+		if h, ok := key.(string); ok && !keep[h] {
+			c.removedDomains.Store(h, struct{}{})
+		}
+		return true
+	})
+	for h := range keep {
+		c.removedDomains.Delete(h)
+	}
+	c.retained = keep
 	c.domainStats.Range(func(key, _ any) bool {
 		if h, ok := key.(string); !ok || !keep[h] {
 			c.domainStats.Delete(key)
@@ -288,6 +315,13 @@ func (c *Collector) RecordDomain(host string, statusCode int, bytesOut int64) {
 		val, _ = c.domainStats.LoadOrStore(host, &DomainStats{})
 	}
 	ds := val.(*DomainStats)
+	// Checked after the create: RetainDomains marks a host removed before it
+	// deletes the entry, so either this sees the mark or that delete runs
+	// after the create (F67200).
+	if _, gone := c.removedDomains.Load(host); gone {
+		c.domainStats.CompareAndDelete(host, ds)
+		return
+	}
 	ds.Requests.Add(1)
 	ds.BytesOut.Add(bytesOut)
 	switch {
