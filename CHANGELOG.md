@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Install task list is returned in creation order, so paginated `/api/v1/tasks` no longer repeats or skips tasks, and finished tasks are pruned on submit, not only when listed (F64300/F64301).
 - The global PHP worker (php-cgi or php-fpm) now loads the php.ini the dashboard edits, so config saves take effect on builds where UWAS had to locate or create php.ini; stopping or restarting a PHP version while it is still starting is refused instead of reporting success and letting a second start leave an untracked duplicate worker running (F65600/F65601).
 - `DELETE /domains/{host}?cleanup=true` on a `www.` domain removes its cron jobs and cron history, which were looked up under the www-stripped name and kept running (F65400).
+- Renaming a domain moves its cron jobs and cron history to the new host, so deleting the renamed domain with cleanup no longer leaves its cron jobs running (F65401).
+- The PHP status poll no longer drops a version's start-in-progress marker, which let a second start of the same version leave an untracked duplicate php-cgi worker running (F65800).
+- Concurrent webhook create/delete requests no longer leave the live webhook list behind the saved config, where a new webhook never fired or a deleted one kept receiving events; `PUT /settings/notifications` restores masked webhook header values from the same webhook as the masked secret, so dropping or reordering same-URL webhooks no longer crosses their header tokens (F65900/F65901).
 - A failed `PUT /settings/notifications` no longer rolls back a webhook or alerting change another request made meanwhile; a masked webhook secret is restored from the webhook its mask came from, so removing or reordering one of two webhooks with the same URL no longer gives the other the wrong signing secret (F65500/F65501).
 
 ## [0.11.41] - 2026-11-02

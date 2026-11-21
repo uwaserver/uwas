@@ -485,6 +485,37 @@ func (m *Monitor) ClearDomain(domain string) {
 	}
 }
 
+// RenameDomain moves the execution history of every job of oldDomain to
+// newDomain, so it follows the jobs RenameDomain (manager) re-labels and is
+// released by ClearDomain(newDomain) when the renamed domain goes (F65401).
+func (m *Monitor) RenameDomain(oldDomain, newDomain string) {
+	if oldDomain == newDomain {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	prefix := oldDomain + ":"
+	var keys []string
+	for key := range m.history {
+		if strings.HasPrefix(key, prefix) {
+			keys = append(keys, key)
+		}
+	}
+	for _, key := range keys {
+		records := make([]ExecutionRecord, len(m.history[key]))
+		copy(records, m.history[key])
+		for i := range records {
+			records[i].Domain = newDomain
+		}
+		m.history[m.jobKey(newDomain, strings.TrimPrefix(key, prefix))] = records
+		delete(m.history, key)
+	}
+	if len(keys) > 0 {
+		m.saveHistory()
+	}
+}
+
 // runWithTimeout runs cmd and kills it if it exceeds timeout, so a hung command
 // cannot block the job's overlap guard indefinitely. It kills the whole process
 // group (setProcessGroup runs the command in its own group) — killing only the

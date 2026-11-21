@@ -371,6 +371,43 @@ func RemoveByDomain(domain string) error {
 	return writeCrontab(strings.Join(filtered, "\n"))
 }
 
+// RenameDomain re-labels every UWAS-managed job of oldDomain as newDomain in
+// one crontab write. A renamed domain's jobs otherwise kept the old label, so
+// RemoveByDomain for the new name missed them and they outlived the domain
+// (F65401). No crontab binary means no jobs to re-label.
+func RenameDomain(oldDomain, newDomain string) error {
+	if runtimeGOOS == "windows" || oldDomain == newDomain {
+		return nil
+	}
+	if strings.ContainsAny(newDomain, "\n\r]") {
+		return invalidJobError{fmt.Errorf("invalid cron domain %q", newDomain)}
+	}
+	defer lockCrontab()()
+	existing, err := readCrontab()
+	if errors.Is(err, exec.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(existing, "\n")
+	oldMarker := fmt.Sprintf("%s [%s]", uwasMarker, oldDomain)
+	newMarker := fmt.Sprintf("%s [%s]", uwasMarker, newDomain)
+	changed := false
+	for i, line := range lines {
+		// Same start-of-line rule as RemoveByDomain.
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, oldMarker) {
+			lines[i] = newMarker + strings.TrimPrefix(trimmed, oldMarker)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return writeCrontab(strings.Join(lines, "\n"))
+}
+
 func writeCrontab(content string) error {
 	tmp, err := os.CreateTemp("", "uwas-crontab-*")
 	if err != nil {

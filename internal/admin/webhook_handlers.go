@@ -29,6 +29,10 @@ func redactWebhookURL(raw string) string {
 	return out
 }
 
+// testWebhookPushHook, when a test sets it, runs just before a webhook
+// create/delete publishes its list to the live manager.
+var testWebhookPushHook func()
+
 // --- Webhook Handlers ---
 
 func (s *Server) handleWebhookList(w http.ResponseWriter, r *http.Request) {
@@ -133,12 +137,11 @@ func (s *Server) handleWebhookCreate(w http.ResponseWriter, r *http.Request) {
 	s.config.Global.Webhooks = append(s.config.Global.Webhooks, req)
 	webhooks := make([]config.WebhookConfig, len(s.config.Global.Webhooks))
 	copy(webhooks, s.config.Global.Webhooks)
+	// Publish under the config lock, as WebhooksChanged does: published after
+	// unlocking, a slower request's older list overwrote a newer one, so a
+	// created webhook never went live or a deleted one came back (F65900).
+	s.publishWebhooksLocked(webhooks)
 	s.configMu.Unlock()
-
-	// Update webhook manager
-	if s.webhookMgr != nil {
-		s.webhookMgr.UpdateWebhooks(toWebhookConfigs(webhooks))
-	}
 
 	// Without this the webhook vanished on the next restart (F2021).
 	if err := s.persistConfig(); err != nil {
@@ -184,12 +187,8 @@ func (s *Server) handleWebhookDelete(w http.ResponseWriter, r *http.Request) {
 	webhooks = append(webhooks, old[:idx]...)
 	webhooks = append(webhooks, old[idx+1:]...)
 	s.config.Global.Webhooks = webhooks
+	s.publishWebhooksLocked(webhooks) // F65900
 	s.configMu.Unlock()
-
-	// Update webhook manager
-	if s.webhookMgr != nil {
-		s.webhookMgr.UpdateWebhooks(toWebhookConfigs(webhooks))
-	}
 
 	if err := s.persistConfig(); err != nil {
 		s.recordAuditR(r, "webhook.delete", redactWebhookURL(whURL)+": "+err.Error(), false)
@@ -240,6 +239,18 @@ func (s *Server) handleWebhookTest(w http.ResponseWriter, r *http.Request) {
 }
 
 // toWebhookConfigs converts config.WebhookConfig to webhook.WebhookConfig.
+// publishWebhooksLocked pushes webhooks to the live manager; the caller holds
+// configMu, so publishes follow the order of the config changes (F65900).
+func (s *Server) publishWebhooksLocked(webhooks []config.WebhookConfig) {
+	if s.webhookMgr == nil {
+		return
+	}
+	if testWebhookPushHook != nil {
+		testWebhookPushHook()
+	}
+	s.webhookMgr.UpdateWebhooks(toWebhookConfigs(webhooks))
+}
+
 func toWebhookConfigs(cfgs []config.WebhookConfig) []webhook.WebhookConfig {
 	result := make([]webhook.WebhookConfig, len(cfgs))
 	for i, cfg := range cfgs {

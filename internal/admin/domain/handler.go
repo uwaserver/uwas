@@ -976,6 +976,17 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	if perr == nil && !strings.EqualFold(oldHost, d.Host) {
 		h.deps.RemoveDomainFile(oldHost)
 	}
+	// Cron jobs and their history are labelled with the host: after a rename
+	// they kept the old one, so deleting the renamed domain with cleanup left
+	// them running (F65401). Re-labelled with the saved rename, as above.
+	if perr == nil && oldHost != d.Host {
+		if err := cronjob.RenameDomain(oldHost, d.Host); err != nil {
+			h.deps.LogWarn("cron jobs not moved to renamed domain", "from", oldHost, "to", d.Host, "error", err)
+		}
+		if mon := h.deps.CronMonitor(); mon != nil {
+			mon.RenameDomain(oldHost, d.Host)
+		}
+	}
 	h.deps.RecordAudit(r, "domain.update", persistDetail("domain: "+host, perr), perr == nil)
 	if perr != nil {
 		jsonError(w, "domain updated but could not be persisted: "+perr.Error(), http.StatusInternalServerError)

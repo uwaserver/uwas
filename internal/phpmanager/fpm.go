@@ -362,11 +362,15 @@ func (m *Manager) Status() []PHPStatus {
 		if val, ok := m.processes.Load(inst.Version); ok {
 			info := val.(*processInfo)
 			// Verify the process is actually running
-			if info.cmd != nil && info.cmd.Process != nil && m.isProcessRunning(info.cmd.Process.Pid) {
+			switch {
+			case info.starting:
+				// StartFPM's reservation, not a dead process: deleting it let a
+				// second start spawn an untracked duplicate worker (F65800).
+			case info.cmd != nil && info.cmd.Process != nil && m.isProcessRunning(info.cmd.Process.Pid):
 				st.Running = true
 				st.ListenAddr = info.listenAddr
 				st.PID = info.cmd.Process.Pid
-			} else {
+			default:
 				// Process is dead, clean up
 				m.processes.Delete(inst.Version)
 			}

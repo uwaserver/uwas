@@ -319,7 +319,23 @@ func (h *Handler) NotifyPrefsPut(w http.ResponseWriter, r *http.Request) {
 		for i := range req.Webhooks {
 			n := seen[req.Webhooks[i].URL]
 			seen[req.Webhooks[i].URL]++
-			if err := restoreMaskedHeaders(&req.Webhooks[i], g.Webhooks, n); err != nil {
+			// The mask carries the secret's last four characters: prefer the
+			// live webhook it came from. By ordinal alone, dropping or
+			// reordering one of two webhooks sharing a URL gave the kept one
+			// its neighbour's secret (F65501) and, as the masked headers were
+			// still mapped by ordinal, its neighbour's header values (F65901).
+			src := -1
+			if isMaskedSecretValue(req.Webhooks[i].Secret) {
+				mask := strings.TrimSpace(req.Webhooks[i].Secret)
+				for j, old := range g.Webhooks {
+					if old.URL == req.Webhooks[i].URL && !claimed[j] && maskSecret(old.Secret) == mask {
+						claimed[j] = true
+						src = j
+						break
+					}
+				}
+			}
+			if err := restoreMaskedHeaders(&req.Webhooks[i], g.Webhooks, n, src); err != nil {
 				h.deps.UnlockConfig()
 				jsonError(w, err.Error(), http.StatusBadRequest)
 				return
@@ -328,18 +344,9 @@ func (h *Handler) NotifyPrefsPut(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			restored := false
-			// The mask carries the secret's last four characters: prefer the
-			// live webhook it came from. By ordinal alone, dropping or
-			// reordering one of two webhooks sharing a URL gave the kept one
-			// its neighbour's secret (F65501).
-			mask := strings.TrimSpace(req.Webhooks[i].Secret)
-			for j, old := range g.Webhooks {
-				if old.URL == req.Webhooks[i].URL && !claimed[j] && maskSecret(old.Secret) == mask {
-					req.Webhooks[i].Secret = old.Secret
-					claimed[j] = true
-					restored = true
-					break
-				}
+			if src >= 0 {
+				req.Webhooks[i].Secret = g.Webhooks[src].Secret
+				restored = true
 			}
 			for _, old := range g.Webhooks {
 				if restored || old.URL != req.Webhooks[i].URL {
@@ -1586,10 +1593,11 @@ func MaskWebhookHeaders(h map[string]string) map[string]string {
 }
 
 // restoreMaskedHeaders puts the live header values back where the submitted
-// webhook still carries the mask. The n-th submitted entry for a URL maps to
-// the n-th live entry for it, as for the secret; a masked value with no live
+// webhook still carries the mask. They come from live[src], the webhook the
+// masked secret came from, when src >= 0; otherwise the n-th submitted entry
+// for a URL maps to the n-th live entry for it. A masked value with no live
 // counterpart cannot be restored and is rejected.
-func restoreMaskedHeaders(wh *config.WebhookConfig, live []config.WebhookConfig, n int) error {
+func restoreMaskedHeaders(wh *config.WebhookConfig, live []config.WebhookConfig, n, src int) error {
 	masked := false
 	for _, v := range wh.Headers {
 		if isMaskedSecretValue(v) {
@@ -1601,7 +1609,13 @@ func restoreMaskedHeaders(wh *config.WebhookConfig, live []config.WebhookConfig,
 		return nil
 	}
 	var old *config.WebhookConfig
+	if src >= 0 && src < len(live) {
+		old = &live[src]
+	}
 	for i := range live {
+		if old != nil {
+			break
+		}
 		if live[i].URL != wh.URL {
 			continue
 		}
