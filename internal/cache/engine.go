@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/logger"
@@ -22,6 +24,42 @@ type Engine struct {
 	// the key has always included the query string — so an operator has to
 	// ask for the collapse explicitly.
 	varyByQuery bool
+
+	// Tier writes (L2/L3 copies, promotions into L1) run after the response
+	// was read or stored; a purge in between let them put the purged entry
+	// back, and the next request served it (F67900). purgeGen changes at the
+	// start and end of every purge and purging counts the ones running; a
+	// write goes ahead only, under purgeMu, if neither moved since it was
+	// queued (see writeIfCurrent).
+	purgeMu  sync.RWMutex
+	purgeGen atomic.Uint64
+	purging  int
+}
+
+// beginPurge marks a purge as running; every write queued before it, or
+// while it runs, is dropped. Writes already under way finish first, so the
+// purge sees what they wrote.
+func (e *Engine) beginPurge() {
+	e.purgeMu.Lock()
+	e.purgeGen.Add(1)
+	e.purging++
+	e.purgeMu.Unlock()
+}
+
+func (e *Engine) endPurge() {
+	e.purgeMu.Lock()
+	e.purging--
+	e.purgeGen.Add(1)
+	e.purgeMu.Unlock()
+}
+
+// writeIfCurrent runs write unless a purge began after gen was read.
+func (e *Engine) writeIfCurrent(gen uint64, write func()) {
+	e.purgeMu.RLock()
+	defer e.purgeMu.RUnlock()
+	if e.purging == 0 && e.purgeGen.Load() == gen {
+		write()
+	}
 }
 
 // SetVaryHeaders precomput the full vary-key list (Accept-Encoding + caller
@@ -96,11 +134,12 @@ func (e *Engine) GetByKey(key string) (*CachedResponse, string) {
 	if resp != nil {
 		return resp, status
 	}
+	gen := e.purgeGen.Load()
 	if e.disk != nil {
 		resp, err := e.disk.Get(key)
 		if err == nil && resp != nil {
 			if resp.IsFresh() || resp.IsStale() {
-				e.memory.Set(key, resp)
+				e.writeIfCurrent(gen, func() { e.memory.Set(key, resp) })
 				if resp.IsFresh() {
 					return resp, StatusHit
 				}
@@ -113,14 +152,14 @@ func (e *Engine) GetByKey(key string) (*CachedResponse, string) {
 		resp, err := e.redis.Get(key)
 		if err == nil && resp != nil {
 			if resp.IsFresh() || resp.IsStale() {
-				e.memory.Set(key, resp)
+				e.writeIfCurrent(gen, func() { e.memory.Set(key, resp) })
 				// Async promote to disk so subsequent L2 hits avoid Redis round-trips.
 				if e.disk != nil {
 					select {
 					case e.writeSem <- struct{}{}:
 						go func() {
 							defer func() { <-e.writeSem }()
-							_ = e.disk.Set(key, resp)
+							e.writeIfCurrent(gen, func() { _ = e.disk.Set(key, resp) })
 						}()
 					default:
 					}
@@ -143,15 +182,18 @@ func (e *Engine) SetByKey(key string, resp *CachedResponse) {
 	if !e.varyCoveredByKey(resp.Headers) {
 		return
 	}
+	gen := e.purgeGen.Load() // before the L1 store a purge may then remove
 	e.memory.Set(key, resp)
 	if e.disk != nil {
 		select {
 		case e.writeSem <- struct{}{}:
 			go func() {
 				defer func() { <-e.writeSem }()
-				if err := e.disk.Set(key, resp); err != nil {
-					e.logger.Warn("disk cache write failed", "key", key, "error", err)
-				}
+				e.writeIfCurrent(gen, func() {
+					if err := e.disk.Set(key, resp); err != nil {
+						e.logger.Warn("disk cache write failed", "key", key, "error", err)
+					}
+				})
 			}()
 		default:
 		}
@@ -161,9 +203,11 @@ func (e *Engine) SetByKey(key string, resp *CachedResponse) {
 		case e.writeSem <- struct{}{}:
 			go func() {
 				defer func() { <-e.writeSem }()
-				if err := e.redis.Set(key, resp, resp.TTL+resp.GraceTTL); err != nil {
-					e.logger.Warn("redis cache write failed", "key", key, "error", err)
-				}
+				e.writeIfCurrent(gen, func() {
+					if err := e.redis.Set(key, resp, resp.TTL+resp.GraceTTL); err != nil {
+						e.logger.Warn("redis cache write failed", "key", key, "error", err)
+					}
+				})
 			}()
 		default:
 		}
@@ -200,6 +244,8 @@ func (e *Engine) varyCoveredByKey(h http.Header) bool {
 // cacheable: keeping the stale copy until its grace window runs out would
 // serve content the origin has just declined to have cached.
 func (e *Engine) PurgeKey(key string) {
+	e.beginPurge()
+	defer e.endPurge()
 	e.memory.Delete(key)
 	if e.disk != nil {
 		e.disk.Delete(key)
@@ -211,6 +257,8 @@ func (e *Engine) PurgeKey(key string) {
 
 // PurgeByTag removes entries matching tags from L1, L2, and L3.
 func (e *Engine) PurgeByTag(tags ...string) int {
+	e.beginPurge()
+	defer e.endPurge()
 	count := e.memory.PurgeByTag(tags...)
 	if e.disk != nil {
 		count += e.disk.PurgeByTag(tags...)
@@ -227,6 +275,8 @@ func (e *Engine) PurgeByTag(tags ...string) int {
 
 // PurgeAll clears all caches.
 func (e *Engine) PurgeAll() {
+	e.beginPurge()
+	defer e.endPurge()
 	e.memory.PurgeAll()
 	if e.disk != nil {
 		e.disk.PurgeAll()

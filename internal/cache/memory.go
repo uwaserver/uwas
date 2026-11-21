@@ -131,6 +131,20 @@ func (mc *MemoryCache) Set(key string, resp *CachedResponse) {
 		return
 	}
 
+	// Eviction frees room in this shard only. When even emptying it could not
+	// make room (the rest is held by the other shards), evicting would throw
+	// away the shard's entries and still store nothing: with the cache full,
+	// every response larger than a shard's share flushed one (F67901).
+	if need := mc.usedBytes.Load() + size - mc.maxBytes; need > 0 {
+		var freeable int64
+		for el := s.lru.Back(); el != nil && freeable < need; el = el.Prev() {
+			freeable += el.Value.(*entry).size
+		}
+		if freeable < need {
+			return
+		}
+	}
+
 	// Evict LRU entries from this shard if over global memory limit
 	for mc.usedBytes.Load()+size > mc.maxBytes && s.lru.Len() > 0 {
 		mc.evictLRU(s)

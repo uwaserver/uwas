@@ -96,7 +96,7 @@ func ParseCondition(variable, pattern, flags string) (*Condition, error) {
 // Evaluate tests the condition against the given variables.
 // Returns (matched, backreferences).
 func (c *Condition) Evaluate(vars *Variables) (bool, []string) {
-	matched, captures, _ := c.evaluate(vars, 0)
+	matched, captures, _ := c.evaluate(vars, nil, nil, 0)
 	return matched, captures
 }
 
@@ -104,9 +104,12 @@ func (c *Condition) Evaluate(vars *Variables) (bool, []string) {
 // expression is matched against (0 means none). The last result is false when
 // the value is longer than the bound: a match against it would cost
 // O(program x length), so the caller treats the request as over budget rather
-// than guessing the answer (F14502).
-func (c *Condition) evaluate(vars *Variables, maxValue int) (bool, []string, bool) {
-	testValue := vars.Expand(c.Variable)
+// than guessing the answer (F14502). ruleMatches are the captures of the
+// RewriteRule the condition belongs to and condMatches those of the last
+// matched condition before it, which the TestString may reference as $N and
+// %N, as in Apache (F68000, F68001).
+func (c *Condition) evaluate(vars *Variables, ruleMatches, condMatches []string, maxValue int) (bool, []string, bool) {
+	testValue := vars.expandTestString(c.Variable, ruleMatches, condMatches)
 
 	var matched bool
 	var captures []string
@@ -185,6 +188,48 @@ func (v *Variables) Expand(s string) string {
 		b.WriteByte(s[i])
 	}
 	return b.String()
+}
+
+// expandTestString is Expand plus the backreferences a RewriteCond TestString
+// may carry: $0-$9 from the RewriteRule ("%{DOCUMENT_ROOT}/$1.webp") and
+// %0-%9 from the last matched condition ("%{DOCUMENT_ROOT}/sites/%2"); without
+// them the reference was tested literally and such a rule never fired
+// (F68000, F68001). One left-to-right pass, so a captured or variable value is
+// never re-expanded.
+func (v *Variables) expandTestString(s string, ruleMatches, condMatches []string) string {
+	if !hasBackref(s) {
+		return v.Expand(s)
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if n := v.writeVarRef(&b, s, i); n > 0 {
+			i += n - 1
+			continue
+		}
+		if (s[i] == '$' || s[i] == '%') && i+1 < len(s) && s[i+1] >= '0' && s[i+1] <= '9' {
+			matches := ruleMatches
+			if s[i] == '%' {
+				matches = condMatches
+			}
+			if idx := int(s[i+1] - '0'); idx < len(matches) {
+				b.WriteString(matches[idx])
+			}
+			i++ // an out-of-range backreference expands to empty
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+// hasBackref reports whether s contains a $N or %N backreference.
+func hasBackref(s string) bool {
+	for i := 0; i+1 < len(s); i++ {
+		if (s[i] == '$' || s[i] == '%') && s[i+1] >= '0' && s[i+1] <= '9' {
+			return true
+		}
+	}
+	return false
 }
 
 // writeVarRef writes the value of a %{NAME} reference starting at s[i] and

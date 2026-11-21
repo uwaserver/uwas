@@ -114,22 +114,24 @@ func (e *Engine) Process(uri, queryString string, vars *Variables) *Result {
 			}
 			rule := e.rules[i]
 
-			// Evaluate conditions
-			condMatch, condCaptures, ok := e.evalConditionsBudget(rule.Conditions, vars, b)
-			if !ok {
-				return e.overload(result)
-			}
-			if !condMatch {
-				// If this is a chain rule and didn't match, skip until non-chain
+			// Match the rule pattern against the current URI first, as
+			// Apache does: a condition's TestString may use its $N
+			// captures (F68000).
+			matched, ruleCaptures := rule.Match(result.URI)
+			if !matched {
 				if rule.Flags.Chain {
 					i = e.skipChain(i)
 				}
 				continue
 			}
 
-			// Match rule pattern against current URI
-			matched, ruleCaptures := rule.Match(result.URI)
-			if !matched {
+			// Evaluate conditions
+			condMatch, condCaptures, ok := e.evalConditionsBudget(rule.Conditions, vars, ruleCaptures, b)
+			if !ok {
+				return e.overload(result)
+			}
+			if !condMatch {
+				// If this is a chain rule and didn't match, skip until non-chain
 				if rule.Flags.Chain {
 					i = e.skipChain(i)
 				}
@@ -264,7 +266,7 @@ func sameHostRedirectPath(uri string) string {
 // The third result is false when the work allowance ran out first (the
 // wall-clock budget, or a test value too long to match); the other results
 // are then meaningless and the caller must stop (F14502).
-func (e *Engine) evalConditionsBudget(conditions []Condition, vars *Variables, b budget) (bool, []string, bool) {
+func (e *Engine) evalConditionsBudget(conditions []Condition, vars *Variables, ruleMatches []string, b budget) (bool, []string, bool) {
 	if len(conditions) == 0 {
 		return true, nil, true
 	}
@@ -278,7 +280,7 @@ func (e *Engine) evalConditionsBudget(conditions []Condition, vars *Variables, b
 		if b.expired() {
 			return false, nil, false
 		}
-		matched, captures, ok := cond.evaluate(vars, maxRewriteString)
+		matched, captures, ok := cond.evaluate(vars, ruleMatches, lastCaptures, maxRewriteString)
 		if !ok {
 			return false, nil, false
 		}

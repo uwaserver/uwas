@@ -46,6 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The web terminal's concurrent-session cap now applies: every request built its own handler, so each session counted against an empty counter (F67502).
 - Listing a FIFO in the file manager no longer hangs the request and pins an OS thread forever; it fails with "not a directory" (F67600).
 - Moving or de-duplicating firewall rules while the autoblocker blocks an IP no longer deletes the wrong rules (such as the IPv6 SSH allow): rule changes are serialized, since ufw renumbers every rule on each insert (F67700).
+- A cache purge (admin, MCP, or domain removal) is no longer undone by a disk/Redis write or a promotion into memory that was still in flight, which let the next request serve the purged page — after a domain removal, the previous site's page to a re-added hostname (F67900).
+- With the memory cache full, a response too large for its shard's share no longer evicts that whole shard and then goes uncached anyway (F67901).
+- A `RewriteCond` TestString now expands the rule's `$N` and the previous condition's `%N` backreferences as Apache does, so blocks such as `RewriteCond %{DOCUMENT_ROOT}/$1.webp -f` (WebP serving) and per-host directory checks with `%2` fire instead of testing the literal text (F68000/F68001).
 - A failed `PUT /settings/notifications` no longer rolls back a webhook or alerting change another request made meanwhile; a masked webhook secret is restored from the webhook its mask came from, so removing or reordering one of two webhooks with the same URL no longer gives the other the wrong signing secret (F65500/F65501).
 
 ## [0.11.41] - 2026-11-02
