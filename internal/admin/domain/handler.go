@@ -587,9 +587,10 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	h.deps.LockConfig()
 	cfg := h.deps.ConfigPtr()
 	found := false
-	var domainRoot string
+	var domainRoot, storedHost string
 	if i := findDomainIndex(cfg.Domains, host); i >= 0 {
 		domainRoot = cfg.Domains[i].Root
+		storedHost = cfg.Domains[i].Host
 		cfg.Domains = append(cfg.Domains[:i], cfg.Domains[i+1:]...)
 		found = true
 	}
@@ -604,16 +605,20 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.deps.RemoveDomainFile(host)
+	// The file carries the stored host: a "www." record found under its
+	// www-stripped key was otherwise left on disk and loaded again (F64101).
+	h.deps.RemoveDomainFile(storedHost)
 
 	// The PHP worker belongs to the domain: stopping it and dropping the
 	// assignment loses nothing, so it does not wait for the opt-in cleanup.
 	// Left behind, a php-cgi process kept listening for a hostname that no
 	// longer exists and the next tenant given the name inherited its per-domain
 	// php.ini overrides and worker address (F51100).
+	// The worker is assigned under the stored host: a "www." record found by
+	// its www-stripped key otherwise kept running after the delete (F64500).
 	if mgr := h.deps.PHPManager(); mgr != nil {
-		_ = mgr.StopDomain(host)
-		mgr.UnassignDomain(host)
+		_ = mgr.StopDomain(storedHost)
+		mgr.UnassignDomain(storedHost)
 	}
 
 	var cleanupErrs []string
@@ -825,9 +830,11 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	cfg := h.deps.ConfigPtr()
 	found := false
 	var replaced []string
+	var oldHost string
 	updateIndex := findDomainIndex(cfg.Domains, host)
 	for i, existing := range cfg.Domains {
 		if i == updateIndex {
+			oldHost = existing.Host
 			merged := config.MergeDomain(existing, d, patchFields, replaceMode)
 			domainutil.NormalizeDomainHostnames(&merged)
 			// Redirect domains cannot have aliases
@@ -935,13 +942,78 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		h.deps.RemoveDomainFile(rh)
 	}
 
+	// The PHP worker, its overrides and cgroup are keyed by host: after a
+	// rename they stayed under the old one, so deleting the renamed domain
+	// stopped nothing and the worker outlived it (F65100).
+	if d.Type == "php" && !strings.EqualFold(oldHost, d.Host) {
+		if addr := h.movePHPAssignment(oldHost, d.Host, d.Root); addr != "" {
+			h.deps.LockConfig()
+			cfg := h.deps.ConfigPtr()
+			if i := findDomainIndex(cfg.Domains, d.Host); i >= 0 && cfg.Domains[i].Host == d.Host {
+				cfg.Domains[i].PHP.FPMAddress = addr
+				d.PHP.FPMAddress = addr
+			}
+			h.deps.UnlockConfig()
+		}
+	}
+
 	perr := h.notifyChange()
+	// The domain is now saved under its new host; the file under the old one
+	// would bring the old site back at the next start (F64100). It goes only
+	// once the new file is written, so a failed save loses nothing.
+	if perr == nil && !strings.EqualFold(oldHost, d.Host) {
+		h.deps.RemoveDomainFile(oldHost)
+	}
 	h.deps.RecordAudit(r, "domain.update", persistDetail("domain: "+host, perr), perr == nil)
 	if perr != nil {
 		jsonError(w, "domain updated but could not be persisted: "+perr.Error(), http.StatusInternalServerError)
 		return
 	}
 	jsonResponse(w, d)
+}
+
+// movePHPAssignment re-keys a renamed domain's PHP assignment from oldHost to
+// newHost and returns the new pool address, or "" when there was nothing to
+// move or the new host could not take it over. On failure the old assignment
+// is left alone, so the running site keeps its worker.
+func (h *Handler) movePHPAssignment(oldHost, newHost, root string) string {
+	mgr := h.deps.PHPManager()
+	if mgr == nil {
+		return ""
+	}
+	var old *phpmanager.DomainPHP
+	for _, inst := range mgr.GetDomainInstances() {
+		if inst.Domain == oldHost {
+			old = &inst
+			break
+		}
+	}
+	if old == nil {
+		return ""
+	}
+	inst, err := mgr.AssignDomainWithRoot(newHost, old.Version, root)
+	if err != nil {
+		h.deps.LogWarn("PHP assignment not moved to renamed domain", "from", oldHost, "to", newHost, "error", err)
+		return ""
+	}
+	for k, v := range old.ConfigOverrides {
+		if err := mgr.SetDomainConfig(newHost, k, v); err != nil {
+			h.deps.LogWarn("php.ini override not moved to renamed domain", "domain", newHost, "key", k, "error", err)
+		}
+	}
+	if old.Running {
+		if err := mgr.StartDomain(newHost); err != nil {
+			mgr.UnassignDomain(newHost)
+			h.deps.LogWarn("PHP assignment not moved to renamed domain", "from", oldHost, "to", newHost, "error", err)
+			return ""
+		}
+	}
+	_ = mgr.StopDomain(oldHost)
+	mgr.UnassignDomain(oldHost)
+	if addr := mgr.RunningAddrForDomain(newHost); addr != "" {
+		return addr
+	}
+	return inst.ListenAddr
 }
 
 // implicitWWWRedirectHosts returns the hosts of the implicit www redirect

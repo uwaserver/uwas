@@ -38,11 +38,11 @@ func TestCreateBackupFullArchive(t *testing.T) {
 	dumpAllDatabasesFunc = func() ([]byte, error) {
 		return []byte("-- native dump"), nil
 	}
-	SetDockerDumpFunc(func() map[string][]byte {
+	SetDockerDumpFunc(func() (map[string][]byte, error) {
 		return map[string][]byte{
 			"app1": []byte("-- docker app1 dump"),
 			"app2": nil, // empty dump should be skipped
-		}
+		}, nil
 	})
 
 	m, mp := testManager(t)
@@ -929,14 +929,14 @@ func TestScheduleDetailIntervalFormats(t *testing.T) {
 func TestSetDockerDumpFunc(t *testing.T) {
 	old := dockerDumpFn
 	defer func() { dockerDumpFn = old }()
-	SetDockerDumpFunc(func() map[string][]byte {
-		return map[string][]byte{"c": []byte("dump")}
+	SetDockerDumpFunc(func() (map[string][]byte, error) {
+		return map[string][]byte{"c": []byte("dump")}, nil
 	})
 	if dockerDumpFn == nil {
 		t.Fatal("dockerDumpFn not set")
 	}
-	if got := dockerDumpFn()["c"]; string(got) != "dump" {
-		t.Errorf("docker dump = %q", string(got))
+	if got, _ := dockerDumpFn(); string(got["c"]) != "dump" {
+		t.Errorf("docker dump = %q", string(got["c"]))
 	}
 }
 

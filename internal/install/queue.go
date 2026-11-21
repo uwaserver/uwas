@@ -119,6 +119,9 @@ func New() *Queue {
 // The task will execute when the queue worker is ready (serialized).
 func (q *Queue) Submit(taskType, name, action string, fn TaskFunc) *Task {
 	q.mu.Lock()
+	// Enforce retention on every submission: tasks are only ever added here,
+	// so callers that never List() cannot grow the map without bound (F64301).
+	q.cleanupLocked()
 	q.taskSeq++
 	id := fmt.Sprintf("%s-%s-%d", taskType, action, q.taskSeq)
 	task := &Task{
@@ -223,6 +226,14 @@ func (q *Queue) List() []Task {
 	for _, t := range q.tasks {
 		result = append(result, cloneTask(t))
 	}
+	// Map iteration order is random; the task list endpoint paginates this
+	// slice, so pages must come from a stable creation order (F64300).
+	sort.Slice(result, func(i, j int) bool {
+		if !result[i].CreatedAt.Equal(result[j].CreatedAt) {
+			return result[i].CreatedAt.Before(result[j].CreatedAt)
+		}
+		return result[i].ID < result[j].ID
+	})
 	return result
 }
 

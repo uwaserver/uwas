@@ -13,6 +13,7 @@ package phpmanager
 import (
 	"bytes"
 	"fmt"
+	"html"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -257,17 +258,13 @@ func findOrCreatePHPConfig(version, phpInfo string) string {
 
 	// 1. Check "Scan this dir for additional .ini files" from php -i
 	for _, line := range strings.Split(phpInfo, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "Scan this dir") {
-			if parts := strings.SplitN(line, "=>", 2); len(parts) == 2 {
-				dir := strings.TrimSpace(parts[1])
-				if dir != "(none)" && dir != "" {
-					// The scan dir parent usually has php.ini
-					parent := filepath.Dir(dir)
-					candidate := filepath.Join(parent, "php.ini")
-					if _, err := osStat(candidate); err == nil {
-						return candidate
-					}
+		if key, dir, ok := phpinfoRow(line); ok && strings.HasPrefix(key, "Scan this dir") {
+			if dir != "(none)" && dir != "" {
+				// The scan dir parent usually has php.ini
+				parent := filepath.Dir(dir)
+				candidate := filepath.Join(parent, "php.ini")
+				if _, err := osStat(candidate); err == nil {
+					return candidate
 				}
 			}
 		}
@@ -319,18 +316,41 @@ func parseSAPI(output string) string {
 // parseConfigPath extracts the loaded php.ini path from `php -i` output.
 func parseConfigPath(output string) string {
 	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "Loaded Configuration File") {
-			parts := strings.SplitN(line, "=>", 2)
-			if len(parts) == 2 {
-				p := strings.TrimSpace(parts[1])
-				if p != "(none)" && p != "" {
-					return p
-				}
+		if key, p, ok := phpinfoRow(line); ok && strings.HasPrefix(key, "Loaded Configuration File") {
+			if p != "(none)" && p != "" {
+				return p
 			}
 		}
 	}
 	return ""
+}
+
+// phpinfoRow splits one `php -i` row into key and value. The CLI prints
+// "Key => Value", but php-cgi and php-fpm print phpinfo() as HTML table rows
+// (<tr><td class="e">Key </td><td class="v">Value </td></tr>), which the
+// text-only parse never matched: their loaded php.ini went undetected and a
+// guessed or freshly created one was used instead (F65000).
+func phpinfoRow(line string) (key, value string, ok bool) {
+	line = strings.TrimSpace(line)
+	if rest, isHTML := strings.CutPrefix(line, `<tr><td class="e">`); isHTML {
+		k, v, found := strings.Cut(rest, `</td><td class="v">`)
+		if !found {
+			return "", "", false
+		}
+		if v, found = strings.CutSuffix(v, `</td></tr>`); !found {
+			return "", "", false
+		}
+		v = strings.TrimSpace(v)
+		if v == "<i>no value</i>" {
+			v = ""
+		}
+		return strings.TrimSpace(html.UnescapeString(k)), html.UnescapeString(v), true
+	}
+	k, v, found := strings.Cut(line, "=>")
+	if !found {
+		return "", "", false
+	}
+	return strings.TrimSpace(k), strings.TrimSpace(v), true
 }
 
 // parseExtensions extracts extension names from `php -m` output.

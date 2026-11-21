@@ -9,8 +9,10 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -333,6 +335,11 @@ func (c *Client) loadOrCreateAccountKey() error {
 			c.logger.Warn("ACME account key is not usable; registering a new account",
 				"path", keyPath, "kept_as", aside)
 		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		// Only a missing key means "register a new account": any other read
+		// error (EACCES, EIO, EMFILE) would otherwise rename a fresh key over
+		// the only copy of the registered one (F64900).
+		return fmt.Errorf("read account key %s: %w", keyPath, err)
 	}
 
 	// Generate new key
@@ -434,7 +441,12 @@ func (c *Client) newOrder(ctx context.Context, domains []string) (*Order, error)
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxACMEBody)).Decode(order); err != nil {
 		return nil, err
 	}
-	order.URL = resp.Header.Get("Location")
+	// The order URL is what gets polled; without it every challenge would be
+	// solved before polling "" failed with a transport error (F64901).
+	order.URL = strings.TrimSpace(resp.Header.Get("Location"))
+	if order.URL == "" {
+		return nil, fmt.Errorf("new order response is missing Location header")
+	}
 	return order, nil
 }
 

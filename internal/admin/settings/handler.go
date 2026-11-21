@@ -16,6 +16,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -287,6 +288,18 @@ func (h *Handler) NotifyPrefsPut(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		// A URL or header delivery can never send is refused as the create
+		// endpoint refuses it, not saved as a dead webhook (F65300).
+		if !strings.HasPrefix(wh.URL, "http://") && !strings.HasPrefix(wh.URL, "https://") {
+			jsonError(w, "webhook URL must start with http:// or https://", http.StatusBadRequest)
+			return
+		}
+		for k, v := range wh.Headers {
+			if strings.ContainsAny(k, "\r\n") || strings.ContainsAny(v, "\r\n") {
+				jsonError(w, "header keys and values must not contain CR or LF", http.StatusBadRequest)
+				return
+			}
+		}
 	}
 	// An omitted (or null) field leaves that part of the config unchanged;
 	// send "webhooks": [] to remove every webhook.
@@ -394,9 +407,17 @@ func (h *Handler) BrandingPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.deps.LockConfig()
+	prevBranding := h.deps.ConfigPtr().Global.Admin.Branding
 	h.deps.ConfigPtr().Global.Admin.Branding = branding
 	h.deps.UnlockConfig()
 	if err := h.deps.PersistConfig(); err != nil {
+		// A rejected save must not stay live until restart (F64201). Leave a
+		// newer value another request stored meanwhile alone.
+		h.deps.LockConfig()
+		if h.deps.ConfigPtr().Global.Admin.Branding == branding {
+			h.deps.ConfigPtr().Global.Admin.Branding = prevBranding
+		}
+		h.deps.UnlockConfig()
 		h.deps.RecordAudit(r, "settings.branding", err.Error(), false)
 		jsonError(w, "failed to persist settings", http.StatusInternalServerError)
 		return
@@ -1084,13 +1105,23 @@ func (h *Handler) SettingsPut(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	applied := cfg.Global
 	h.deps.UnlockConfig()
-	h.deps.EnsureAuthManagerFromConfig()
 	if err := h.deps.PersistConfig(); err != nil {
+		// A rejected save must not stay live until restart: an api_key change
+		// would already be the one authenticating requests (F64200). When
+		// another request changed the settings meanwhile, its own save wrote
+		// this change too, so it is not undone.
+		h.deps.LockConfig()
+		if reflect.DeepEqual(cfg.Global, applied) {
+			cfg.Global = prev
+		}
+		h.deps.UnlockConfig()
 		h.deps.RecordAudit(r, "settings.update", err.Error(), false)
 		jsonError(w, "failed to persist settings", http.StatusInternalServerError)
 		return
 	}
+	h.deps.EnsureAuthManagerFromConfig()
 	h.deps.RecordAudit(r, "settings.update", fmt.Sprintf("%d fields", len(updates)), true)
 	jsonResponse(w, map[string]any{"status": "saved", "updated": len(updates)})
 }

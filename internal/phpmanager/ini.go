@@ -93,11 +93,17 @@ func parseINIConfig(path string) (PHPConfig, error) {
 	defer f.Close()
 
 	cfg := PHPConfig{}
+	special := false
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 4096), 1<<20) // 4KB initial, 1MB max token size
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "#") {
+		if isSection, sp := iniSectionScope(line); isSection {
+			special = sp
+			continue
+		}
+		// A [HOST=]/[PATH=] value is not the global one (F65001).
+		if special || line == "" || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "#") {
 			continue
 		}
 		parts := strings.SplitN(line, "=", 2)
@@ -223,10 +229,17 @@ func updateINI(path, key, value string) error {
 	// PHP honours the last active assignment, so replace that one. A
 	// commented-out line is only a fallback: replacing it while an active
 	// line exists left the effective value unchanged.
+	// Lines under a [HOST=]/[PATH=] section apply only there: replacing one,
+	// or appending after one, never changed the global value (F65001).
 	idx, commented := -1, -1
+	special := false
 	for i, line := range lines {
 		t := strings.TrimSpace(line)
-		if !iniLineSetsKey(t, key) {
+		if isSection, sp := iniSectionScope(t); isSection {
+			special = sp
+			continue
+		}
+		if special || !iniLineSetsKey(t, key) {
 			continue
 		}
 		if strings.HasPrefix(t, ";") {
@@ -242,11 +255,31 @@ func updateINI(path, key, value string) error {
 	}
 	if idx >= 0 {
 		lines[idx] = newLine
+	} else if special {
+		// An ordinary section header ends the HOST/PATH scope.
+		lines = append(lines, "[PHP]", newLine)
 	} else {
 		lines = append(lines, newLine)
 	}
 
 	return writeINIAtomic(path, []byte(strings.Join(lines, "\n")))
+}
+
+// iniSectionScope reports whether a trimmed php.ini line is a section header
+// and, if so, whether it opens a per-directory/per-host section. PHP scopes
+// every directive after a section whose name starts with PATH or HOST
+// (case-insensitive) to that path/host until the next ordinary section
+// (main/php_ini.c, php_ini_parser_cb).
+func iniSectionScope(trimmed string) (isSection, special bool) {
+	if !strings.HasPrefix(trimmed, "[") {
+		return false, false
+	}
+	end := strings.Index(trimmed, "]")
+	if end < 0 {
+		return false, false
+	}
+	name := strings.ToUpper(strings.TrimSpace(trimmed[1:end]))
+	return true, strings.HasPrefix(name, "PATH") || strings.HasPrefix(name, "HOST")
 }
 
 // iniLineSetsKey reports whether a trimmed php.ini line assigns key (whether

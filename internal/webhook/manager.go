@@ -90,6 +90,9 @@ type queuedEvent struct {
 	webhook  WebhookConfig
 	event    Event
 	attempts int
+	// subscribed marks a Fire delivery: it is owed only while the webhook is
+	// still registered, enabled and subscribed to the event (F64800).
+	subscribed bool
 }
 
 var webhookURLSafetyCheck = config.IsWebhookURLSafe
@@ -178,9 +181,10 @@ func (m *Manager) Fire(eventType EventType, data any) {
 		}
 
 		qe := &queuedEvent{
-			webhook:  wh,
-			event:    event,
-			attempts: 0,
+			webhook:    wh,
+			event:      event,
+			attempts:   0,
+			subscribed: true,
 		}
 
 		m.sendToQueue(qe, string(eventType))
@@ -355,6 +359,17 @@ func (m *Manager) deliver(qe *queuedEvent) {
 			}
 		}
 
+		// A webhook removed or disabled since Fire must not receive the
+		// queued backlog or further retries (F64800).
+		if qe.subscribed && !m.stillSubscribed(qe) {
+			m.logger.Info("webhook delivery dropped: webhook removed or disabled",
+				"event", qe.event.Type,
+				"url", logURL(qe.webhook.URL),
+				"attempt", attempt+1,
+			)
+			return
+		}
+
 		req, err := http.NewRequestWithContext(ctx, "POST", qe.webhook.URL, bytes.NewReader(payload))
 		if err != nil {
 			m.logger.Error("failed to create webhook request", "error", err)
@@ -439,6 +454,19 @@ func redactURLError(err error) error {
 		return fmt.Errorf("%s: %w", uerr.Op, uerr.Err)
 	}
 	return err
+}
+
+// stillSubscribed reports whether a registered, enabled webhook with the
+// queued event's URL still subscribes to its event type.
+func (m *Manager) stillSubscribed(qe *queuedEvent) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, w := range m.webhooks {
+		if w.URL == qe.webhook.URL && w.Enabled && matchesEvent(w.Events, qe.event.Type) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) checkURLSafe(url string) error {

@@ -312,7 +312,12 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 			if info, err := os.Stat(domainsDir); err == nil && info.IsDir() {
 				if err := addDirToTar(tw, domainsDir, "domains.d"); err != nil {
 					m.logger.Warn("backup: failed to add domains.d", "error", err)
+					rootsIncomplete.Store(true) // F64400
 				}
+			} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+				// Unreadable is not absent (F64401).
+				m.logger.Warn("backup: failed to add domains.d", "error", err)
+				rootsIncomplete.Store(true)
 			}
 		}
 
@@ -323,6 +328,8 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 				if err := addDirToTar(tw, certsDir, "certs"); err != nil {
 					return fmt.Errorf("add certs to archive: %w", err)
 				}
+			} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("add certs to archive: %w", err) // F64401
 			}
 		}
 
@@ -336,6 +343,9 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 					m.logger.Warn("backup: failed to add domain root", "root", root, "error", err)
 					rootsIncomplete.Store(true)
 				}
+			} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+				m.logger.Warn("backup: failed to add domain root", "root", root, "error", err)
+				rootsIncomplete.Store(true) // F64401
 			}
 		}
 
@@ -369,9 +379,16 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 			}
 		}
 
-		// Docker container DB dumps (best-effort per container).
+		// Docker container DB dumps (best-effort per container). A container
+		// that could not be dumped leaves a backup without its databases, which
+		// must not displace an older one holding them (F64600).
 		if dockerDumpFn != nil {
-			for name, dump := range dockerDumpFn() {
+			dockerDumps, dockerErr := dockerDumpFn()
+			if dockerErr != nil {
+				m.logger.Warn("backup: docker database dump incomplete", "error", dockerErr)
+				rootsIncomplete.Store(true)
+			}
+			for name, dump := range dockerDumps {
 				if len(dump) == 0 {
 					continue
 				}
@@ -1421,11 +1438,12 @@ func dumpDatabaseReal(dbName string) ([]byte, error) {
 var dumpAllDatabasesFunc = dumpAllDatabasesReal
 
 // dockerDumpFn dumps all Docker container databases. Set by server.go at init.
-// Returns map[containerName]sqlDump.
-var dockerDumpFn func() map[string][]byte
+// Returns map[containerName]sqlDump, and a non-nil error when any container
+// could not be listed or dumped (the map then holds the dumps that succeeded).
+var dockerDumpFn func() (map[string][]byte, error)
 
 // SetDockerDumpFunc sets the function that dumps Docker container databases.
-func SetDockerDumpFunc(fn func() map[string][]byte) {
+func SetDockerDumpFunc(fn func() (map[string][]byte, error)) {
 	dockerDumpFn = fn
 }
 

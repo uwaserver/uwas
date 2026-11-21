@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -895,12 +896,18 @@ func (s *Server) SetConfigPath(path string) {
 		s.backupMgr.SetDomainPaths(webRoot, domainsDir, roots)
 
 		// Wire Docker DB dump into backup
-		backup.SetDockerDumpFunc(func() map[string][]byte {
+		backup.SetDockerDumpFunc(func() (map[string][]byte, error) {
 			containers, err := database.ListDockerDBs()
 			if err != nil {
-				return nil
+				// No docker binary is the host without containers; a daemon
+				// that could not be asked may hold databases (F64600).
+				if errors.Is(err, exec.ErrNotFound) {
+					return nil, nil
+				}
+				return nil, err
 			}
 			dumps := make(map[string][]byte)
+			var failed []error
 			for _, c := range containers {
 				if !c.Running || c.Engine == database.EnginePostgreSQL {
 					continue
@@ -909,11 +916,12 @@ func (s *Server) SetConfigPath(path string) {
 				dump, err := database.DockerDBExport(shortName, "--all-databases")
 				if err != nil {
 					s.logger.Warn("backup: docker dump failed", "container", c.Name, "error", err)
+					failed = append(failed, fmt.Errorf("%s: %w", c.Name, err))
 					continue
 				}
 				dumps[shortName] = []byte(dump)
 			}
-			return dumps
+			return dumps, errors.Join(failed...)
 		})
 	}
 }

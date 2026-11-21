@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Backup retention no longer prunes an older, complete backup when the new one is missing data: an unreadable `domains.d` file or domain root, or a failed Docker database dump (`docker ps` or a container export), now marks the backup incomplete, and an unreadable certs directory fails it instead of silently leaving the certificates out (F64400/F64401/F64600).
+- Renaming a domain removes the old host's `domains.d` file, so the old site no longer comes back at the next start; deleting a `www.` record removes its own file and stops its PHP worker (F64100/F64101/F64500). Renaming a PHP domain moves its PHP assignment, php.ini overrides and worker to the new host, so deleting the renamed domain no longer leaves php-cgi running (F65100).
+- A settings or branding change whose save fails is rolled back instead of staying live until restart (a rejected `api_key` kept authenticating); `PUT /settings/notifications` rejects webhook URLs without `http(s)://` and CR/LF in headers, as webhook create does (F64200/F64201/F65300).
+- Removed, disabled or unsubscribed webhooks no longer receive already queued events or pending retries (F64800).
+- ACME: an unreadable `account.key` (EACCES, EIO) is reported instead of being replaced by a new key that overwrote the registered account key; a new-order response without `Location` is rejected up front (F64900/F64901).
+- PHP: php-cgi/php-fpm `-i` HTML output is parsed, so the real loaded php.ini is found instead of a guessed or newly created one; php.ini `[HOST=]`/`[PATH=]` sections are no longer read or overwritten as global settings (F65000/F65001).
+- App deploy honours the dashboard's `git_branch` field (it deployed the stored or default branch); a failed manual build no longer restarts the live app during rollback, and rollback respects `skip_start` (F64700/F65200/F65201).
+- Install task list is returned in creation order, so paginated `/api/v1/tasks` no longer repeats or skips tasks, and finished tasks are pruned on submit, not only when listed (F64300/F64301).
+
 ## [0.11.41] - 2026-11-02
 
 ### Fixed

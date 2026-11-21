@@ -208,6 +208,7 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		GitURL    string            `json:"git_url"`
+		GitBranch string            `json:"git_branch"`
 		Branch    string            `json:"branch"`
 		BuildCmd  string            `json:"build_cmd"`
 		Env       map[string]string `json:"env"`
@@ -226,7 +227,12 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	if req.GitURL != "" {
 		validationDef.Deploy.GitURL = req.GitURL
 	}
-	if req.Branch != "" {
+	// The dashboard and the app's stored deploy config name the field
+	// "git_branch"; reading only the older "branch" deployed the stored or
+	// default branch instead of the one requested (F64700).
+	if req.GitBranch != "" {
+		validationDef.Deploy.GitBranch = req.GitBranch
+	} else if req.Branch != "" {
 		validationDef.Deploy.GitBranch = req.Branch
 	}
 	if req.BuildCmd != "" {
@@ -312,7 +318,11 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	if err := runDeployCore(ctx, def, validationDef.Deploy.GitURL, validationDef.Deploy.GitBranch, validationDef.Deploy.BuildCmd, validationDef.Deploy.SSHKeyPath, validationDef.Deploy.GitToken, envMap, logBuf); err != nil {
 		resp := &AppDeployResponse{OK: false, Error: err.Error(), Log: logBuf.String(), LogTail: tailString(logBuf.String(), 4096)}
 		if rollbackSHA != "" {
-			rb, rbSHA, rbNote := h.deps.AppRollback(ctx, name, def, rollbackSHA, validationDef.Deploy, cloneStringMap(envMap), !req.SkipStart, logBuf)
+			// The pull/build failed before the app was touched: the rollback
+			// only restores the old commit and leaves the running app serving,
+			// as the webhook path does. Restarting bounced it onto what the
+			// failed build left behind (F65200).
+			rb, rbSHA, rbNote := h.deps.AppRollback(ctx, name, def, rollbackSHA, validationDef.Deploy, cloneStringMap(envMap), false, logBuf)
 			resp.RolledBack = rb
 			resp.RollbackSHA = rbSHA
 			resp.RollbackNote = rbNote
@@ -336,7 +346,9 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	if err := h.deps.AppCompleteDeploy(name, def, req.SkipStart); err != nil {
 		resp := &AppDeployResponse{OK: false, CommitSHA: commitSHA, Error: err.Error(), Log: logBuf.String(), LogTail: tailString(logBuf.String(), 4096), RollbackSHA: rollbackSHA}
 		if rollbackSHA != "" {
-			rb, rbSHA, rbNote := h.deps.AppRollback(ctx, name, def, rollbackSHA, validationDef.Deploy, cloneStringMap(envMap), true, logBuf)
+			// skip_start asked for the app to stay stopped; the rollback must
+			// not start it either (F65201).
+			rb, rbSHA, rbNote := h.deps.AppRollback(ctx, name, def, rollbackSHA, validationDef.Deploy, cloneStringMap(envMap), !req.SkipStart, logBuf)
 			resp.RolledBack = rb
 			resp.Error += " (rollback: " + rbSHA + " " + rbNote + ")"
 			resp.RollbackSHA = rbSHA
