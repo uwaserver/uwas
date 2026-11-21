@@ -18,6 +18,16 @@ import (
 // bandwidth, status codes, and top paths using sharded maps for concurrency.
 type Collector struct {
 	domains sync.Map // host → *DomainStats
+
+	// removed holds the hosts RetainHosts dropped (host → struct{}) until a
+	// later RetainHosts lists them again. A request still in flight across
+	// the removal must not re-create the entry: if the next domain change
+	// re-added the hostname for another tenant, it kept that entry and showed
+	// them the previous owner's request (F67001).
+	removed sync.Map
+	// retained is the host set of the last RetainHosts call (nil before it).
+	retainMu sync.Mutex
+	retained map[string]bool
 }
 
 // DomainStats holds analytics data for a single domain.
@@ -108,6 +118,13 @@ func (c *Collector) RecordFull(host, path, remoteAddr, referrer, userAgent strin
 	}
 	path = truncateKey(path)
 	stats := c.getOrCreate(host)
+	// Checked after the create: RetainHosts marks a host removed before it
+	// deletes the entry, so either this sees the mark or that delete runs
+	// after the create (F67001).
+	if _, gone := c.removed.Load(host); gone {
+		c.domains.CompareAndDelete(host, stats)
+		return
+	}
 	ip := extractIP(remoteAddr)
 	now := time.Now()
 	hour := now.Hour()
@@ -324,6 +341,24 @@ func (c *Collector) RetainHosts(hosts []string) {
 			keep[k] = true
 		}
 	}
+	c.retainMu.Lock()
+	defer c.retainMu.Unlock()
+	// Mark the dropped hosts before deleting their entries (see RecordFull).
+	for h := range c.retained {
+		if !keep[h] {
+			c.removed.Store(h, struct{}{})
+		}
+	}
+	c.domains.Range(func(key, _ any) bool {
+		if h, ok := key.(string); ok && !keep[h] {
+			c.removed.Store(h, struct{}{})
+		}
+		return true
+	})
+	for h := range keep {
+		c.removed.Delete(h)
+	}
+	c.retained = keep
 	c.domains.Range(func(key, _ any) bool {
 		if h, ok := key.(string); !ok || !keep[h] {
 			c.domains.Delete(key)

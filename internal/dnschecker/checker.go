@@ -72,10 +72,23 @@ func serverPublicIP() string {
 	return ip
 }
 
-// hasPublicAddr reports whether any of ips is a globally routable address.
-func hasPublicAddr(ips []string) bool {
+// hasPublicIPv4 reports whether any of ips is a globally routable IPv4
+// address. Only an IPv4 one settles the question: a dual-stack host behind
+// IPv4 NAT carries a public IPv6 on its interface while its A record must
+// name the NAT'd public IPv4 (F66900).
+func hasPublicIPv4(ips []string) bool {
 	for _, s := range ips {
-		if serverip.IsPublicAddr(net.ParseIP(s)) {
+		if ip := net.ParseIP(s); ip.To4() != nil && serverip.IsPublicAddr(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsIP reports whether ips already lists ip.
+func containsIP(ips []string, ip string) bool {
+	for _, s := range ips {
+		if s == ip {
 			return true
 		}
 	}
@@ -107,8 +120,8 @@ func Check(domain string) Result {
 	// correctly configured domain as "does not point here" and recommended the
 	// private address as the A record. The externally visible address leads the
 	// list, since that is the one a record must name.
-	if !hasPublicAddr(r.ServerIPs) {
-		if pub := serverPublicIP(); pub != "" {
+	if !hasPublicIPv4(r.ServerIPs) {
+		if pub := serverPublicIP(); pub != "" && !containsIP(r.ServerIPs, pub) {
 			r.ServerIPs = append([]string{pub}, r.ServerIPs...)
 		}
 	}

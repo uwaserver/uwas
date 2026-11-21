@@ -147,3 +147,26 @@ func TestCheckPublicIPSuccessIsCached(t *testing.T) {
 		t.Errorf("public IP looked up %d times for 4 checks, want 1", got)
 	}
 }
+
+// F66900: a dual-stack host behind IPv4 NAT carries a public IPv6 on its
+// interface but only a private IPv4. That public IPv6 must not stop the public
+// IPv4 lookup, or a domain whose A record names the NAT'd address reads as
+// "does not point here" and the guidance recommends a wrong A record.
+func TestCheckBehindIPv4NATWithPublicIPv6UsesPublicIPv4(t *testing.T) {
+	natStubs(t, "203.0.113.7", "10.0.0.5")
+	interfaceAddrs = func() ([]net.Addr, error) {
+		return []net.Addr{
+			&net.IPNet{IP: net.ParseIP("10.0.0.5"), Mask: net.CIDRMask(24, 32)},
+			&net.IPNet{IP: net.ParseIP("2600:1f18:abcd::5"), Mask: net.CIDRMask(64, 128)},
+		}, nil
+	}
+	publicIP = func() string { return "203.0.113.7" }
+
+	r := Check("site.test")
+	if !r.PointsHere {
+		t.Errorf("points_here = false, want true (server_ips=%v)", r.ServerIPs)
+	}
+	if len(r.ServerIPs) != 3 || r.ServerIPs[0] != "203.0.113.7" {
+		t.Errorf("server_ips = %v, want the public IPv4 first, then the interface addresses", r.ServerIPs)
+	}
+}

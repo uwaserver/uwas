@@ -266,6 +266,19 @@ func StopDockerDB(name string) error {
 	return nil
 }
 
+// dockerContainerImage returns the image a managed container runs.
+func dockerContainerImage(containerName string) (string, error) {
+	fullName := containerName
+	if !strings.HasPrefix(fullName, containerPrefix) {
+		fullName = containerPrefix + containerName
+	}
+	inspectOut, err := dockerExecCommandFn("docker", "inspect", "--format", "{{.Config.Image}}", fullName).Output()
+	if err != nil {
+		return "", fmt.Errorf("docker inspect: %w", err)
+	}
+	return strings.TrimSpace(string(inspectOut)), nil
+}
+
 // DockerDBExecSQL runs SQL inside a Docker database container.
 func DockerDBExecSQL(containerName, sql string) (string, error) {
 	fullName := containerName
@@ -274,17 +287,18 @@ func DockerDBExecSQL(containerName, sql string) (string, error) {
 	}
 
 	// Detect engine from container image
-	inspectOut, err := dockerExecCommandFn("docker", "inspect", "--format", "{{.Config.Image}}", fullName).Output()
+	image, err := dockerContainerImage(fullName)
 	if err != nil {
-		return "", fmt.Errorf("docker inspect: %w", err)
+		return "", err
 	}
-	image := strings.TrimSpace(string(inspectOut))
 
 	var cmd *exec.Cmd
 	if strings.Contains(image, "postgres") {
 		// Feed SQL via stdin — avoids argv exposure of SQL text in /proc/<pid>/cmdline.
 		// psql -f - reads SQL from stdin, which matches the MariaDB approach below.
-		cmd = dockerExecCommandFn("docker", "exec", "-i", fullName, "psql", "-U", "postgres", "-t", "-f", "-")
+		// Without ON_ERROR_STOP psql exits 0 after a failed statement, so a
+		// rejected CREATE/DROP DATABASE was reported as done (F67100).
+		cmd = dockerExecCommandFn("docker", "exec", "-i", fullName, "psql", "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-t", "-f", "-")
 		cmd.Stdin = strings.NewReader(sql)
 	} else {
 		// Use stdin to pass SQL — avoids shell escaping issues entirely. Select
@@ -308,6 +322,15 @@ func DockerDBExecSQL(containerName, sql string) (string, error) {
 // DockerDBListDatabases lists databases in a Docker container.
 func DockerDBListDatabases(containerName string) ([]DBInfo, error) {
 	sql := `SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME NOT IN ('information_schema','mysql','performance_schema','sys')`
+	// In Postgres information_schema.schemata lists the connected database's
+	// schemas (pg_catalog, public, ...), not its databases (F67101).
+	image, err := dockerContainerImage(containerName)
+	if err != nil {
+		return nil, fmt.Errorf("list databases in container %q: %w", containerName, err)
+	}
+	if strings.Contains(image, "postgres") {
+		sql = `SELECT datname FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres'`
+	}
 	out, err := DockerDBExecSQL(containerName, sql)
 	if err != nil {
 		return nil, fmt.Errorf("list databases in container %q: %w", containerName, err)

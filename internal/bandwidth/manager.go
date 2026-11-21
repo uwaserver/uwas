@@ -260,20 +260,7 @@ func (m *Manager) Record(host string, bytes int64) (blocked bool, throttled bool
 	}()
 
 	now := time.Now()
-
-	// Check if we need to reset counters using atomic CAS for window swap
-	if now.Sub(usage.LastReset) > 30*24*time.Hour {
-		usage.MonthlyBytes.Store(0)
-		usage.LastReset = now
-		usage.Blocked = false
-		usage.Throttled = false
-	}
-	if now.Sub(usage.DailyReset) > 24*time.Hour {
-		usage.DailyBytes.Store(0)
-		usage.DailyReset = now
-		usage.Blocked = false
-		usage.Throttled = false
-	}
+	rollover(usage, limit, now)
 
 	// Add bytes atomically
 	usage.MonthlyBytes.Add(bytes)
@@ -322,6 +309,28 @@ func (m *Manager) Record(host string, bytes int64) (blocked bool, throttled bool
 	return evaluate(usage, limit)
 }
 
+// rollover starts a new daily/monthly window once the current one has ended
+// and re-evaluates the block against the fresh counters. Readers apply it too:
+// left to Record alone, an ended window kept blocking (IsBlocked -> 503 with
+// Retry-After) and showing its usage until a request was recorded (F67000).
+// Caller holds usage.mu.
+func rollover(usage *DomainUsage, limit config.BandwidthConfig, now time.Time) {
+	reset := false
+	if now.Sub(usage.LastReset) > 30*24*time.Hour {
+		usage.MonthlyBytes.Store(0)
+		usage.LastReset = now
+		reset = true
+	}
+	if now.Sub(usage.DailyReset) > 24*time.Hour {
+		usage.DailyBytes.Store(0)
+		usage.DailyReset = now
+		reset = true
+	}
+	if reset {
+		evaluate(usage, limit)
+	}
+}
+
 // SetAlertFunc sets the alert callback function.
 func (m *Manager) SetAlertFunc(fn func(host string, limitType string, current, limit int64)) {
 	m.mu.Lock()
@@ -333,6 +342,7 @@ func (m *Manager) SetAlertFunc(fn func(host string, limitType string, current, l
 func (m *Manager) IsBlocked(host string) bool {
 	m.mu.RLock()
 	host = m.statusKeyLocked(host)
+	limit, hasLimit := m.limits[host]
 	usage, ok := m.usage[host]
 	m.mu.RUnlock()
 	if !ok {
@@ -340,6 +350,9 @@ func (m *Manager) IsBlocked(host string) bool {
 	}
 	usage.mu.Lock()
 	defer usage.mu.Unlock()
+	if hasLimit {
+		rollover(usage, limit, time.Now())
+	}
 	return usage.Blocked
 }
 
@@ -357,6 +370,7 @@ func (m *Manager) GetStatus(host string) *Status {
 
 	usage.mu.Lock()
 	defer usage.mu.Unlock()
+	rollover(usage, limit, time.Now())
 
 	monthlyBytes := usage.MonthlyBytes.Load()
 	dailyBytes := usage.DailyBytes.Load()
