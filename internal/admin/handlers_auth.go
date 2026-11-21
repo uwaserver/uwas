@@ -343,14 +343,25 @@ func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]string{"status": "deleted", "domain": identity})
 }
 
+// testEnsureAuthHook, when set by a test, runs after the config snapshot.
+var testEnsureAuthHook func()
+
 func (s *Server) ensureAuthManagerFromConfig() {
+	// The snapshot is applied with configMu still read-held. Released first, a
+	// slower caller (bootstrap is public) applied its older api_key over a
+	// newer rotation: the rotated-out key kept authenticating and the
+	// configured one was refused (F66600). configMu before authMu is the order
+	// reload's ApplyAuthSettings takes them in.
 	s.configMu.RLock()
+	defer s.configMu.RUnlock()
 	enabled := s.config.Global.Users.Enabled
 	webRoot := s.config.Global.WebRoot
 	apiKey := s.config.Global.Admin.APIKey
 	allowLegacyPlaintext := s.config.Global.Users.AllowLegacyPlaintextAPIKey
 	sessionTTL := s.config.Global.Users.SessionTTL
-	s.configMu.RUnlock()
+	if testEnsureAuthHook != nil {
+		testEnsureAuthHook()
+	}
 
 	if !enabled {
 		return

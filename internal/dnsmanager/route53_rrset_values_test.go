@@ -104,7 +104,13 @@ func (f *rrsetStore) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	// Validate the whole batch first (Route53 batches are atomic).
+	// Route53 batches are atomic and their changes apply in order (a DELETE
+	// then CREATE of one set is the documented way to replace it): validate
+	// each change against a working copy and commit only if all pass.
+	work := make(map[string]*rrsetFixture, len(f.sets))
+	for k, v := range f.sets {
+		work[k] = v
+	}
 	for _, c := range q.Changes {
 		if c.Type == "TXT" || c.Type == "SPF" {
 			for _, v := range c.Values {
@@ -114,7 +120,7 @@ func (f *rrsetStore) RoundTrip(r *http.Request) (*http.Response, error) {
 			}
 		}
 		key := c.Name + "|" + c.Type
-		cur, exists := f.sets[key]
+		cur, exists := work[key]
 		switch c.Action {
 		case "CREATE":
 			if exists {
@@ -135,16 +141,13 @@ func (f *rrsetStore) RoundTrip(r *http.Request) (*http.Response, error) {
 		default:
 			return rrsetErr(r, "unknown action "+c.Action), nil
 		}
-	}
-	for _, c := range q.Changes {
-		key := c.Name + "|" + c.Type
-		switch c.Action {
-		case "CREATE", "UPSERT":
-			f.sets[key] = &rrsetFixture{Name: c.Name, Type: c.Type, TTL: c.TTL, Values: append([]string(nil), c.Values...)}
-		case "DELETE":
-			delete(f.sets, key)
+		if c.Action == "DELETE" {
+			delete(work, key)
+		} else {
+			work[key] = &rrsetFixture{Name: c.Name, Type: c.Type, TTL: c.TTL, Values: append([]string(nil), c.Values...)}
 		}
 	}
+	f.sets = work
 	return rrsetResp(r, 200, `<ChangeResourceRecordSetsResponse/>`), nil
 }
 

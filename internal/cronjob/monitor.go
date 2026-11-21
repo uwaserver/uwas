@@ -101,9 +101,18 @@ type Monitor struct {
 	// overlap-guard entry set forever (which would skip every future run).
 	timeout time.Duration
 	// Per-job overlap guard: prevents concurrent execution of the same job.
-	running map[string]bool // key: domain:command, true if job is currently running
+	running map[string]*runEntry // key: domain:command of the job currently running
 	// rootFn resolves a domain's configured root; nil keeps the legacy guess.
 	rootFn func(domain string) string
+}
+
+// runEntry is one in-flight Execute. RenameDomain re-keys it and ClearDomain
+// marks it dropped, so a run that outlives a rename or a delete keeps its
+// overlap guard under the job's current name and files its result there, or
+// nowhere (F66800, F66801, F66802).
+type runEntry struct {
+	domain  string
+	dropped bool
 }
 
 // defaultJobTimeout is a ceiling well above any legitimate cron job — its role
@@ -122,7 +131,7 @@ func NewMonitor(dataDir string) *Monitor {
 		maxHistory: 100, // Keep last 100 executions per job
 		dataDir:    dataDir,
 		timeout:    defaultJobTimeout,
-		running:    make(map[string]bool),
+		running:    make(map[string]*runEntry),
 	}
 	m.loadHistory()
 	return m
@@ -151,7 +160,11 @@ func (m *Monitor) SetTimeout(d time.Duration) {
 func (m *Monitor) RecordExecution(record ExecutionRecord) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.recordLocked(record)
+}
 
+// recordLocked is RecordExecution with m.mu held.
+func (m *Monitor) recordLocked(record ExecutionRecord) {
 	key := m.jobKey(record.Domain, record.Command)
 	m.history[key] = append(m.history[key], record)
 
@@ -171,7 +184,7 @@ func (m *Monitor) Execute(domain, schedule, command string) ExecutionRecord {
 
 	// Overlap guard: skip if already running
 	m.mu.Lock()
-	if m.running[key] {
+	if m.running[key] != nil {
 		m.mu.Unlock()
 		return ExecutionRecord{
 			ID:       fmt.Sprintf("%d", time.Now().UnixNano()),
@@ -182,13 +195,17 @@ func (m *Monitor) Execute(domain, schedule, command string) ExecutionRecord {
 			Error:    "skipped: job already running",
 		}
 	}
-	m.running[key] = true
+	run := &runEntry{domain: domain}
+	m.running[key] = run
 	m.mu.Unlock()
 
-	// Ensure we mark the job as not running when done
+	// Ensure we mark the job as not running when done, under the name the job
+	// has now (a rename may have re-keyed the guard).
 	defer func() {
 		m.mu.Lock()
-		delete(m.running, key)
+		if k := m.jobKey(run.domain, command); m.running[k] == run {
+			delete(m.running, k)
+		}
 		m.mu.Unlock()
 	}()
 
@@ -206,7 +223,7 @@ func (m *Monitor) Execute(domain, schedule, command string) ExecutionRecord {
 		record.Duration = record.EndedAt.Sub(record.StartedAt)
 		record.Success = false
 		record.Error = fmt.Sprintf("invalid command: %v", err)
-		m.RecordExecution(record)
+		m.finishRun(run, &record)
 		return record
 	}
 
@@ -276,17 +293,28 @@ func (m *Monitor) Execute(domain, schedule, command string) ExecutionRecord {
 		record.Success = true
 	}
 
-	m.RecordExecution(record)
+	m.finishRun(run, &record)
 
 	// Trigger alert on failure
 	m.mu.RLock()
 	alertFn := m.alertFn
 	m.mu.RUnlock()
 	if !record.Success && alertFn != nil {
-		alertFn(domain, command, record.Output+record.Error, record.ExitCode)
+		alertFn(record.Domain, command, record.Output+record.Error, record.ExitCode)
 	}
 
 	return record
+}
+
+// finishRun files a finished run's record under the job's current domain, or
+// not at all when the domain was cleared while it ran.
+func (m *Monitor) finishRun(run *runEntry, record *ExecutionRecord) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	record.Domain = run.domain
+	if !run.dropped {
+		m.recordLocked(*record)
+	}
 }
 
 // GetStatus returns the current status for a specific job.
@@ -473,6 +501,11 @@ func (m *Monitor) ClearDomain(domain string) {
 	defer m.mu.Unlock()
 
 	prefix := domain + ":"
+	for key, run := range m.running {
+		if strings.HasPrefix(key, prefix) {
+			run.dropped = true
+		}
+	}
 	changed := false
 	for key := range m.history {
 		if strings.HasPrefix(key, prefix) {
@@ -496,6 +529,16 @@ func (m *Monitor) RenameDomain(oldDomain, newDomain string) {
 	defer m.mu.Unlock()
 
 	prefix := oldDomain + ":"
+	for key, run := range m.running {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		delete(m.running, key)
+		run.domain = newDomain
+		if newKey := m.jobKey(newDomain, strings.TrimPrefix(key, prefix)); m.running[newKey] == nil {
+			m.running[newKey] = run
+		}
+	}
 	var keys []string
 	for key := range m.history {
 		if strings.HasPrefix(key, prefix) {

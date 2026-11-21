@@ -43,7 +43,26 @@ func NewRoute53(accessKey, secretKey, region string) *Route53Provider {
 const r53BaseURL = "https://route53.amazonaws.com/2013-04-01"
 
 func (p *Route53Provider) ListZones() ([]Zone, error) {
-	var zones []Zone
+	hzs, err := p.listHostedZones()
+	if err != nil {
+		return nil, err
+	}
+	zones := make([]Zone, 0, len(hzs))
+	for _, hz := range hzs {
+		zones = append(zones, hz.Zone)
+	}
+	return zones, nil
+}
+
+// r53HostedZone is a listed zone plus whether it is a private (VPC-only)
+// hosted zone, which the CA and the public never query (F66701).
+type r53HostedZone struct {
+	Zone
+	private bool
+}
+
+func (p *Route53Provider) listHostedZones() ([]r53HostedZone, error) {
+	var zones []r53HostedZone
 	marker := ""
 	// Follow IsTruncated/NextMarker; without this only the first page
 	// (100 zones) was returned.
@@ -58,8 +77,9 @@ func (p *Route53Provider) ListZones() ([]Zone, error) {
 		}
 		var resp struct {
 			HostedZones []struct {
-				Id   string `xml:"Id"`
-				Name string `xml:"Name"`
+				Id          string `xml:"Id"`
+				Name        string `xml:"Name"`
+				PrivateZone bool   `xml:"Config>PrivateZone"`
 			} `xml:"HostedZones>HostedZone"`
 			IsTruncated bool   `xml:"IsTruncated"`
 			NextMarker  string `xml:"NextMarker"`
@@ -69,7 +89,7 @@ func (p *Route53Provider) ListZones() ([]Zone, error) {
 		}
 		for _, hz := range resp.HostedZones {
 			id := strings.TrimPrefix(hz.Id, "/hostedzone/")
-			zones = append(zones, Zone{ID: id, Name: strings.TrimSuffix(hz.Name, "."), Status: "active"})
+			zones = append(zones, r53HostedZone{Zone{ID: id, Name: strings.TrimSuffix(hz.Name, "."), Status: "active"}, hz.PrivateZone})
 		}
 		if !resp.IsTruncated || resp.NextMarker == "" {
 			return zones, nil
@@ -81,7 +101,7 @@ func (p *Route53Provider) ListZones() ([]Zone, error) {
 
 func (p *Route53Provider) FindZoneByDomain(domain string) (*Zone, error) {
 	domain = strings.ToLower(strings.TrimSuffix(domain, "."))
-	zones, err := p.ListZones()
+	zones, err := p.listHostedZones()
 	if err != nil {
 		return nil, err
 	}
@@ -89,14 +109,20 @@ func (p *Route53Provider) FindZoneByDomain(domain string) (*Zone, error) {
 	// zone (longest name) to match first. Sort longest-first so that a
 	// subdomain-of-subdomain (e.g. www.foo.example.com) resolves to the
 	// correct zone (foo.example.com) even when the parent zone (example.com)
-	// was created earlier and appears first in the API response.
-	sort.Slice(zones, func(i, j int) bool {
-		return len(zones[i].Name) > len(zones[j].Name)
+	// was created earlier and appears first in the API response. A
+	// split-horizon setup has a public and a private zone of the same name;
+	// the public one wins, since a record in the private zone is invisible
+	// to the CA's DNS-01 query and to the public (F66701).
+	sort.SliceStable(zones, func(i, j int) bool {
+		if len(zones[i].Name) != len(zones[j].Name) {
+			return len(zones[i].Name) > len(zones[j].Name)
+		}
+		return !zones[i].private && zones[j].private
 	})
 	for _, z := range zones {
 		name := strings.ToLower(strings.TrimSuffix(z.Name, "."))
 		if name == domain || strings.HasSuffix(domain, "."+name) {
-			return &z, nil
+			return &z.Zone, nil
 		}
 	}
 	return nil, fmt.Errorf("zone not found for domain %s", domain)
@@ -187,13 +213,14 @@ func (p *Route53Provider) listRRSets(zoneID string) ([]r53RRSet, error) {
 }
 
 // CreateRecord adds one value. Route53's CREATE fails when the set already
-// exists; the set is then extended with UPSERT, keeping its TTL and every
+// exists; the set is then extended (see r53Replace), keeping its TTL and every
 // sibling value.
 func (p *Route53Provider) CreateRecord(zoneID string, rec Record) (*Record, error) {
 	name := r53FQDN(rec.Name)
 	raw := r53EncodeValue(rec.Type, mxValue(rec))
 	rec.ID = r53RecordID(name, rec.Type, raw)
-	err := p.submitChanges(zoneID, r53Change{"CREATE", name, rec.Type, r53DefaultTTL(rec.TTL), []string{raw}})
+	create := r53Change{"CREATE", name, rec.Type, r53DefaultTTL(rec.TTL), []string{raw}}
+	err := p.submitChanges(zoneID, create)
 	var apiErr *r53APIError
 	if err == nil || !errors.As(err, &apiErr) || apiErr.status != http.StatusBadRequest || !strings.Contains(apiErr.body, "already exists") {
 		if err != nil {
@@ -201,20 +228,57 @@ func (p *Route53Provider) CreateRecord(zoneID string, rec Record) (*Record, erro
 		}
 		return &rec, nil
 	}
-	sets, err := p.listRRSets(zoneID)
+	err = p.changeSets(zoneID, func(sets []r53RRSet) ([]r53Change, error) {
+		set := r53FindSet(sets, name, rec.Type)
+		if set == nil {
+			return []r53Change{create}, nil // removed meanwhile
+		}
+		if r53HasValue(set.Values, raw) {
+			return nil, nil
+		}
+		return r53Replace(set, set.TTL, r53WithValue(set.Values, raw)), nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	set := r53FindSet(sets, name, rec.Type)
-	if set == nil {
-		return nil, apiErr
-	}
-	if !r53HasValue(set.Values, raw) {
-		if err := p.submitChanges(zoneID, r53Change{"UPSERT", set.Name, set.Type, set.TTL, r53WithValue(set.Values, raw)}); err != nil {
-			return nil, err
+	return &rec, nil
+}
+
+// r53MaxAttempts bounds how often a per-value change is recomputed after a
+// concurrent writer changed the record set first.
+const r53MaxAttempts = 5
+
+// changeSets reads the zone's record sets, lets plan compute the change batch
+// from them and submits it. plan must express every set it rewrites with
+// r53Replace, so the batch fails rather than overwrites when the set changed
+// after the read; the read and plan are then retried (F66700).
+func (p *Route53Provider) changeSets(zoneID string, plan func([]r53RRSet) ([]r53Change, error)) error {
+	for attempt := 1; ; attempt++ {
+		sets, err := p.listRRSets(zoneID)
+		if err != nil {
+			return err
+		}
+		changes, err := plan(sets)
+		if err != nil || len(changes) == 0 {
+			return err
+		}
+		err = p.submitChanges(zoneID, changes...)
+		if err == nil || attempt >= r53MaxAttempts || !r53Conflict(err) {
+			return err
 		}
 	}
-	return &rec, nil
+}
+
+// r53Conflict reports whether err is Route53 rejecting a batch because a set
+// no longer has the name, TTL or values the batch was computed from.
+func r53Conflict(err error) bool {
+	var apiErr *r53APIError
+	if !errors.As(err, &apiErr) || apiErr.status != http.StatusBadRequest {
+		return false
+	}
+	return strings.Contains(apiErr.body, "already exists") ||
+		strings.Contains(apiErr.body, "but it was not found") ||
+		strings.Contains(apiErr.body, "do not match")
 }
 
 // r53APIError is an HTTP error response from Route53; Error() keeps the
@@ -246,32 +310,31 @@ func (p *Route53Provider) UpdateRecord(zoneID, recordID string, rec Record) (*Re
 		rec.ID = r53RecordID(name, rec.Type, newRaw)
 		return &rec, nil
 	}
-	sets, err := p.listRRSets(zoneID)
+	err = p.changeSets(zoneID, func(sets []r53RRSet) ([]r53Change, error) {
+		old := r53FindSet(sets, idName, idType)
+		if old == nil || !r53HasValue(old.Values, oldRaw) {
+			return nil, fmt.Errorf("record not found: %s", recordID)
+		}
+		var changes []r53Change
+		if target := r53FindSet(sets, name, rec.Type); target == old {
+			values := r53WithValue(r53WithoutValue(old.Values, oldRaw), newRaw)
+			ttl := old.TTL
+			if rec.TTL > 0 {
+				ttl = rec.TTL
+			}
+			changes = append(changes, r53Replace(old, ttl, values)...)
+		} else {
+			// Name or type changed: move the value in one atomic batch.
+			changes = append(changes, r53RemoveValue(old, oldRaw)...)
+			if target == nil {
+				changes = append(changes, r53Change{"CREATE", name, rec.Type, r53DefaultTTL(rec.TTL), []string{newRaw}})
+			} else if !r53HasValue(target.Values, newRaw) {
+				changes = append(changes, r53Replace(target, target.TTL, r53WithValue(target.Values, newRaw))...)
+			}
+		}
+		return changes, nil
+	})
 	if err != nil {
-		return nil, err
-	}
-	old := r53FindSet(sets, idName, idType)
-	if old == nil || !r53HasValue(old.Values, oldRaw) {
-		return nil, fmt.Errorf("record not found: %s", recordID)
-	}
-	var changes []r53Change
-	if target := r53FindSet(sets, name, rec.Type); target == old {
-		values := r53WithValue(r53WithoutValue(old.Values, oldRaw), newRaw)
-		ttl := old.TTL
-		if rec.TTL > 0 {
-			ttl = rec.TTL
-		}
-		changes = append(changes, r53Change{"UPSERT", old.Name, old.Type, ttl, values})
-	} else {
-		// Name or type changed: move the value in one atomic batch.
-		changes = append(changes, r53RemoveValue(old, oldRaw))
-		if target == nil {
-			changes = append(changes, r53Change{"CREATE", name, rec.Type, r53DefaultTTL(rec.TTL), []string{newRaw}})
-		} else if !r53HasValue(target.Values, newRaw) {
-			changes = append(changes, r53Change{"UPSERT", target.Name, target.Type, target.TTL, r53WithValue(target.Values, newRaw)})
-		}
-	}
-	if err := p.submitChanges(zoneID, changes...); err != nil {
 		return nil, err
 	}
 	rec.ID = r53RecordID(name, rec.Type, newRaw)
@@ -285,19 +348,17 @@ func (p *Route53Provider) DeleteRecord(zoneID, recordID string) error {
 	if err != nil {
 		return err
 	}
-	sets, err := p.listRRSets(zoneID)
-	if err != nil {
-		return err
-	}
-	set := r53FindSet(sets, name, typ)
-	if set == nil || (hasValue && !r53HasValue(set.Values, raw)) {
-		return fmt.Errorf("record not found: %s", recordID)
-	}
-	if !hasValue {
-		// Route53 requires DELETE to match the existing TTL and every value.
-		return p.submitChanges(zoneID, r53Change{"DELETE", set.Name, set.Type, set.TTL, set.Values})
-	}
-	return p.submitChanges(zoneID, r53RemoveValue(set, raw))
+	return p.changeSets(zoneID, func(sets []r53RRSet) ([]r53Change, error) {
+		set := r53FindSet(sets, name, typ)
+		if set == nil || (hasValue && !r53HasValue(set.Values, raw)) {
+			return nil, fmt.Errorf("record not found: %s", recordID)
+		}
+		if !hasValue {
+			// Route53 requires DELETE to match the existing TTL and every value.
+			return []r53Change{{"DELETE", set.Name, set.Type, set.TTL, set.Values}}, nil
+		}
+		return r53RemoveValue(set, raw), nil
+	})
 }
 
 type r53Change struct {
@@ -308,14 +369,22 @@ type r53Change struct {
 	Values []string
 }
 
-// r53RemoveValue drops raw from set: an UPSERT of the remaining values, or a
-// DELETE (echoing the current TTL and values) when raw was the last one.
-func r53RemoveValue(set *r53RRSet, raw string) r53Change {
-	rest := r53WithoutValue(set.Values, raw)
-	if len(rest) == 0 {
-		return r53Change{"DELETE", set.Name, set.Type, set.TTL, set.Values}
+// r53RemoveValue drops raw from set, keeping the remaining values.
+func r53RemoveValue(set *r53RRSet, raw string) []r53Change {
+	return r53Replace(set, set.TTL, r53WithoutValue(set.Values, raw))
+}
+
+// r53Replace rewrites set to ttl/values as a DELETE echoing the set exactly as
+// read followed by a CREATE (only the DELETE when no value is left). Route53
+// applies the batch atomically and rejects the DELETE when the set no longer
+// matches, so a concurrent writer's change is never overwritten the way a
+// whole-set UPSERT computed from a stale read overwrote it (F66700).
+func r53Replace(set *r53RRSet, ttl int, values []string) []r53Change {
+	del := r53Change{"DELETE", set.Name, set.Type, set.TTL, set.Values}
+	if len(values) == 0 {
+		return []r53Change{del}
 	}
-	return r53Change{"UPSERT", set.Name, set.Type, set.TTL, rest}
+	return []r53Change{del, {"CREATE", set.Name, set.Type, ttl, values}}
 }
 
 func (p *Route53Provider) submitChanges(zoneID string, changes ...r53Change) error {

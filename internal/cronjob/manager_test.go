@@ -765,7 +765,7 @@ func TestMonitor_Execute_Timeout(t *testing.T) {
 	}
 	// The overlap guard must be released so the next run is not skipped.
 	m.mu.RLock()
-	stillRunning := m.running[m.jobKey("example.com", "sleep 30")]
+	stillRunning := m.running[m.jobKey("example.com", "sleep 30")] != nil
 	m.mu.RUnlock()
 	if stillRunning {
 		t.Error("job still marked running after timeout")
@@ -1936,7 +1936,7 @@ func TestMonitor_Execute_OverlapGuard(t *testing.T) {
 
 	// Simulate the job already running.
 	m.mu.Lock()
-	m.running[key] = true
+	m.running[key] = &runEntry{domain: domain}
 	m.mu.Unlock()
 
 	rec := m.Execute(domain, schedule, command)
