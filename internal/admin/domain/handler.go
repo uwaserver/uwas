@@ -627,11 +627,23 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		// A failed step is reported, not dropped: the cron jobs or the SFTP
 		// account would otherwise outlive the domain with a "deleted" answer
 		// (F63003).
-		if err := cronjob.RemoveByDomain(host); err != nil {
-			cleanupErrs = append(cleanupErrs, "cron jobs: "+err.Error())
+		// Jobs are labelled with the stored host (the dashboard offers it), so
+		// a "www." record reached by its stripped key kept its jobs and
+		// history; both spellings name this one domain (F65400).
+		cronHosts := []string{storedHost}
+		if host != storedHost {
+			cronHosts = append(cronHosts, host)
+		}
+		for _, ch := range cronHosts {
+			if err := cronjob.RemoveByDomain(ch); err != nil {
+				cleanupErrs = append(cleanupErrs, "cron jobs: "+err.Error())
+				break
+			}
 		}
 		if mon := h.deps.CronMonitor(); mon != nil {
-			mon.ClearDomain(host)
+			for _, ch := range cronHosts {
+				mon.ClearDomain(ch)
+			}
 		}
 		// A hostname no account can be named after (a wildcard) has nothing to delete.
 		if err := siteuser.DeleteUser(host); err != nil && !errors.Is(err, siteuser.ErrInvalidInput) {

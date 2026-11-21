@@ -77,7 +77,7 @@ func (m *Manager) StartFPM(version, listenAddr string) error {
 	// two concurrent StartFPM calls for the same version both passed the Load
 	// check and both spawned, leaking one untracked process. The placeholder is
 	// replaced by the real processInfo on success and released on any failure.
-	if _, loaded := m.processes.LoadOrStore(version, &processInfo{listenAddr: listenAddr}); loaded {
+	if _, loaded := m.processes.LoadOrStore(version, &processInfo{listenAddr: listenAddr, starting: true}); loaded {
 		return fmt.Errorf("PHP %s is already running", version)
 	}
 	release := func() { m.processes.Delete(version) }
@@ -103,7 +103,14 @@ func (m *Manager) StartFPM(version, listenAddr string) error {
 		release()
 		return err
 	}
-	cmd := m.execCommand(inst.Binary, "-b", listenAddr)
+	// Load the php.ini GetConfig/SetConfig edit, as domain workers do; without
+	// -c the worker read the binary's compiled default, so a created or
+	// guessed config never took effect (F65600).
+	args := []string{"-b", listenAddr}
+	if inst.ConfigFile != "" {
+		args = append([]string{"-c", inst.ConfigFile}, args...)
+	}
+	cmd := m.execCommand(inst.Binary, args...)
 	applyWorkerIdentity(cmd, ident) // not as UWAS's own (root) identity (F42700)
 	// PHP_FCGI_CHILDREN: spawn N worker children for parallel requests.
 	// Without this, php-cgi handles only 1 request at a time!
@@ -215,7 +222,11 @@ pm.max_requests = 500
 		return fmt.Errorf("write fpm config: %w", err)
 	}
 
-	cmd := m.execCommand(binary, "--fpm-config", confPath, "--nodaemonize")
+	args := []string{"--fpm-config", confPath, "--nodaemonize"}
+	if inst, ok := m.findInstall(version); ok && inst.ConfigFile != "" {
+		args = append([]string{"-c", inst.ConfigFile}, args...) // F65600
+	}
+	cmd := m.execCommand(binary, args...)
 	cmd.Stdout = m.logger.Writer(4)
 	cmd.Stderr = m.logger.Writer(8)
 	setProcessGroup(cmd) // pool children die with the master (F15101)
@@ -273,6 +284,12 @@ func (m *Manager) StopFPM(version string) error {
 	}
 
 	info, ok := val.(*processInfo)
+	if ok && info != nil && info.starting {
+		// StartFPM's reservation, not a stale entry: deleting it reported a
+		// stop while the worker came up anyway and let a second start spawn
+		// an untracked duplicate (F65601).
+		return fmt.Errorf("PHP %s is still starting", version)
+	}
 	if !ok || info == nil || info.cmd == nil || info.cmd.Process == nil {
 		m.processes.Delete(version)
 		m.logger.Warn("stale PHP-CGI process entry removed", "version", version)

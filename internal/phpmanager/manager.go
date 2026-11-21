@@ -64,6 +64,7 @@ type PHPConfig struct {
 type processInfo struct {
 	cmd        *exec.Cmd
 	listenAddr string
+	starting   bool // StartFPM's reservation until the process is stored (F65601)
 }
 
 // DomainPHP describes a per-domain PHP-CGI instance.

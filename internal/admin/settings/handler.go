@@ -315,6 +315,7 @@ func (h *Handler) NotifyPrefsPut(w http.ResponseWriter, r *http.Request) {
 		// maps to the n-th live entry for it. A masked secret with no such
 		// webhook cannot be restored and is rejected.
 		seen := map[string]int{}
+		claimed := map[int]bool{}
 		for i := range req.Webhooks {
 			n := seen[req.Webhooks[i].URL]
 			seen[req.Webhooks[i].URL]++
@@ -327,8 +328,21 @@ func (h *Handler) NotifyPrefsPut(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			restored := false
+			// The mask carries the secret's last four characters: prefer the
+			// live webhook it came from. By ordinal alone, dropping or
+			// reordering one of two webhooks sharing a URL gave the kept one
+			// its neighbour's secret (F65501).
+			mask := strings.TrimSpace(req.Webhooks[i].Secret)
+			for j, old := range g.Webhooks {
+				if old.URL == req.Webhooks[i].URL && !claimed[j] && maskSecret(old.Secret) == mask {
+					req.Webhooks[i].Secret = old.Secret
+					claimed[j] = true
+					restored = true
+					break
+				}
+			}
 			for _, old := range g.Webhooks {
-				if old.URL != req.Webhooks[i].URL {
+				if restored || old.URL != req.Webhooks[i].URL {
 					continue
 				}
 				if n == 0 {
@@ -360,15 +374,18 @@ func (h *Handler) NotifyPrefsPut(w http.ResponseWriter, r *http.Request) {
 	if req.Webhooks != nil {
 		g.Webhooks = req.Webhooks
 	}
+	appliedAlerting, appliedWebhooks := g.Alerting, g.Webhooks
 	h.deps.UnlockConfig()
 	if err := h.deps.PersistConfig(); err != nil {
 		// A failed save must not leave settings active only until restart while
-		// telling the caller they were rejected.
+		// telling the caller they were rejected. A field another request changed
+		// meanwhile is left alone: restoring it wiped that request's change,
+		// which its own later save then dropped from disk too (F65500).
 		h.deps.LockConfig()
-		if alertingChanged {
+		if alertingChanged && reflect.DeepEqual(h.deps.ConfigPtr().Global.Alerting, appliedAlerting) {
 			h.deps.ConfigPtr().Global.Alerting = prevAlerting
 		}
-		if webhooksChanged {
+		if webhooksChanged && reflect.DeepEqual(h.deps.ConfigPtr().Global.Webhooks, appliedWebhooks) {
 			h.deps.ConfigPtr().Global.Webhooks = prevWebhooks
 		}
 		h.deps.UnlockConfig()

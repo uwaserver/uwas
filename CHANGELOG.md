@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PHP: php-cgi/php-fpm `-i` HTML output is parsed, so the real loaded php.ini is found instead of a guessed or newly created one; php.ini `[HOST=]`/`[PATH=]` sections are no longer read or overwritten as global settings (F65000/F65001).
 - App deploy honours the dashboard's `git_branch` field (it deployed the stored or default branch); a failed manual build no longer restarts the live app during rollback, and rollback respects `skip_start` (F64700/F65200/F65201).
 - Install task list is returned in creation order, so paginated `/api/v1/tasks` no longer repeats or skips tasks, and finished tasks are pruned on submit, not only when listed (F64300/F64301).
+- The global PHP worker (php-cgi or php-fpm) now loads the php.ini the dashboard edits, so config saves take effect on builds where UWAS had to locate or create php.ini; stopping or restarting a PHP version while it is still starting is refused instead of reporting success and letting a second start leave an untracked duplicate worker running (F65600/F65601).
+- `DELETE /domains/{host}?cleanup=true` on a `www.` domain removes its cron jobs and cron history, which were looked up under the www-stripped name and kept running (F65400).
+- A failed `PUT /settings/notifications` no longer rolls back a webhook or alerting change another request made meanwhile; a masked webhook secret is restored from the webhook its mask came from, so removing or reordering one of two webhooks with the same URL no longer gives the other the wrong signing secret (F65500/F65501).
 
 ## [0.11.41] - 2026-11-02
 
