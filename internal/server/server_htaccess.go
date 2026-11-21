@@ -56,9 +56,11 @@ func (s *Server) applyRewrites(ctx *router.RequestContext, domain *config.Domain
 	}
 	if result.Modified {
 		ctx.Request.URL.Path = result.URI
-		if result.Query != "" {
-			ctx.Request.URL.RawQuery = result.Query
-		}
+		// result.Query is the query the rewrite leaves: the incoming one,
+		// the substitution's own, or none under [QSD] or a trailing "?".
+		// Applied only when non-empty, the discarded query reached the
+		// rewritten target anyway (F68100).
+		ctx.Request.URL.RawQuery = result.Query
 		ctx.RewrittenURI = result.URI
 	}
 	return false
@@ -400,9 +402,7 @@ func (s *Server) applyLevelRewrites(ctx *router.RequestContext, domain *config.D
 		}
 		if result.Modified && internalRewrite {
 			ctx.Request.URL.Path = result.URI
-			if result.Query != "" {
-				ctx.Request.URL.RawQuery = result.Query
-			}
+			ctx.Request.URL.RawQuery = result.Query // may be emptied (F68100)
 			ctx.RewrittenURI = result.URI
 		}
 	}

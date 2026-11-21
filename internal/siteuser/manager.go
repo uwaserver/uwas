@@ -287,10 +287,15 @@ func validateSiteHostname(hostname string) error {
 // would map onto the same account as the dotted one ("shop.x.com"): one tenant
 // could then adopt, reset or delete another tenant's SFTP account (F11000).
 // Such hostnames, like over-long ones, get a hash of the full hostname.
+//
+// A plain name ending like a hashed one ("-" + 8 hex) is hashed too: spelled
+// to match, "shop.storefront-p-dfb1b877" mapped onto the hashed account of
+// "shop.storefront-production.com" and could delete it with its keys
+// (F68200). Plain and hashed names can no longer coincide.
 func domainToUsername(hostname string) string {
 	lower := strings.ToLower(hostname)
 	name := "uwas-" + strings.ReplaceAll(lower, ".", "--")
-	if len(name) > 32 || strings.Contains(lower, "--") {
+	if len(name) > 32 || strings.Contains(lower, "--") || hasHashSuffix(name) {
 		// Plain truncation collided distinct long hostnames onto one system
 		// user (shared chroot → cross-tenant SFTP access). Keep a truncated
 		// prefix and append a short hash of the full hostname for uniqueness.
@@ -304,8 +309,23 @@ func domainToUsername(hostname string) string {
 	return name
 }
 
+// hasHashSuffix reports whether name ends the way a hashed account name does:
+// "-" followed by 8 lowercase hex digits.
+func hasHashSuffix(name string) bool {
+	if len(name) < 9 || name[len(name)-9] != '-' {
+		return false
+	}
+	for _, c := range name[len(name)-8:] {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // legacyUsername is domainToUsername as it was before hostnames containing
-// "--" were hashed. Accounts created back then keep that name.
+// "--" (or a hash-like ending, F68200) were hashed. Accounts created back then
+// keep that name.
 func legacyUsername(hostname string) string {
 	name := strings.ReplaceAll(strings.ToLower(hostname), ".", "--")
 	name = "uwas-" + name
@@ -317,16 +337,15 @@ func legacyUsername(hostname string) string {
 	return name
 }
 
-// accountName is the system account that belongs to hostname. A hostname with
-// "--" keeps an account created under the legacy name only when that account is
-// recorded as this host's own (its home is domainDir, or its directory is named
-// after the host); the legacy name is shared with the dotted spelling, so an
-// account whose home belongs to another host is never claimed.
+// accountName is the system account that belongs to hostname. A hostname whose
+// name is now hashed ("--", or a hash-like ending) keeps an account created
+// under the legacy name only when that account is recorded as this host's own
+// (its home is domainDir, or its directory is named after the host); the
+// legacy name may be another host's (the dotted spelling, or a hashed name it
+// was spelled to match, F68200), so an account whose home belongs to another
+// host is never claimed.
 func accountName(hostname, domainDir string) string {
 	name := domainToUsername(hostname)
-	if !strings.Contains(strings.ToLower(hostname), "--") {
-		return name
-	}
 	legacy := legacyUsername(hostname)
 	if legacy == name {
 		return name
