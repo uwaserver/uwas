@@ -178,6 +178,11 @@ type Server struct {
 	// every authenticated request reads it via the authmw closures and the
 	// require* helpers. Reads go through getAuthMgr.
 	authMu sync.RWMutex
+
+	// terminal is the web-terminal handler shared by every request, so its
+	// session cap counts all sessions; see terminalHandler (F67502).
+	terminalOnce sync.Once
+	terminal     http.Handler
 }
 
 // AuthManager interface for authentication (implemented by auth.Manager)

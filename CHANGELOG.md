@@ -41,6 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An idle SFTP client no longer keeps UWAS from shutting down: shutdown closes logged-in SFTP sessions instead of waiting for clients to disconnect (F67400).
 - SFTP OPEN, OPENDIR and SETSTAT on a FIFO in a site's tree no longer hang the session and pin an OS thread forever; FIFOs are refused as transfer targets (F67401).
 - The SFTP server refuses SSH subsystems other than `sftp` instead of accepting them and serving nothing (F67402).
+- The web terminal works in the official Docker image: with no `$SHELL` and no bash (alpine) it falls back to `/bin/sh` instead of failing every session with `fork/exec /bin/bash` (F67500).
+- A terminal session ends when its shell exits even if the browser stopped reading, instead of holding its slot and goroutines until the client disconnects (F67501).
+- The web terminal's concurrent-session cap now applies: every request built its own handler, so each session counted against an empty counter (F67502).
+- Listing a FIFO in the file manager no longer hangs the request and pins an OS thread forever; it fails with "not a directory" (F67600).
+- Moving or de-duplicating firewall rules while the autoblocker blocks an IP no longer deletes the wrong rules (such as the IPv6 SSH allow): rule changes are serialized, since ufw renumbers every rule on each insert (F67700).
 - A failed `PUT /settings/notifications` no longer rolls back a webhook or alerting change another request made meanwhile; a masked webhook secret is restored from the webhook its mask came from, so removing or reordering one of two webhooks with the same URL no longer gives the other the wrong signing secret (F65500/F65501).
 
 ## [0.11.41] - 2026-11-02

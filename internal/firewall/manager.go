@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 var (
@@ -16,6 +17,27 @@ var (
 	execCommandFn  = exec.Command
 	execLookPathFn = exec.LookPath
 )
+
+// rulesMu serializes this process's firewall rule changes. MoveRule and
+// DeduplicateRules delete by the rule numbers `ufw status` showed a moment
+// earlier, and the autoblocker's BlockIP inserts at position 1, renumbering
+// every rule: landing in between, it made them delete the wrong rules — an
+// SSH allow among them (F67700). Exported entry points take it; the unexported
+// helpers they share assume it is held.
+var rulesMu sync.Mutex
+
+// testRulesLockContended, when set by a test, runs when lockRules must wait.
+var testRulesLockContended func()
+
+func lockRules() {
+	if rulesMu.TryLock() {
+		return
+	}
+	if testRulesLockContended != nil {
+		testRulesLockContended()
+	}
+	rulesMu.Lock()
+}
 
 // ErrInvalidRule marks a rejection caused by the values in the request (bad
 // port, protocol, source, action, direction, a protected port) as opposed to a
@@ -391,6 +413,12 @@ func DenyPortFrom(port, proto, from string) error {
 
 // DeleteRule removes a rule by number.
 func DeleteRule(number int) error {
+	lockRules()
+	defer rulesMu.Unlock()
+	return deleteRule(number)
+}
+
+func deleteRule(number int) error {
 	if _, err := execLookPathFn("ufw"); err != nil {
 		return fmt.Errorf("ufw not installed")
 	}

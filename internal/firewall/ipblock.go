@@ -56,6 +56,8 @@ func backend() string {
 // order and stops at the first match, so a deny appended after the existing
 // "ALLOW 443/tcp" would never be reached.
 func BlockIP(ip, comment string) error {
+	lockRules()
+	defer rulesMu.Unlock()
 	a, err := validateBlockIP(ip)
 	if err != nil {
 		return err
@@ -90,6 +92,8 @@ func BlockIP(ip, comment string) error {
 // an error: expiry runs on a timer and may fire after an operator has already
 // cleared the rule by hand.
 func UnblockIP(ip string) error {
+	lockRules()
+	defer rulesMu.Unlock()
 	a, err := validateBlockIP(ip)
 	if err != nil {
 		return err

@@ -16,12 +16,22 @@ import (
 	"unsafe"
 )
 
+// defaultShell picks the session shell: $SHELL, else bash, else the POSIX sh
+// every Linux system has. The official image runs on alpine with neither
+// $SHELL nor /bin/bash, so a hardcoded /bin/bash made every web terminal
+// session fail with "fork/exec /bin/bash: no such file or directory" (F67500).
 func defaultShell() string {
 	if s := os.Getenv("SHELL"); s != "" {
 		return s
 	}
-	return "/bin/bash"
+	if _, err := os.Stat(bashPath); err == nil {
+		return bashPath
+	}
+	return "/bin/sh"
 }
+
+// bashPath is the preferred shell when $SHELL is unset (a var for tests).
+var bashPath = "/bin/bash"
 
 // hangupGrace is how long a shell gets to exit on SIGHUP after the client has
 // disconnected before it is killed. A var so tests can shorten it.

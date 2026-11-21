@@ -63,7 +63,10 @@ func List(baseDir, relPath string) ([]Entry, error) {
 		return nil, err
 	}
 	defer root.Close()
-	dir, err := root.Open(rel)
+	// O_NONBLOCK, as in ReadFile: a FIFO named as the directory blocked
+	// open(2), and the request and its OS thread with it, until a writer
+	// appeared (F67600). ReadDir then refuses the non-directory.
+	dir, err := root.OpenFile(rel, os.O_RDONLY|nonBlockFlag, 0)
 	if err != nil {
 		return nil, err
 	}

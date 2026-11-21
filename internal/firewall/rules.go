@@ -163,6 +163,8 @@ func hasDefaultDeny(rules []Rule) bool {
 // EnsureDefaultDenyAtBottom appends a numbered `deny from any to any` when the
 // IPv4 default deny is missing (exported so the admin status handler can heal).
 func EnsureDefaultDenyAtBottom() error {
+	lockRules()
+	defer rulesMu.Unlock()
 	return ensureDefaultDenyAtBottom()
 }
 
@@ -185,7 +187,7 @@ func ensureDefaultDenyAtBottom() error {
 		return fmt.Errorf("firewall rule failed")
 	}
 	// Adding deny any/any may recreate a v6 twin that already existed alone.
-	DeduplicateRules()
+	deduplicateRules()
 	return nil
 }
 
@@ -193,6 +195,8 @@ func ensureDefaultDenyAtBottom() error {
 // port-deny so "allows above denies" holds; denies are appended (default deny
 // stays at the bottom when added last on enable).
 func addPortRule(action, port, proto, from string) error {
+	lockRules()
+	defer rulesMu.Unlock()
 	if _, err := execLookPathFn("ufw"); err != nil {
 		return fmt.Errorf("ufw not installed")
 	}
@@ -300,6 +304,8 @@ func logicalIPv4Rules(rules []Rule) []Rule {
 // existing rule") with exit 0. The old insert-then-delete approach then deleted
 // the next rule — often the default DENY. We delete-first, then insert.
 func MoveRule(number int, direction string) error {
+	lockRules()
+	defer rulesMu.Unlock()
 	if _, err := execLookPathFn("ufw"); err != nil {
 		return fmt.Errorf("ufw not installed")
 	}
@@ -432,6 +438,12 @@ func restoreMovedRule(pos int, args []string, cause error) error {
 // DeduplicateRules removes duplicate rules for the same action/port/proto/from/v6
 // (keeps the lowest number). Used around enable so re-enabling cannot stack copies.
 func DeduplicateRules() {
+	lockRules()
+	defer rulesMu.Unlock()
+	deduplicateRules()
+}
+
+func deduplicateRules() {
 	st := getUFWStatus()
 	seen := map[string]int{}
 	var toDelete []int
@@ -448,7 +460,7 @@ func DeduplicateRules() {
 		seen[key] = r.Number
 	}
 	for i := len(toDelete) - 1; i >= 0; i-- {
-		_ = DeleteRule(toDelete[i])
+		_ = deleteRule(toDelete[i])
 	}
 }
 

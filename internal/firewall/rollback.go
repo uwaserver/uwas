@@ -50,7 +50,7 @@ func EnableWithRollback(within time.Duration, allowPorts []string) error {
 
 	_ = execCommandFn("ufw", "default", "deny", "incoming").Run()
 	_ = execCommandFn("ufw", "default", "allow", "outgoing").Run()
-	_ = ensureDefaultDenyAtBottom()
+	_ = EnsureDefaultDenyAtBottom()
 
 	if err := Enable(); err != nil {
 		return err

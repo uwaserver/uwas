@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/logger"
 )
@@ -298,7 +299,18 @@ func (c *WSConn) WriteText(data []byte) error {
 	return err
 }
 
+// closeWriteTimeout bounds how long Close may spend writing: see Close.
+const closeWriteTimeout = 2 * time.Second
+
 func (c *WSConn) Close() error {
+	// The PTY->WS pump holds wmu while it writes, and to a client that has
+	// stopped reading that write never returns. Close waiting for wmu could
+	// then never close the socket, so a session outlived its exited shell for
+	// as long as the client kept the connection open (F67501). A write
+	// deadline ends the pump's write and bounds this close frame.
+	if d, ok := c.rwc.(interface{ SetWriteDeadline(time.Time) error }); ok {
+		_ = d.SetWriteDeadline(time.Now().Add(closeWriteTimeout))
+	}
 	c.wmu.Lock()
 	c.writer.Write([]byte{0x88, 0x00}) // close frame
 	c.wmu.Unlock()
