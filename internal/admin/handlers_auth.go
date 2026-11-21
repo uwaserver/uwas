@@ -388,6 +388,20 @@ func (s *Server) ensureAuthManagerFromConfig() {
 	}
 }
 
+// ApplyAuthSettings pushes a reloaded config's api_key and users.* switches to
+// the live auth manager. The server refreshed only the manager it built at
+// startup; one built here lazily (users enabled at runtime) kept a rotated-out
+// key valid after a reload (F66400).
+func (s *Server) ApplyAuthSettings(apiKey string, allowLegacyPlaintext bool, sessionTTL int) {
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+	if mgr, ok := s.authMgr.(*auth.Manager); ok {
+		mgr.SetAllowLegacyPlaintextKey(allowLegacyPlaintext)
+		mgr.SetGlobalAPIKey(apiKey)
+		mgr.SetSessionTTL(sessionTTL)
+	}
+}
+
 // ── 2FA / TOTP ──────────────────────────────────────────────────────────────
 
 func (s *Server) handle2FAStatus(w http.ResponseWriter, r *http.Request) {

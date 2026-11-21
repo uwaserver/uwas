@@ -1600,6 +1600,10 @@ func (s *Server) shutdown() {
 				}
 			}
 		}
+		// The per-version workers started from the dashboard (StartFPM) run in
+		// their own process group, so outside a cgroup kill they outlived UWAS,
+		// untracked, still holding their listen address (F66300).
+		s.phpMgr.StopAll()
 		s.logger.Info("all PHP processes stopped")
 	}
 

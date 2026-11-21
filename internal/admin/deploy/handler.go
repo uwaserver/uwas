@@ -739,11 +739,15 @@ func (h *Handler) runWebhookDeploy(name, ref string) {
 		status.CommitSHA = strings.TrimSpace(sha)
 	}
 
-	if err := h.deps.AppCompleteDeploy(name, def, false, def.Deploy.HealthPath); err != nil {
+	// An app the operator stopped stays stopped until the operator starts it:
+	// the push deploys its code but must not clear Disabled and start it
+	// (F66501).
+	keepStopped := def.Disabled
+	if err := h.deps.AppCompleteDeploy(name, def, keepStopped, def.Deploy.HealthPath); err != nil {
 		status.OK = false
 		status.Error = err.Error()
 		if rollbackSHA != "" {
-			status.RolledBack, status.RollbackSHA, status.RollbackNote = h.deps.AppRollback(ctx, name, def, rollbackSHA, def.Deploy, cloneStringMap(def.Env.Map()), true, logBuf)
+			status.RolledBack, status.RollbackSHA, status.RollbackNote = h.deps.AppRollback(ctx, name, def, rollbackSHA, def.Deploy, cloneStringMap(def.Env.Map()), !keepStopped, logBuf)
 		}
 		status.LogTail = tailString(logBuf.String(), 4096)
 		status.Finished = time.Now()

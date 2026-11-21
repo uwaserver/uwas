@@ -83,6 +83,12 @@ func (s *Server) reload() error {
 		s.authMgr.SetAllowLegacyPlaintextKey(newCfg.Global.Users.AllowLegacyPlaintextAPIKey)
 		s.authMgr.SetSessionTTL(newCfg.Global.Users.SessionTTL)
 	}
+	// The admin API builds its own manager when users are enabled at runtime;
+	// s.authMgr stays nil then, and that live manager kept the old key (F66400).
+	if s.admin != nil {
+		u := newCfg.Global.Users
+		s.admin.ApplyAuthSettings(newCfg.Global.Admin.APIKey, u.AllowLegacyPlaintextAPIKey, u.SessionTTL)
+	}
 
 	// The alerter was built from the startup alerting settings; apply the new
 	// ones so a changed destination or an enabled/disabled toggle takes effect

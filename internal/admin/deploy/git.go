@@ -579,7 +579,13 @@ func probeAppHealth(def *apps.App, path string) error {
 	if path == "" {
 		return nil
 	}
-	client := &http.Client{Timeout: 3 * time.Second}
+	// A 3xx passes as documented; following it judged the redirect target
+	// instead (https on the plain port, an unreachable public/login host)
+	// and failed a healthy deploy (F66500).
+	client := &http.Client{
+		Timeout:       3 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 	addr := fmt.Sprintf("127.0.0.1:%d", def.Port)
 	url := fmt.Sprintf("http://%s%s", addr, path)
 	resp, err := client.Get(url)
