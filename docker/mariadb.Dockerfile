@@ -19,8 +19,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libssl3t64=3.0.13-0ubuntu3.16 \
         openssl=3.0.13-0ubuntu3.16 \
-    && apt-get install -y --no-install-recommends --only-upgrade \
-        apt libapt-pkg6.0t64 \
+        apt=2.8.4ubuntu0.1 \
+        libapt-pkg6.0t64=2.8.4ubuntu0.1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=gosu-builder --chmod=0755 /go/bin/gosu /usr/local/bin/gosu
