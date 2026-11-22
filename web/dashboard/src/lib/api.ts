@@ -885,9 +885,14 @@ export const firewallAllow = (port: string, proto?: string, from?: string) =>
   api<{ status: string }>('/api/v1/firewall/allow', { method: 'POST', body: JSON.stringify({ port, proto, from: from || undefined }) });
 export const firewallDeny = (port: string, proto?: string, from?: string) =>
   api<{ status: string }>('/api/v1/firewall/deny', { method: 'POST', body: JSON.stringify({ port, proto, from: from || undefined }) });
-export const firewallDeleteRule = (number: number) => api<{ status: string }>(`/api/v1/firewall/${number}`, { method: 'DELETE' });
-export const firewallMoveRule = (number: number, direction: 'up' | 'down') =>
-  api<{ status: string }>(`/api/v1/firewall/${number}/move`, { method: 'POST', body: JSON.stringify({ direction }) });
+// `expect` is the rule as listed at that number: rule numbers are positions
+// that shift on every insert (the autoblocker inserts at 1), so the server
+// refuses with 409 when another rule holds the number by the time the request
+// arrives (F68500, F68501).
+export const firewallDeleteRule = (number: number, expect?: FirewallRule) =>
+  api<{ status: string }>(`/api/v1/firewall/${number}`, { method: 'DELETE', ...(expect ? { body: JSON.stringify({ expect }) } : {}) });
+export const firewallMoveRule = (number: number, direction: 'up' | 'down', expect?: FirewallRule) =>
+  api<{ status: string }>(`/api/v1/firewall/${number}/move`, { method: 'POST', body: JSON.stringify({ direction, expect }) });
 export const firewallEnable = () => api<{ status: string; rollback_seconds?: number; allowed_ports?: string[] }>('/api/v1/firewall/enable', { method: 'POST' });
 export const firewallConfirm = () => api<{ status: string; was_pending: boolean }>('/api/v1/firewall/confirm', { method: 'POST' });
 export const firewallDisable = () => api<{ status: string }>('/api/v1/firewall/disable', { method: 'POST' });

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/mcp"
 )
 
 // reload re-reads and applies the config file.
@@ -164,6 +165,10 @@ func (s *Server) reload() error {
 	if s.admin != nil {
 		s.admin.SetAuditRecordIP(newCfg.Global.Audit.RecordIP)
 	}
+	// global.mcp.enabled was read once in New: a disabled MCP kept answering
+	// /api/v1/mcp/* and an enabled one kept answering 503 until restart
+	// (F68400). Applied under the admin config lock the handlers read it under.
+	s.applyMCPEnabled(newCfg.Global.MCP.Enabled)
 	// The live config now shares newCfg's Domains array, which admin writers
 	// change in place, so copy what pruneDomainStats needs before unlocking.
 	liveDomains := append([]config.Domain(nil), newCfg.Domains...)
@@ -191,4 +196,25 @@ func (s *Server) reload() error {
 
 	s.logger.Info("config reloaded", "domains", len(newCfg.Domains))
 	return nil
+}
+
+// applyMCPEnabled builds the MCP server on first enable (it reads the live
+// config, so it survives reloads) and hands it to the admin API, or withdraws
+// it so the MCP endpoints answer 503. After startup the caller holds the admin
+// config write lock (reload).
+func (s *Server) applyMCPEnabled(enabled bool) {
+	if enabled && s.mcp == nil {
+		s.mcp = mcp.New(s.config, s.logger, s.metrics)
+		if s.cache != nil {
+			s.mcp.SetCache(s.cache)
+		}
+	}
+	if s.admin == nil {
+		return
+	}
+	if enabled {
+		s.admin.SetMCP(s.mcp)
+	} else {
+		s.admin.SetMCP(nil)
+	}
 }

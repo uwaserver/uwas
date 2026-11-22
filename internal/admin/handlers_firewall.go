@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -26,6 +27,11 @@ var (
 
 	firewallEnableWithRollback = firewall.EnableWithRollback
 	firewallConfirmEnable      = firewall.ConfirmEnable
+
+	// Reached only when a delete/move request names the rule it expects;
+	// tests that send one put a fake ufw first on PATH.
+	firewallDeleteRuleExpecting = firewall.DeleteRuleExpecting
+	firewallMoveRuleExpecting   = firewall.MoveRuleExpecting
 )
 
 // firewallRollbackWindow is how long after enabling ufw the panel has to
@@ -116,6 +122,9 @@ func firewallErrStatus(err error) int {
 	if errors.Is(err, firewall.ErrInvalidRule) {
 		return http.StatusBadRequest
 	}
+	if errors.Is(err, firewall.ErrRuleChanged) {
+		return http.StatusConflict
+	}
 	return http.StatusInternalServerError
 }
 
@@ -193,12 +202,21 @@ func (s *Server) handleFirewallMove(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Direction string `json:"direction"`
+		// Expect is the rule as GET /api/v1/firewall listed it at number.
+		// Numbers are positions that shift on every insert (the autoblocker
+		// inserts at 1), so the move is refused with 409 unless the rule
+		// there is still this one (F68501). Omitted, the number alone counts.
+		Expect *firewall.Rule `json:"expect"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := firewallMoveRule(num, req.Direction); err != nil {
+	move := func() error { return firewallMoveRule(num, req.Direction) }
+	if req.Expect != nil {
+		move = func() error { return firewallMoveRuleExpecting(num, req.Direction, *req.Expect) }
+	}
+	if err := move(); err != nil {
 		s.recordAuditR(r, "firewall.move", "rule "+numStr+" "+req.Direction+": "+err.Error(), false)
 		jsonError(w, err.Error(), firewallErrStatus(err))
 		return
@@ -221,9 +239,29 @@ func (s *Server) handleFirewallDelete(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid rule number", http.StatusBadRequest)
 		return
 	}
-	if err := firewallDeleteRule(num); err != nil {
+	// An optional body {"expect": <rule as listed>} makes the delete refuse
+	// with 409 when another rule holds that number by now: positions shift on
+	// every insert, and the autoblocker inserts at 1 — a stale number deleted
+	// whatever rule had moved there, the SSH allow among them (F68500).
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Expect *firewall.Rule `json:"expect"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	del := func() error { return firewallDeleteRule(num) }
+	if req.Expect != nil {
+		del = func() error { return firewallDeleteRuleExpecting(num, *req.Expect) }
+	}
+	if err := del(); err != nil {
 		s.recordAuditR(r, "firewall.delete", "rule "+numStr+": "+err.Error(), false)
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		status := http.StatusInternalServerError
+		if errors.Is(err, firewall.ErrRuleChanged) {
+			status = http.StatusConflict
+		}
+		jsonError(w, err.Error(), status)
 		return
 	}
 	s.recordAuditR(r, "firewall.delete", "rule "+numStr, true)

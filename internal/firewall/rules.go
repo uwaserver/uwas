@@ -306,6 +306,19 @@ func logicalIPv4Rules(rules []Rule) []Rule {
 func MoveRule(number int, direction string) error {
 	lockRules()
 	defer rulesMu.Unlock()
+	return moveRule(number, direction, nil)
+}
+
+// MoveRuleExpecting is MoveRule that refuses with ErrRuleChanged unless rule
+// number is still want, checked against the same status read the move uses
+// (see DeleteRuleExpecting; F68501).
+func MoveRuleExpecting(number int, direction string, want Rule) error {
+	lockRules()
+	defer rulesMu.Unlock()
+	return moveRule(number, direction, &want)
+}
+
+func moveRule(number int, direction string, want *Rule) error {
 	if _, err := execLookPathFn("ufw"); err != nil {
 		return fmt.Errorf("ufw not installed")
 	}
@@ -318,6 +331,11 @@ func MoveRule(number int, direction string) error {
 	}
 
 	st := getUFWStatus()
+	if want != nil {
+		if err := ruleAt(st.Rules, number, *want); err != nil {
+			return err
+		}
+	}
 	logical := logicalIPv4Rules(st.Rules)
 
 	idx := -1

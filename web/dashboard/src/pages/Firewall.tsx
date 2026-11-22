@@ -229,7 +229,7 @@ export default function Firewall() {
         await load();
         return;
       }
-      await firewallDeleteRule(num);
+      await firewallDeleteRule(num, freshRule);
       setConfirmDelete(null);
       setStatus(`Rule #${num} deleted.`);
       await load();
@@ -256,7 +256,7 @@ export default function Firewall() {
         await load();
         return;
       }
-      await firewallMoveRule(num, direction);
+      await firewallMoveRule(num, direction, freshRule);
       await load();
     } catch (e) {
       setError((e as Error).message);

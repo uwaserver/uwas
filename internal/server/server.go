@@ -675,15 +675,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 	}
 
 	// MCP server
-	if cfg.Global.MCP.Enabled {
-		s.mcp = mcp.New(cfg, log, m)
-		if cacheEngine != nil {
-			s.mcp.SetCache(cacheEngine)
-		}
-		if s.admin != nil {
-			s.admin.SetMCP(s.mcp)
-		}
-	}
+	s.applyMCPEnabled(cfg.Global.MCP.Enabled)
 
 	// Proxy pools per domain
 	for _, d := range cfg.Domains {
@@ -909,7 +901,15 @@ func (s *Server) SetConfigPath(path string) {
 			dumps := make(map[string][]byte)
 			var failed []error
 			for _, c := range containers {
-				if !c.Running || c.Engine == database.EnginePostgreSQL {
+				if c.Engine == database.EnginePostgreSQL {
+					continue
+				}
+				// A stopped container cannot be dumped. Skipped silently, the
+				// backup counted as complete and retention pruned the older
+				// one still holding its databases (F68401, as F64600).
+				if !c.Running {
+					s.logger.Warn("backup: docker DB container not running, its databases are not in this backup", "container", c.Name)
+					failed = append(failed, fmt.Errorf("%s: container not running", c.Name))
 					continue
 				}
 				shortName := strings.TrimPrefix(c.Name, "uwas-db-")

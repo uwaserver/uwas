@@ -418,6 +418,49 @@ func DeleteRule(number int) error {
 	return deleteRule(number)
 }
 
+// ErrRuleChanged marks a delete or move refused because the rule at the given
+// number is no longer the one the caller identified (F68500, F68501).
+var ErrRuleChanged = errors.New("firewall rule changed")
+
+// DeleteRuleExpecting removes rule number only while it is still want (a rule
+// as GetStatus listed it). Numbers are list positions that every insert —
+// BlockIP inserts at 1 — shifts, so a number read in an earlier request can
+// name another rule by now; the check and the delete run under the rule lock.
+func DeleteRuleExpecting(number int, want Rule) error {
+	lockRules()
+	defer rulesMu.Unlock()
+	if _, err := execLookPathFn("ufw"); err != nil {
+		return fmt.Errorf("ufw not installed")
+	}
+	if err := ruleAt(getUFWStatus().Rules, number, want); err != nil {
+		return err
+	}
+	return deleteRule(number)
+}
+
+// ruleAt returns nil when rules lists want at number, else ErrRuleChanged.
+func ruleAt(rules []Rule, number int, want Rule) error {
+	for _, r := range rules {
+		if r.Number == number {
+			if sameListedRule(r, want) {
+				return nil
+			}
+			break
+		}
+	}
+	return fmt.Errorf("%w: rule #%d is no longer the rule you selected — reload the list and try again", ErrRuleChanged, number)
+}
+
+// sameListedRule compares the fields GetStatus reports for a rule.
+func sameListedRule(a, b Rule) bool {
+	return strings.EqualFold(a.Action, b.Action) &&
+		normalizePort(a.Port) == normalizePort(b.Port) &&
+		strings.EqualFold(a.Proto, b.Proto) &&
+		normalizeFrom(a.From) == normalizeFrom(b.From) &&
+		strings.TrimSpace(a.To) == strings.TrimSpace(b.To) &&
+		a.V6 == b.V6
+}
+
 func deleteRule(number int) error {
 	if _, err := execLookPathFn("ufw"); err != nil {
 		return fmt.Errorf("ufw not installed")

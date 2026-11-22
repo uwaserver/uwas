@@ -103,7 +103,7 @@ describe('Firewall delete verifies the rule number before deleting', () => {
     await flush();
     await deleteFirstRow();
 
-    expect(apiMocks.firewallDeleteRule).toHaveBeenCalledWith(1);
+    expect(apiMocks.firewallDeleteRule).toHaveBeenCalledWith(1, RULE_ALLOW_22);
   });
 });
 
@@ -170,6 +170,6 @@ describe('Firewall move verifies the rule number before moving', () => {
     await flush();
     await moveUpSecondRow();
 
-    expect(apiMocks.firewallMoveRule).toHaveBeenCalledWith(2, 'up');
+    expect(apiMocks.firewallMoveRule).toHaveBeenCalledWith(2, 'up', RULE_DENY_80);
   });
 });

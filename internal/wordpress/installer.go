@@ -506,6 +506,16 @@ func downloadAndExtract(webRoot string, log *strings.Builder) error {
 	if err != nil {
 		return fmt.Errorf("extract WordPress: read wordpress directory: %w", err)
 	}
+	// Refuse before moving anything. rename(2) replaces a file but fails on a
+	// non-empty directory (or a file/directory mismatch), and the entries moved
+	// before that failure stayed: the web root's index.php was replaced and
+	// wp-admin moved in when the install reported failure, and every retry then
+	// failed on wp-admin (F68601).
+	for _, entry := range entries {
+		if err := moveConflict(webRoot, entry); err != nil {
+			return err
+		}
+	}
 	for _, entry := range entries {
 		src := filepath.Join(extractedDir, entry.Name())
 		dst := filepath.Join(webRoot, entry.Name())
@@ -518,6 +528,25 @@ func downloadAndExtract(webRoot string, log *strings.Builder) error {
 	log.WriteString(fmt.Sprintf("Extracted to %s\n", webRoot))
 
 	return nil
+}
+
+// moveConflict reports why entry cannot be renamed into webRoot, or nil when
+// the rename will succeed: nothing is there, or a file replaces a file (or a
+// symlink, which rename replaces rather than follows). os.Rename refuses any
+// existing directory as the destination, empty or not.
+func moveConflict(webRoot string, entry os.DirEntry) error {
+	dst := filepath.Join(webRoot, entry.Name())
+	fi, err := os.Lstat(dst)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("extract WordPress: inspect %s: %w", dst, err)
+	}
+	if !entry.IsDir() && !fi.IsDir() {
+		return nil
+	}
+	return fmt.Errorf("extract WordPress: %s already exists in %s; move it aside and retry (nothing was changed)", entry.Name(), webRoot)
 }
 
 func generateWPConfig(webRoot, dbName, dbUser, dbPass, dbHost string) error {
@@ -950,13 +979,55 @@ func checkPermissions(webRoot string) PermissionsReport {
 		}
 	}
 
-	// Check if wp-content is writable
-	testFile := filepath.Join(webRoot, "wp-content", ".uwas-write-test")
-	if err := osWriteFileFn(testFile, []byte("test"), 0644); err == nil {
-		os.Remove(testFile)
-		r.Writable = true
-	}
+	r.Writable = phpCanWrite(filepath.Join(webRoot, "wp-content"))
 	return r
+}
+
+// phpIdentityFn is the account PHP workers run as: the web account for a root
+// UWAS (phpmanager's fpmPoolUser rule), UWAS's own (nil) otherwise.
+// Overridable in tests.
+var phpIdentityFn = func() (*runIdentity, error) {
+	if os.Geteuid() != 0 {
+		return nil, nil
+	}
+	return webAccountIdentity()
+}
+
+// phpCanWrite reports whether PHP can create files in dir. A test write by UWAS
+// answers that only when PHP runs as UWAS: a root UWAS writes anywhere, so a
+// wp-content the web account cannot write was reported writable and the
+// dashboard's hint pointed away from the cause of failing uploads and plugin
+// installs (F68600). For a root UWAS the web account's access is read from the
+// directory's owner and mode instead, and nothing is written.
+func phpCanWrite(dir string) bool {
+	id, err := phpIdentityFn()
+	if err != nil {
+		return false
+	}
+	if id == nil {
+		testFile := filepath.Join(dir, ".uwas-write-test")
+		if err := osWriteFileFn(testFile, []byte("test"), 0644); err != nil {
+			return false
+		}
+		os.Remove(testFile)
+		return true
+	}
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	uid, gid, ok := pathOwner(dir)
+	if !ok {
+		return false
+	}
+	need := os.FileMode(0o003) // write + search for others
+	switch {
+	case id.uid == uid:
+		need = 0o300
+	case id.gid == gid:
+		need = 0o030
+	}
+	return info.Mode().Perm()&need == need
 }
 
 func permString(path string) string {
