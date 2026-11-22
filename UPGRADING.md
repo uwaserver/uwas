@@ -5,6 +5,12 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.43
+
+Security release (dependency and container-image updates only); drop-in binary, no config or data migration, no behavior changes. Docker users should rebuild or pull fresh images.
+
+---
+
 ## Upgrading to v0.11.42
 
 Security release; drop-in binary, no config or data migration. Behavior changes worth knowing:

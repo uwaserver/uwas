@@ -12,12 +12,15 @@ RUN CGO_ENABLED=0 GOARCH=$TARGETARCH GOOS=$TARGETOS \
 FROM mariadb:11@sha256:efb4959ef2c835cd735dbc388eb9ad6aab0c78dd64febcd51bc17481111890c4
 
 # The base image ships openssl 3.0.13-0ubuntu3.11; Trivy flags
-# CVE-2026-84782 (HIGH). Pull the security-pocket fix while keeping the
-# digest-pinned MariaDB layers for everything else.
+# CVE-2026-84782 (HIGH), and apt 2.8.3 CVE-2026-109518 (HIGH). Pull the
+# security-pocket fixes while keeping the digest-pinned MariaDB layers for
+# everything else.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libssl3t64=3.0.13-0ubuntu3.16 \
         openssl=3.0.13-0ubuntu3.16 \
+    && apt-get install -y --no-install-recommends --only-upgrade \
+        apt libapt-pkg6.0t64 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=gosu-builder --chmod=0755 /go/bin/gosu /usr/local/bin/gosu

@@ -24,7 +24,7 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.11.42)
+## Current Snapshot (v0.11.43)
 
 - **Dashboard pages:** 42 (`web/dashboard/src/pages`; `settingsSections.tsx` lives there too but is section definitions, not a page)
 - **Admin API routes:** 254+ explicit route registrations in `internal/admin/routes.go` under `/api/v1` plus dashboard/static handlers
@@ -33,6 +33,8 @@ One binary. Zero hassle.
 - **Test status:** all gates pass — `go build`, `go vet`, `staticcheck`, `go test`, `go test -race`, dashboard npm build; CI runs additional `govulncheck`, shellcheck, installer tests, Docker Compose validation, and docs/site builds
 - **Security/stability fixes:** v0.11.29 hardens against request floods (async logging, rate-limited redirects, cache bypass fix) and moves to Go 1.26.9 for HTTP/2 DoS fixes
 - **Security posture:** risk score 2.1/10 (Low) per July 2026 reassessment
+
+**v0.11.43 highlights (security release):** `golang.org/x/net` v0.62.0 (CVE-2026-78661) and fixed Alpine/Ubuntu packages in all Docker images (musl, zlib, libxml2, libexpat, MariaDB client, apt), so the image scan is clean again.
 
 **v0.11.42 highlights (security release, evidence-audit rounds 199–214):**
 - Tenant isolation: a re-added hostname no longer inherits the previous owner's analytics, metrics, cron history or cache entries; a crafted hostname can no longer map onto another site's SFTP account; creating a database with an existing name no longer grants access to the other site's schema

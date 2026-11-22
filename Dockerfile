@@ -32,7 +32,10 @@ RUN apk add --no-cache --upgrade \
     "libcap>=2.78-r0" \
     "tzdata>=2026e-r0" \
     "libcrypto3>=3.5.8-r0" \
-    "libssl3>=3.5.8-r0"
+    "libssl3>=3.5.8-r0" \
+    "musl>=1.2.6-r3" \
+    "musl-utils>=1.2.6-r3" \
+    "zlib>=1.3.2-r1"
 
 COPY --from=builder /uwas /usr/local/bin/uwas
 

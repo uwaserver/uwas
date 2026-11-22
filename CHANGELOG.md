@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.43] - 2026-11-22
+
+### Security
+
+- `golang.org/x/net` v0.62.0 (CVE-2026-78661, `x/net/html` denial of service), with `x/crypto` v0.58.0, `x/sync` v0.24.0, `x/sys` v0.49.0 and `x/text` v0.43.0.
+- Docker images pull fixed Alpine/Ubuntu packages flagged HIGH by Trivy: `musl` 1.2.6-r3 (CVE-2026-107891) and `zlib` 1.3.2-r1 (CVE-2026-85091) in the UWAS image; additionally `libxml2` 2.13.9-r3 (CVE-2026-86144) in the PHP images, `libexpat` 2.10.0-r0 (CVE-2026-113351) and MariaDB client 11.8.10-r0 (CVE-2026-101679) in the WordPress example images, and `apt` (CVE-2026-109518) in the MariaDB image.
+
 ## [0.11.42] - 2026-11-22
 
 ### Security
