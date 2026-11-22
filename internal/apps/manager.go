@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
@@ -192,7 +193,7 @@ func (m *Manager) Store() *Store { return m.store }
 // memory. Already-registered apps are refreshed (re-pointed at the new
 // on-disk snapshot) but NOT auto-restarted — callers that want to
 // pick up command/port edits on a running app must call Restart
-// explicitly after Save.
+// explicitly after Save; the next Start applies them (F68801).
 //
 // Returned slice contains any per-file load errors (corrupt YAML,
 // invalid schema, name mismatch). A non-nil error in the third return
@@ -245,13 +246,22 @@ func (m *Manager) Register(a *App) error {
 		return err
 	}
 
+	// Stop the old process before swapping, with its grace window outside
+	// m.mu as Stop does: under the lock it stalled every proxied request to
+	// every app until the old process exited (F68800). While it winds down it
+	// stays registered and running, so a Start in between is refused.
+	m.mu.Lock()
+	existing := m.procs[a.Name]
+	m.mu.Unlock()
+	if existing != nil {
+		_ = m.stop(existing)
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if existing, ok := m.procs[a.Name]; ok {
-		// Stop the old process before swapping. Use the package's stop
-		// machinery so monitor goroutine winds down cleanly.
-		m.stopLocked(existing)
+	if current, ok := m.procs[a.Name]; ok {
+		m.stopLocked(current) // already down unless restarted meanwhile
 		delete(m.procs, a.Name)
 	}
 	m.registerLocked(a)
@@ -314,6 +324,56 @@ func (m *Manager) registerLocked(a *App) {
 	}
 }
 
+// applyDefinitionLocked re-derives what a run is started from (command, env,
+// work dir, runtime, auto-restart, port) from p.app. LoadAll re-points p.app
+// at the reloaded file but these were resolved only at registration, so an
+// apps.d edit never reached a Restart — the app kept its old command, env and
+// port until UWAS itself restarted (F68801). A requested port another app
+// exposes is refused, keeping the current one, as registerLocked does. Caller
+// holds m.mu for writing and p is not running.
+func (m *Manager) applyDefinitionLocked(p *process) {
+	a := p.app
+	if a == nil {
+		return
+	}
+	cmd := a.Command
+	if a.Runtime != RuntimeDocker && cmd == "" {
+		cmd = detectCommand(string(a.Runtime), a.WorkDir)
+	}
+	// Written only when changed: the docker path reads these without m.mu,
+	// so an unchanged definition must not rewrite them under a racing start.
+	if p.runtimeKind != a.Runtime {
+		p.runtimeKind = a.Runtime
+	}
+	if p.command != cmd {
+		p.command = cmd
+	}
+	if p.workDir != a.WorkDir {
+		p.workDir = a.WorkDir
+	}
+	if env := a.Env.Map(); !maps.Equal(p.env, env) {
+		p.env = env
+	}
+	if autoRestart := a.AutoRestart || !a.Disabled; p.autoRestart != autoRestart {
+		p.autoRestart = autoRestart
+	}
+	if a.Port > 0 && a.Port != p.port {
+		for _, other := range m.procs {
+			if other != p && processExposesPort(other, a.Port) {
+				if m.logger != nil {
+					m.logger.Warn("apps: requested port already used by another managed app, keeping current",
+						"app", p.name, "requested", a.Port, "current", p.port, "conflict", other.name)
+				}
+				a.Port = p.port
+				return
+			}
+		}
+		p.port = a.Port
+	} else if a.Port == 0 {
+		a.Port = p.port
+	}
+}
+
 // allocateFreePortLocked walks forward from nextPort, skipping
 // anything already claimed by another managed app or bound on
 // 127.0.0.1. Caller MUST hold m.mu.Lock().
@@ -340,9 +400,16 @@ func (m *Manager) allocateFreePortLocked() int {
 
 // Unregister stops the app and removes its YAML file. Idempotent.
 func (m *Manager) Unregister(name string) error {
+	// Grace window outside m.mu, as in Register (F68800).
+	m.mu.Lock()
+	existing := m.procs[name]
+	m.mu.Unlock()
+	if existing != nil {
+		_ = m.stop(existing)
+	}
 	m.mu.Lock()
 	if p, ok := m.procs[name]; ok {
-		m.stopLocked(p)
+		m.stopLocked(p) // already down unless restarted meanwhile
 		delete(m.procs, name)
 	}
 	m.mu.Unlock()
@@ -371,6 +438,7 @@ func (m *Manager) Start(name string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("apps: %s already running", name)
 	}
+	m.applyDefinitionLocked(p)
 
 	// Reset crashloop state — explicit Start means "operator has
 	// addressed the problem". If the app still crashes, the counter
@@ -969,15 +1037,13 @@ func openAppLog(path string) (*os.File, error) {
 // shows up later via polling — the deploy UX described as "zero
 // errors" depends on the create call seeing the real outcome.
 func (m *Manager) startNative(p *process, expectedStopCh <-chan struct{}) error {
-	if p.command == "" {
-		return fmt.Errorf("apps: %s: no start command set for runtime %q and nothing recognizable in workdir %s — %s",
-			p.name, p.runtimeKind, p.workDir, detectHint(string(p.runtimeKind)))
-	}
-	// p.port is reassigned under m.mu by the port-allocation paths, so snapshot
-	// it once under the lock and use the local copy throughout to avoid a data
-	// race with a concurrent (re)start.
+	// p.port is reassigned under m.mu by the port-allocation paths, and Start
+	// re-derives command/workDir/env from a reloaded definition (F68801), so
+	// snapshot them once under the lock and use the local copies throughout to
+	// avoid a data race with a concurrent (re)start.
 	m.mu.RLock()
 	port := p.port
+	command, workDir, env, runtimeKind := p.command, p.workDir, p.env, p.runtimeKind
 	// A spawn already superseded (Stop, or a newer Start's stopCh) must not touch
 	// the live run's files: the port file below is the one that run announced
 	// its port through.
@@ -986,12 +1052,16 @@ func (m *Manager) startNative(p *process, expectedStopCh <-chan struct{}) error 
 	if superseded {
 		return nil
 	}
+	if command == "" {
+		return fmt.Errorf("apps: %s: no start command set for runtime %q and nothing recognizable in workdir %s — %s",
+			p.name, runtimeKind, workDir, detectHint(string(runtimeKind)))
+	}
 	// R17-001 fix: reject commands with dangerous shell metacharacters before exec.
-	if err := cronjob.ValidateShellCommand(p.command); err != nil {
+	if err := cronjob.ValidateShellCommand(command); err != nil {
 		return fmt.Errorf("invalid command: %w", err)
 	}
 
-	cmdStr := strings.ReplaceAll(p.command, "${PORT}", fmt.Sprintf("%d", port))
+	cmdStr := strings.ReplaceAll(command, "${PORT}", fmt.Sprintf("%d", port))
 	if err := validateShellCommand(cmdStr); err != nil {
 		return fmt.Errorf("apps: %s: invalid command: %w", p.name, err)
 	}
@@ -999,7 +1069,7 @@ func (m *Manager) startNative(p *process, expectedStopCh <-chan struct{}) error 
 	// Ensure workdir exists — auto-assigned paths under DataRoot may
 	// not have been created yet when an operator registers an app via
 	// API before pushing source.
-	_ = osMkdirAllFn(p.workDir, 0755)
+	_ = osMkdirAllFn(workDir, 0755)
 
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
@@ -1008,9 +1078,9 @@ func (m *Manager) startNative(p *process, expectedStopCh <-chan struct{}) error 
 		cmd = execCommandFn("sh", "-c", cmdStr)
 	}
 	configureProcessGroup(cmd)
-	cmd.Dir = p.workDir
+	cmd.Dir = workDir
 
-	portFile := runtimePortFile(p.workDir, p.name)
+	portFile := runtimePortFile(workDir, p.name)
 	// The app runs tenant code, so it must not inherit UWAS's own secrets
 	// (admin key, DNS/cloud tokens); what the operator configured for the app
 	// is added explicitly below and kept as given (F9300).
@@ -1025,12 +1095,12 @@ func (m *Manager) startNative(p *process, expectedStopCh <-chan struct{}) error 
 		"HOST=127.0.0.1",
 		"NODE_ENV=production",
 	}
-	for k, v := range p.env {
+	for k, v := range env {
 		extra = append(extra, fmt.Sprintf("%s=%s", k, v))
 	}
 	cmd.Env = childenv.Filtered(extra...)
 
-	logDir := filepath.Join(filepath.Dir(p.workDir), "logs")
+	logDir := filepath.Join(filepath.Dir(workDir), "logs")
 	_ = osMkdirAllFn(logDir, appLogDirMode)
 	if portFile != "" {
 		_ = osMkdirAllFn(filepath.Dir(portFile), 0755)

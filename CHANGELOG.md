@@ -57,6 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The WordPress page's "wp-content writable" check reflects whether PHP (the web account) can write there, instead of whether root UWAS can, which reported writable for directories PHP could not write (F68600).
 - A WordPress install that finds a conflicting directory (e.g. an existing `wp-content`) in the web root refuses before changing anything, instead of failing halfway with the site's `index.php` already replaced and every retry failing (F68601).
 - A failed `PUT /settings/notifications` no longer rolls back a webhook or alerting change another request made meanwhile; a masked webhook secret is restored from the webhook its mask came from, so removing or reordering one of two webhooks with the same URL no longer gives the other the wrong signing secret (F65500/F65501).
+- Updating, redeploying or deleting a running app no longer blocks every request proxied to any app (and the app list) for up to the 3 s stop grace period while the old process exits (F68800).
+- Editing an app in `apps.d` and reloading now takes effect on the next start/restart: the command, environment, port and auto-restart setting were kept from the old definition until UWAS itself restarted (F68801).
+- A handler panic before any output now answers 500 for clients that send `Accept-Encoding` (every browser) instead of dropping the connection; the 500 no longer carries the abandoned page's `Cache-Control`, `Set-Cookie`, `ETag`, `Last-Modified`, `Content-Encoding` or `Content-Disposition` headers (F68900/F68901).
+- Test-only: the hung image-converter test no longer leaves an orphaned `cat` process blocked on its FIFO.
 
 ## [0.11.41] - 2026-11-02
 

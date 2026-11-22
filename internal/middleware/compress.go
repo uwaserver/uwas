@@ -204,10 +204,14 @@ func CompressWith(minSize int, policyFor func(*http.Request) CompressionPolicy) 
 				encoding:       enc,
 				types:          policy.Types,
 			}
-			defer cw.Close()
 
 			w.Header().Add("Vary", "Accept-Encoding")
 			next.ServeHTTP(cw, r)
+			// Not deferred: run during a panic's unwind, Close committed a 200
+			// for a handler that had written nothing, so Recovery saw a started
+			// response and dropped the connection instead of answering 500
+			// (F68900). A panicking response is Recovery's to answer or abort.
+			cw.Close()
 		})
 	}
 }

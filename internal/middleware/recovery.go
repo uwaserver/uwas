@@ -34,12 +34,28 @@ func Recovery(log *logger.Logger) Middleware {
 					if sw.started {
 						panic(http.ErrAbortHandler)
 					}
+					// The header map is the one the handler was filling for the
+					// page; those headers do not describe this error (F68901).
+					for _, k := range abandonedResponseHeaders {
+						w.Header().Del(k)
+					}
 					http.Error(w, "500 Internal Server Error", http.StatusInternalServerError)
 				}
 			}()
 			next.ServeHTTP(sw, r)
 		})
 	}
+}
+
+// abandonedResponseHeaders are the headers a handler sets for the response it
+// was building: its caching lifetime and validators, cookies, and how its body
+// is encoded or presented. Left on the 500 they let caches keep the error for
+// the page's lifetime (the server withdraws an operator lifetime from errors
+// only on its own writer, F9010), set the page's cookie, and label the plain
+// error text gzip or as a download (F68901).
+var abandonedResponseHeaders = []string{
+	"Cache-Control", "Expires", "ETag", "Last-Modified", "Age", "Set-Cookie",
+	"Content-Encoding", "Content-Disposition", "Content-Range", "Content-Language", "Content-Location",
 }
 
 // startedWriter records whether the response has been committed to the client.

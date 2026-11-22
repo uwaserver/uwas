@@ -33,7 +33,7 @@ func TestConvertImageHungConverterReleasesGlobalLock(t *testing.T) {
 	t.Cleanup(func() { convertLookPathFn, convertExecFn = origLook, origExec })
 	convertLookPathFn = func(string) (string, error) { return "/bin/sh", nil }
 	convertExecFn = func(name string, args ...string) *exec.Cmd {
-		return exec.Command("/bin/sh", "-c", "cat "+gate+" >/dev/null")
+		return exec.Command("/bin/sh", "-c", "exec cat "+gate+" >/dev/null")
 	}
 
 	done := make(chan bool, 1)
