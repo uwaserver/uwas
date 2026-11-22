@@ -5,6 +5,23 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.42
+
+Security release; drop-in binary, no config or data migration. Behavior changes worth knowing:
+
+- **Go 1.26.11** is required to build from source (GO-2026-6859 `net/http` fix); release binaries are built with it.
+- **Firewall delete/move API:** `DELETE /api/v1/firewall/{n}` and `POST /api/v1/firewall/{n}/move` accept an optional `expect` (the rule as `GET /api/v1/firewall` listed it) and answer **409** when another rule now holds that number. The bundled dashboard sends it; scripts that send only the number behave as before.
+- **Backups:** a backup taken while a MariaDB/MySQL Docker DB container is stopped is now marked **incomplete** and does not prune older backups. PostgreSQL Docker databases are still not dumped.
+- **Creating a database** whose name already exists answers **409** instead of reusing the schema.
+- **`global.mcp.enabled`** now takes effect on save & reload; **`[QSD]`** and a trailing `?` on internal rewrites drop the query string as in Apache; `RewriteCond` TestStrings expand `$N`/`%N`.
+- **SFTP:** shutdown closes logged-in sessions; FIFOs are refused as transfer targets; SSH subsystems other than `sftp` are refused.
+- **Self-update** no longer offers an older release to a host running a newer build, and installs only the asset named exactly `uwas-<os>-<arch>`.
+- **WordPress install** refuses a web root that already contains a directory WordPress would install (e.g. `wp-content`) instead of failing halfway.
+- **Environment:** a variable present but empty in the process environment now overrides `.env`; `apps.d` files with unknown keys are rejected.
+- **Apps:** after editing an `apps.d` file and reloading, the next start/restart of that app uses the new command, environment, port and auto-restart setting (previously only a UWAS restart applied them).
+
+---
+
 ## Upgrading to v0.11.41
 
 Security release; drop-in binary, no config or data migration. Behavior changes worth knowing:

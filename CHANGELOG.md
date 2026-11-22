@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.42] - 2026-11-22
+
+### Security
+
+- **Go 1.26.11** (GO-2026-6859: HTTP/1 server crash from a `MaxBytesReader` header race in `net/http`). Building from source now requires Go 1.26.11.
+
 ### Fixed
 
 - Backup retention no longer prunes an older, complete backup when the new one is missing data: an unreadable `domains.d` file or domain root, or a failed Docker database dump (`docker ps` or a container export), now marks the backup incomplete, and an unreadable certs directory fails it instead of silently leaving the certificates out (F64400/F64401/F64600).
@@ -61,6 +67,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Editing an app in `apps.d` and reloading now takes effect on the next start/restart: the command, environment, port and auto-restart setting were kept from the old definition until UWAS itself restarted (F68801).
 - A handler panic before any output now answers 500 for clients that send `Accept-Encoding` (every browser) instead of dropping the connection; the 500 no longer carries the abandoned page's `Cache-Control`, `Set-Cookie`, `ETag`, `Last-Modified`, `Content-Encoding` or `Content-Disposition` headers (F68900/F68901).
 - Test-only: the hung image-converter test no longer leaves an orphaned `cat` process blocked on its FIFO.
+- Creating a database (native or Docker) whose name already exists is refused with 409 instead of silently reusing the existing schema and granting the new account access to another site's data (b65ae567).
+- Backup restore writes config and certificate files through a rooted handle, so a symlinked parent directory swapped in after validation can no longer redirect the restore outside its destination; backup creation refuses `domains.d`/certificate files that resolve outside their directory (a53fdc5d, b65ae567).
+- Docker app volumes reject Windows absolute host paths (`C:\…`, UNC `\\…`) like other absolute bind mounts; `apps.d` files with unknown keys are rejected instead of silently ignoring misspelled settings (a53fdc5d).
+- Unassigning a PHP version from a domain persists the config first and leaves the live assignment untouched if the save fails; settings saves publish webhook and alerting changes only after they are persisted (b65ae567).
+- Deleting a Cloudflare tunnel reports a Cloudflare API failure (502) instead of success; the WordPress page refuses to act on a domain with no document root; SFTP key setup reports a failed `chown` instead of leaving root-owned key files (b65ae567).
+- A cPanel import whose copy produced an empty site no longer reports that domain as imported; a site migration reports a failed `wp-config.php` database update instead of finishing as success; an Apache-config migration reports read errors instead of importing a truncated vhost list (b65ae567, 2e00f7ab, afd18193).
+- Software store: a failed volume restore brings the stopped service back up instead of leaving it down; generating a template secret fails the request instead of falling back to a predictable `change-me-…` password (250e18ba).
+- An entropy-source failure while generating request IDs or software secrets no longer terminates the process; panic recovery no longer treats a failed hijack as a started response (250e18ba).
+- A variable set to an empty value in the process environment now takes precedence over the `.env` file instead of being overwritten by it; `uwas` conflict detection also flags running web servers whose binary is outside `PATH` (250e18ba).
+- Hosts are canonicalized consistently (trailing dot, case, port) across analytics, metrics, bandwidth and domain lookup, so `Example.COM.:443`-style hosts no longer get separate stats or miss their domain (beda201f, 4182966b).
+- Proxy and uptime health checks discard probe results that finish after the checker was stopped or the domain set changed; a stopped proxy health checker releases its worker so it can be started again; health probes drain only a bounded part of the response body (beda201f, 043867da, b65ae567).
+- Config durations given as fractional seconds (e.g. `1.5`) are accepted; MX records with priority 0 are written correctly; a cron weekday step such as `1-7/2` selects the right days in backup schedules; a `users.json` that is `null` or contains `null` entries is rejected with a clear error (beda201f, b65ae567).
+- CPU and memory limits too large to represent are rejected before any cgroup file is changed; the server-IP fallback only reports public addresses; the database status check no longer depends on parsing `mysqladmin` output (beda201f, af69ab45).
+- The install queue keeps only the most recent 2 MiB of each task's output, so a chatty install can no longer grow memory without bound; task snapshots and notification/webhook/MCP settings are copied so later edits can't change in-flight work (a53fdc5d, b65ae567, beda201f, d1543cba).
+- Cache keys decode percent-encoded query parameter names, so encoded aliases of the same parameter no longer produce separate entries; the Redis client rejects malformed bulk replies instead of misreading the stream (beda201f, a53fdc5d).
+- Git deploys set `GIT_CEILING_DIRECTORIES` so an incomplete `.git` in an app root can't make git operate on a parent repository; ACME nonce requests honor cancellation; local backup uploads stop when cancelled (af69ab45, 671d053d).
+- PHP version matching respects version components (`8.1` no longer matches `8.10`); `%{SERVER_PORT}` in rewrites uses the port the request arrived on; the PHP Config page no longer applies a stale preset after a quick version switch (4aa297a4, beda201f).
+- Responses captured for caching keep streaming flushes (SSE, proxied streams) instead of buffering them (9839c4db).
+- Oversized downloads and responses are rejected instead of truncated: WordPress archives over 100 MiB, admin API responses over 10 MiB in the CLI, and Cloudflare account listings are bounded; a WordPress archive without the expected `wordpress/` directory is rejected (14d64612, 73fc6c3f, 3fa1995e, 6ba67db7).
+- `uwas init` and `uwas install` report a failed credentials (`.env`) write and remove the half-written config instead of finishing with no saved credentials; the admin listener is released when TLS setup fails; ACME account creation without a `Location` header is rejected; Telegram deliveries the API answers with `ok: false` are reported as failed (c555bb99, f4ef9615, a06d3fcd, e2d79a32, 73fcbf71).
+- The audit-log snapshot no longer races shutdown; the doctor's port check reports probe errors instead of assuming a permission problem (a53fdc5d, d1543cba).
+
+### Changed
+
+
+- Dashboard and docs-site dependencies pin `minimatch` ≥ 11.0.1 (npm audit); backup prune tests no longer depend on a locally installed `mysqldump` (0439ea00).
 
 ## [0.11.41] - 2026-11-02
 

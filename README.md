@@ -24,7 +24,7 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.11.41)
+## Current Snapshot (v0.11.42)
 
 - **Dashboard pages:** 42 (`web/dashboard/src/pages`; `settingsSections.tsx` lives there too but is section definitions, not a page)
 - **Admin API routes:** 254+ explicit route registrations in `internal/admin/routes.go` under `/api/v1` plus dashboard/static handlers
@@ -33,6 +33,12 @@ One binary. Zero hassle.
 - **Test status:** all gates pass — `go build`, `go vet`, `staticcheck`, `go test`, `go test -race`, dashboard npm build; CI runs additional `govulncheck`, shellcheck, installer tests, Docker Compose validation, and docs/site builds
 - **Security/stability fixes:** v0.11.29 hardens against request floods (async logging, rate-limited redirects, cache bypass fix) and moves to Go 1.26.9 for HTTP/2 DoS fixes
 - **Security posture:** risk score 2.1/10 (Low) per July 2026 reassessment
+
+**v0.11.42 highlights (security release, evidence-audit rounds 199–214):**
+- Tenant isolation: a re-added hostname no longer inherits the previous owner's analytics, metrics, cron history or cache entries; a crafted hostname can no longer map onto another site's SFTP account; creating a database with an existing name no longer grants access to the other site's schema
+- Firewall and access: deleting or moving a rule from the dashboard can no longer hit a different rule after the autoblocker renumbers them (409 instead), firewall rule changes are serialized, the web terminal session cap now applies and works on the alpine image
+- Reliability: SFTP sessions no longer block shutdown, FIFOs no longer hang SFTP or the file manager, global PHP workers stop with UWAS, cache purges are no longer undone by in-flight writes, Route53 DNS-01 values are no longer lost to concurrent changes
+- Correctness: `RewriteCond` `$N`/`%N` backreferences and `[QSD]` work as in Apache, `global.mcp.enabled` and a rotated `api_key` apply on reload, self-update installs only the exact platform asset and never offers a downgrade
 
 **v0.11.41 highlights (security release, evidence-audit rounds 196–198):**
 - Access-control bypasses closed: a trailing `/` (`/private/a.txt/`, `//`, `/./`) no longer skips `$`-anchored regex locations such as `basic_auth`; `/wp-config.old/.`, `/dump.sql/.` and `/img/a.jpg/.` no longer bypass the wp-config copy guard, WAF file-probe rules or hotlink guard
@@ -408,7 +414,7 @@ domains:
 
 | Component | Minimum | Recommended | Notes |
 |-----------|---------|-------------|-------|
-| Go | 1.26.10+ | 1.26.10+ | For building from source (1.26.10 carries the `crypto/x509` GO-2026-6809 fix) |
+| Go | 1.26.11+ | 1.26.11+ | For building from source (1.26.11 carries the `net/http` GO-2026-6859 fix) |
 | PHP | 8.2+ (8.2.35 / 8.3.36 / 8.4.27 / 8.5.12 or newer) | 8.4+ / 8.5+ | Only needed for PHP sites. 8.1 and older are end-of-life and unsupported; older patch releases are vulnerable to CVE-2026-109618/109619 |
 | Docker | 20.10+ | 24+ | Only for Docker apps and database containers |
 
